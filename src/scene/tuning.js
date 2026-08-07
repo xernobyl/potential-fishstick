@@ -1270,7 +1270,15 @@ export const SATELLITES = {
   orbit: 5.7,
   rate: 0.085,          // radians per second, scaled per satellite
   bus: 0.055,           // half-extent of the central cube
-  boom: 0.03,           // gap from bus face to the start of a panel
+  /**
+   * Gap from the bus FACE to the inner edge of a panel — not the panel's distance from the centre.
+   *
+   * The geometry read it as an absolute offset and started the panels at 0.03, which is inside a bus
+   * whose half-extent is 0.055 and well inside the boom stubs at 0.078: the arrays grew out of the
+   * middle of the body instead of standing off it. Widened as well as corrected, so there is visible
+   * daylight between the stub and the array rather than the two just failing to overlap.
+   */
+  boom: 0.06,
   panelLen: 0.20,       // half-length along the boom, over BOTH panels of a wing
   panelWide: 0.085,     // half-width — wide enough to read as a wing, not a rod
   panelThick: 0.005,    // half-thickness — thin enough to flash edge-on

@@ -118,7 +118,7 @@ export class ModelViewScene extends Scene {
     }
     // The satellite is instanced from a unit cube, so no single mesh sphere describes it. Its reach is
     // the boom plus a panel half-length, which is the same number the orbital version bounds itself by.
-    return SATELLITES.boom + SATELLITES.panelLen * 2;
+    return SATELLITES.bus + SATELLITES.boom + SATELLITES.panelLen * 2;
   }
 
   async init(rc) {

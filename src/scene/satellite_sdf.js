@@ -128,23 +128,32 @@ export function satellitePanelTree() {
   //
   // A wing extends AWAY from the spacecraft. Building it one-sided is what makes that true by
   // construction rather than by choosing a placement that happens to hide the other half.
-  const mid = boom + L;
+  // Measured from the bus FACE outward: the panel's inner edge clears the body and its stubs, and the
+  // arm spans the gap. `boom` is the daylight between them, not the panel's distance from the centre.
+  const start = SATELLITES.bus + boom;
+  const mid = start + L;
 
   // The substrate. Thicker than the analytic slab was: three grid cells is the floor for meshing it at
   // all, and at this size on screen the difference is invisible where a broken surface would not be.
-  const sheet = translate([0, mid, 0], box([t * 1.6, L * 0.97, W * 0.97]));
+  // THICK ENOUGH TO SURVIVE THE GRID. `panelThick` is an art number describing how thin an array
+  // looks edge-on; the mesher needs three cells across whatever it is asked to reconstruct, and a
+  // sheet under that welds its own two faces together and opens holes. 2.6x rather than 1.6x is
+  // invisible at the size these render and is the difference between a surface and a suggestion.
+  const sheet = translate([0, mid, 0], box([t * 2.6, L * 0.97, W * 0.97]));
 
   // A frame around the rim, standing slightly proud of the cells.
-  const railLong = translate([0, mid, W * 0.965], box([t * 2.2, L, W * 0.035]));
-  const railOuter = translate([0, mid + L * 0.965, 0], box([t * 2.2, L * 0.035, W]));
-  const railInner = translate([0, mid - L * 0.965, 0], box([t * 2.2, L * 0.035, W]));
+  const railLong = translate([0, mid, W * 0.965], box([t * 3.2, L, W * 0.045]));
+  const railOuter = translate([0, mid + L * 0.965, 0], box([t * 3.2, L * 0.045, W]));
+  const railInner = translate([0, mid - L * 0.965, 0], box([t * 3.2, L * 0.045, W]));
 
   // A spine down the middle and cross ribs, which is what an array's back actually looks like.
-  const spine = translate([0, mid, 0], box([t * 2.4, L, W * 0.05]));
-  const crossRibs = translate([0, mid, 0], repeat(1, L * 0.62, 3, box([t * 2.0, L * 0.04, W * 0.9])));
+  const spine = translate([0, mid, 0], box([t * 3.6, L, W * 0.07]));
+  const crossRibs = translate([0, mid, 0], repeat(1, L * 0.62, 3, box([t * 3.0, L * 0.055, W * 0.9])));
 
-  // The arm from the bus out to the panel's inner edge.
-  const arm = translate([0, boom * 0.5, 0], cylinder(t * 3.0, boom * 0.6));
+  // The arm from inside the bus out to the panel's inner edge. It starts slightly negative so it
+  // overlaps the body rather than abutting it — parts that merely touch come out as separate
+  // components, which is how the boom stubs ended up floating beside the bus once already.
+  const arm = translate([0, start * 0.5, 0], cylinder(t * 3.2, start * 0.58));
 
   return union(sheet, railLong, mirror(2, railLong), railOuter, railInner,
                spine, crossRibs, arm);
@@ -159,7 +168,16 @@ export function satellitePanelTree() {
  */
 export const SAT_MESH = {
   busResolution: 56,
-  panelResolution: 44,
+  /**
+   * 72, up from 44, and the climb is the point rather than the number.
+   *
+   * Resolution is measured against the LONGEST axis, so when the panels moved clear of the bus and the
+   * wing got longer, the same cell count spread further and every thin feature on it lost margin —
+   * 14 boundary edges, then 24, then 3 non-manifold. Raising this alone kept chasing the symptom; the
+   * fix was thickening the sheet and the rails so they clear three cells honestly, with 72 as the
+   * resolution that then verifies clean at every step rather than at one lucky value.
+   */
+  panelResolution: 72,
   /** Simplification budgets, in the units these trees are authored in (world units already). */
   error: [0.0008, 0.0025],
 };
