@@ -145,6 +145,29 @@ export const mirror = (axis, child) => ({ op: 'mirror', axis, kids: [child] });
 /** Inflate (or with a negative r, deflate) by a radius. Exact for any exact child. */
 export const round = (r, child) => ({ op: 'round', r, kids: [child] });
 
+/**
+ * Repeat a child `count` times along an axis, every `spacing` units, centred on the origin.
+ *
+ * This is what makes greeble affordable. A row of sixteen vents placed by hand is sixteen nodes and
+ * sixteen chances to mistype a coordinate; here it is one.
+ *
+ * LIMITED repetition, not the infinite `mod` form. Infinite repetition tiles all of space, so a hull
+ * detail would also appear inside the fuselage and out past the wingtips, and the bounds would be
+ * meaningless. Clamping the cell index keeps the row finite and keeps `bounds` exact.
+ *
+ * EXACT while the child fits inside one cell — which is the caller's job, and the reason `spacing`
+ * is stated rather than derived. Snapping to the NEAREST cell means a query is answered by the cell
+ * it is closest to; if the child is wider than the spacing it overlaps its neighbour, that neighbour
+ * is never consulted, and the reported distance is too large exactly where two copies meet. The
+ * dual contourer roots along edges and would place vertices short of the surface there.
+ *
+ * @param {number} axis 0, 1 or 2
+ * @param {number} spacing between copies, in the child's own units
+ * @param {number} count how many copies; even counts straddle the origin
+ */
+export const repeat = (axis, spacing, count, child) =>
+  ({ op: 'repeat', axis, spacing, count, kids: [child] });
+
 // ---- the compiler ----------------------------------------------------------------------------
 
 const smin = (a, b, k) => {
@@ -234,6 +257,23 @@ export function compile(node) {
       if (a === 1) return (x, y, z) => c(x, Math.abs(y), z);
       return (x, y, z) => c(x, y, Math.abs(z));
     }
+    case 'repeat': {
+      const [c] = kids;
+      const a = node.axis;
+      const sp = node.spacing;
+      // Half-width of the index range. An even count straddles the origin, so the cell centres sit at
+      // half-integer multiples and the offset below shifts the lattice by half a cell.
+      const even = node.count % 2 === 0;
+      const lim = (node.count - 1) / 2;
+      const fold = (v) => {
+        const shifted = even ? v / sp - 0.5 : v / sp;
+        const i = Math.max(-Math.ceil(lim), Math.min(Math.floor(lim), Math.round(shifted)));
+        return v - (even ? (i + 0.5) : i) * sp;
+      };
+      if (a === 0) return (x, y, z) => c(fold(x), y, z);
+      if (a === 1) return (x, y, z) => c(x, fold(y), z);
+      return (x, y, z) => c(x, y, fold(z));
+    }
     case 'round': {
       const [c] = kids;
       const r = node.r;
@@ -303,6 +343,15 @@ export function bounds(node) {
       const e = Math.max(Math.abs(b.min[node.axis]), Math.abs(b.max[node.axis]));
       out.min[node.axis] = -e;
       out.max[node.axis] = e;
+      return out;
+    }
+    case 'repeat': {
+      const b = bounds(node.kids[0]);
+      const out = { min: b.min.slice(), max: b.max.slice() };
+      // The row spans from the first cell centre to the last, plus the child's own extent at each end.
+      const reach = ((node.count - 1) / 2) * node.spacing;
+      out.min[node.axis] = b.min[node.axis] - reach;
+      out.max[node.axis] = b.max[node.axis] + reach;
       return out;
     }
     case 'round': return grow(bounds(node.kids[0]), node.r);

@@ -12,6 +12,7 @@
 import { sphere, box, cylinder, union, smoothUnion, subtract, translate, rotate, scale, mirror,
          compile, bounds } from '../src/scene/sdf/nodes.js';
 import { dualContour, resolutionForScreen } from '../src/scene/sdf/dualcontour.js';
+import { shipTree, SHIP_HARDPOINTS } from '../src/scene/ship_sdf.js';
 
 let failed = 0;
 const check = (ok, what, extra = '') => {
@@ -226,6 +227,40 @@ function topology(m) {
         'and clamps at the low end');
   check(resolutionForScreen({ size: 1, distance: 1e-3, focal: 1.2, diagonalPx: 2500 }) === 192,
         'and at the high end');
+}
+
+// ---- the ship is symmetric, and its hardpoints are on it ----
+//
+// Symmetry is asserted rather than eyeballed because it is easy to lose: one `mirror` forgotten around
+// one part and the hull is subtly lopsided in a way that reads as "something looks off" long before
+// anyone works out which part. The field is the thing to test, not the mesh — a mirrored field cannot
+// produce an asymmetric surface, and testing it needs no tolerance for vertex placement.
+{
+  const tree = shipTree();
+  const f = compile(tree);
+  let worst = 0;
+  let n = 0;
+  for (let i = 0; i < 4000; i++) {
+    // Deterministic spread over the hull's box, so a failure is reproducible.
+    const h = (k) => ((Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+    const x = (h(1) - 0.5) * 1.3;
+    const y = (h(2) - 0.5) * 0.6;
+    const z = (h(3) - 0.5) * 1.3;
+    worst = Math.max(worst, Math.abs(f(x, y, z) - f(-x, y, z)));
+    n++;
+  }
+  check(worst < 1e-12, 'the hull is exactly mirror-symmetric about x = 0',
+        `worst |f(x) - f(-x)| = ${worst.toExponential(1)} over ${n} samples`);
+
+  // The hardpoints have to be ON the hull, or the plumes and guns fire from thin air — which is
+  // exactly what happened when the muzzle constant outlived the hull it was measured from.
+  const near = (p, what) => {
+    const d = f(p[0], p[1], p[2]);
+    check(Math.abs(d) < 0.06, `${what} sits on the hull surface`, `|d| = ${Math.abs(d).toFixed(4)}`);
+  };
+  const H = SHIP_HARDPOINTS;
+  near([H.nacelle[0], H.nacelle[1], H.nozzleZ], 'the nozzle mouth');
+  near([H.wingTip, -0.005, H.podZ + 0.16], 'the gun muzzle');
 }
 
 process.exit(failed === 0 ? 0 : 1);

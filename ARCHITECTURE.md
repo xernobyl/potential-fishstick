@@ -247,13 +247,13 @@ is an asset: there is no file to load, and the shapes are code.
 | Object | Source | Built by | Triangles |
 |---|---|---|---|
 | Rings | `rectTube` — a revolved rectangular profile | `meshgen.js` | 3 × 768 |
-| Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/octree.js` | 7.6k / 5.3k / 3.6k / 2.5k (4 LODs) |
+| Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/octree.js` | 14.2k / 10.8k / 7.1k / 4.3k (4 LODs) |
 | Satellites | one unit `box`, instanced 15× | `meshgen.js` | 12 × 15 |
 
 ### The SDF pipeline
 
 `sdf/nodes.js` is the shape language: primitives (sphere, box, rounded box, cylinder, cone, plane),
-booleans and smooth blends, and the transforms. It is **data**, not closures — a tree you can
+booleans and smooth blends, the transforms, and a limited `repeat` for rows of greeble. It is **data**, not closures — a tree you can
 inspect, bound and mesh — and `compile()` turns it into nested closures once so that meshing is not
 paying a dispatch per node per sample.
 

@@ -99,13 +99,14 @@ fn fs(in : VOut) -> FOut {
   // The canopy is glass. Tested against the blister's own sphere from ship_sdf.js rather than against a
   // slab, so the region follows the shape it belongs to: inside the sphere AND on its upper dome, which
   // leaves the blended skirt where it meets the spine as hull.
-  let toCanopy = al - vec3f(0.0, 0.065, 0.10);
-  let isGlass = smoothstep(0.082, 0.068, length(toCanopy)) * smoothstep(0.052, 0.072, al.y);
+  let toCanopy = al - vec3f(0.0, 0.070, 0.13);
+  let isGlass = smoothstep(0.092, 0.076, length(toCanopy)) * smoothstep(0.055, 0.076, al.y);
 
-  // A painted stripe out along each wing, because a readable silhouette wants a graphic. The wings run
-  // from |x| ~ 0.01 to ~ 0.39 and are thin in y, so the gate keeps it off the fuselage and off the fin.
-  let stripe = smoothstep(0.032, 0.0, abs(abs(al.x) - 0.27))
-             * step(0.14, abs(al.x)) * step(abs(al.y), 0.05);
+  // A painted stripe out along each wing, because a readable silhouette wants a graphic. The wings now
+  // run from |x| ~ 0.03 out to the gun pods at 0.55 and are thin in y, so the gate keeps it off the
+  // fuselage, off the nacelles and off the pods themselves.
+  let stripe = smoothstep(0.036, 0.0, abs(abs(al.x) - 0.36))
+             * step(0.16, abs(al.x)) * step(abs(al.x), 0.50) * step(abs(al.y), 0.055);
 
   var alb = mix(SHIP_HULL * (0.85 + 0.30 * ph), SHIP_GLASS, isGlass);
   alb = mix(alb, alb * 0.45, seam);

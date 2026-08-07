@@ -9,7 +9,7 @@ import { layerRotations, wgslMat3, LAYER_SLOTS, SCHEDULE } from './lattice.js';
  * there is never a copy of a constant that can drift out of sync with the JS.
  */
 
-import { SHIP_MESH } from './ship_sdf.js';
+import { SHIP_MESH, SHIP_HARDPOINTS } from './ship_sdf.js';
 
 export const QUALITY = {
   /** Internal render scale. Temporal accumulation carries the anti-aliasing, so
@@ -413,11 +413,15 @@ export const CONTRAIL = {
   /** Seconds between samples. Fixed, so spacing is proportional to SPEED: a fast ship
    *  draws a long trail and a stopped one lets its trail collapse and fade. */
   interval: 0.045,
-  /** Emitted this far behind the hull, so it starts at the nozzles not the nose. */
-  offset: 0.2,
-  /** Lateral offset of each nacelle from the spine. Matches the nozzle positions in
-   *  ship.wgsl (x = 0.175 authored) times SHIP.scale. */
-  spread: 0.105,
+  /**
+   * Emitted this far behind the hull, and this far out to each side.
+   *
+   * DERIVED FROM THE HULL, not typed in beside it. These are the nacelle hardpoints in
+   * `ship_sdf.js`, scaled to world units — the same numbers the nozzles are modelled at and the
+   * plumes fire from. They used to be literals in three files and had already drifted apart.
+   */
+  get offset() { return -SHIP_HARDPOINTS.nozzleZ * SHIP_MESH.scale; },
+  get spread() { return SHIP_HARDPOINTS.nacelle[0] * SHIP_MESH.scale; },
   /** Half-width at emission, and how much it disperses over the trail's life. */
   width: 0.012,
   widthGrow: 0.055,
@@ -669,14 +673,17 @@ export const RAIL = {
   /** Seconds a beam takes to fade out. */
   life: 0.55,
   length: 9.0,
-  /** Muzzle in the hull's OWN axes, so it tracks the ship exactly. Taken from the wing
-   *  geometry in ship.wgsl: the swept box reaches x ~ 0.61 authored and its tip sits
-   *  slightly aft of centre once the leading edge is cut, so (0.58, 0, -0.05) authored,
-   *  times SHIP.scale = 0.6. Previously this was 0.14 FORWARD of centre, which put the
-   *  muzzle out in front of the wing rather than on it. */
-  spread: 0.348,
-  up: 0.0,
-  forward: -0.03,
+  /**
+   * Muzzle in the hull's OWN axes, so it tracks the ship exactly.
+   *
+   * DERIVED FROM THE HULL. This was the literal 0.348, taken from a marched hull whose wings reached
+   * x = 0.61 authored; the SDF hull that replaced it reached only 0.40, so the muzzles had been firing
+   * from 0.178 units past the wingtip ever since — visibly detached, and nothing pointed at it because
+   * both numbers looked deliberate. There are gun pods at the tips now and the beams leave their noses.
+   */
+  get spread() { return SHIP_HARDPOINTS.wingTip * SHIP_MESH.scale; },
+  up: -0.005 * 0.6,
+  get forward() { return (SHIP_HARDPOINTS.podZ + 0.16) * SHIP_MESH.scale; },
   /** The helix: how many turns over the beam's length, its radius, and how fast the
    *  strands keep rotating as the shot decays. The spin is what reads as "spun up a
    *  rail" rather than "drawn as a line". */
@@ -1747,6 +1754,11 @@ export function wgslDefines() {
     SHIPM_CORE: `vec3f(${[0.36, 0.16, 0.30].map(f).join(', ')})`,
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
     FILM_PIVOT: FILM.pivot,
+    // Nacelle hardpoint, so the engine plumes in ship.wgsl start at the nozzles the hull actually has
+    // rather than at a literal that has to be kept in step by hand.
+    SHIP_NACELLE_X: f(SHIP_HARDPOINTS.nacelle[0]),
+    SHIP_NACELLE_Y: f(SHIP_HARDPOINTS.nacelle[1]),
+    SHIP_NOZZLE_Z: f(SHIP_HARDPOINTS.nozzleZ),
     // The model viewer's studio location, needed by the satellite display layout in WGSL.
     MODEL_ORIGIN: `vec3f(${MODELVIEW.origin.map(f).join(', ')})`,
     // tiling

@@ -36,11 +36,13 @@ fn shipJets(ro : vec3f, rd : vec3f, tmax : f32) -> vec3f {
 
   // Two main plumes at the nacelle exhausts, stretched backwards along the hull.
   for (var i = 0; i < 2; i++) {
-    let sx = select(-0.175, 0.175, i == 0);
+    // The nacelle hardpoint from ship_sdf.js, not a literal: this used to be typed here and in two
+    // other files, describing the same holes in the same hull.
+    let sx = select(-SHIP_NACELLE_X, SHIP_NACELLE_X, i == 0);
     // Sampled at a few points down the plume so it reads as a cone, not a ball.
     for (var k = 0; k < SHIP_JET_LEN; k++) {
       let fk = f32(k);
-      let local = vec3f(sx, -0.012, -0.33 - fk * 0.085 * (0.35 + throttle)) * SHIP_SCALE;
+      let local = vec3f(sx, SHIP_NACELLE_Y, SHIP_NOZZLE_Z - fk * 0.085 * (0.35 + throttle)) * SHIP_SCALE;
       let wpj = sp + qrotate(q, local);
       let oc = wpj - ro;
       let tc = clamp(dot(oc, rd), 0.0, tmax);
@@ -60,7 +62,7 @@ fn shipJets(ro : vec3f, rd : vec3f, tmax : f32) -> vec3f {
   if (rev > 0.01) {
     for (var i = 0; i < 2; i++) {
       let sx = select(-0.10, 0.10, i == 0);
-      let wpj = sp + qrotate(q, vec3f(sx, 0.0, 0.34) * SHIP_SCALE);
+      let wpj = sp + qrotate(q, vec3f(sx, 0.0, 0.40) * SHIP_SCALE);
       let oc = wpj - ro;
       let tc = clamp(dot(oc, rd), 0.0, tmax);
       sum += vec3f(1.3, 0.85, 0.55) * rev

@@ -56,15 +56,18 @@ export function buildShipMesh() {
   const tree = shipTree();
   const b = bounds(tree);
   const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) * SHIP_MESH.scale;
-  const res = Math.min(
-    SHIP_MESH.maxResolution,
-    resolutionForScreen({
-      size,
-      distance: SHIP_MESH.viewDistance,
-      focal: 1.2,
-      diagonalPx: 2500,
-      errorPx: SHIP_MESH.errorPx,
-    }),
+  const res = Math.max(
+    SHIP_MESH.minResolution,
+    Math.min(
+      SHIP_MESH.maxResolution,
+      resolutionForScreen({
+        size,
+        distance: SHIP_MESH.viewDistance,
+        focal: 1.2,
+        diagonalPx: 2500,
+        errorPx: SHIP_MESH.errorPx,
+      }),
+    ),
   );
 
   // THE WHOLE LOD CHAIN FROM ONE OCTREE. Passing the array of budgets simplifies progressively rather

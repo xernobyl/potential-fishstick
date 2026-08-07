@@ -639,7 +639,7 @@ src/
     meshgen.js       CPU mesh generators: revolved profiles, boxes, concatenation
     ship_sdf.js      the hull as an SDF tree, and its mesh budget
     sdf/
-      nodes.js       the shape language: primitives, booleans, blends, transforms
+      nodes.js       the shape language: primitives, booleans, blends, transforms, repeat
       grid.js        field sampling and surface crossings, shared by both meshers
       qef.js         the error function, in the form that can be ADDED
       octree.js      adaptive SDF -> triangles: simplified, crack-free, LOD chain
