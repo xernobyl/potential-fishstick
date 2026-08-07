@@ -60,11 +60,27 @@ export function buildGui(renderer, live = {}) {
   // the FOLDER's children container, so setting display there hides every control in the folder — which
   // it duly did, leaving an empty "Scene" panel with the scene selector inside it.
   const syncModelVisibility = () => { modelCtl.show(renderer.sceneKey === 'modelview'); };
-  sceneFolder
+  const sceneCtl = sceneFolder
     .add(sceneProxy, 'scene', Object.fromEntries(
       Object.entries(renderer.scenes).map(([key, sc]) => [sc.constructor.label, key])))
     .onChange((key) => { renderer.setScene(key); syncModelVisibility(); });
   syncModelVisibility();
+
+  // WHAT IS ACTUALLY BEING DRAWN, in triangles.
+  //
+  // Reported for the ACTIVE SCENE rather than only for the model viewer, which needs no special case
+  // and answers a question worth asking in both: the viewer says how heavy the model you are
+  // inspecting is, and the planetoid says what the rings, hull and satellites cost together at the
+  // level and cull state of the frame that just went out.
+  //
+  // Counts follow the LOD selection and the instance count, so they are what the GPU was asked for,
+  // not what the buffers hold. `draws` is post-cull — the gap between it and the object count is the
+  // frustum test doing its job.
+  const geo = { triangles: 0, vertices: 0, draws: 0, lod: '' };
+  const geoCtrls = [];
+  for (const k of ['triangles', 'vertices', 'draws', 'lod']) {
+    geoCtrls.push(sceneFolder.add(geo, k).disable());
+  }
 
   // ---- grade ----
   // First, because it is the one set of controls you reach for while LOOKING at the image
@@ -198,6 +214,40 @@ export function buildGui(renderer, live = {}) {
     mon.additive = size(t.addWidth, t.addHeight);
     mon.converged = renderer.accumFrames;
     for (const c of monCtrls) c.updateDisplay();
+
+    // PULL THE SELECTORS BACK INTO STEP, for the same reason the buffer dropdown does it below: the
+    // panel is not the only writer. Everything here is reachable from `window.beep`, and this project
+    // expects you to use that — a dropdown reading "satellite" over a picture of the ship is the panel
+    // lying about the thing it exists to report.
+    if (sceneProxy.scene !== renderer.sceneKey) {
+      sceneProxy.scene = renderer.sceneKey;
+      sceneCtl.updateDisplay();
+      syncModelVisibility();
+    }
+    const modelKey = MODELS[renderer.scenes.modelview.model]?.key;
+    if (modelKey && sceneProxy.model !== modelKey) {
+      sceneProxy.model = modelKey;
+      modelCtl.updateDisplay();
+    }
+
+    let tris = 0;
+    let verts = 0;
+    let draws = 0;
+    const levels = [];
+    for (const m of renderer.scene.solidPasses) {
+      if (!m.mesh) continue;
+      const instances = m.spec.instances ?? 1;
+      tris += (m.mesh.indexCount / 3) * instances;
+      verts += m.mesh.vertexCount * instances;
+      draws += m.drawn ?? 0;
+      if (m.meshes && m.meshes.length > 1) levels.push(`${m.spec.label} L${m.lod}/${m.meshes.length - 1}`);
+    }
+    geo.triangles = tris.toLocaleString();
+    geo.vertices = verts.toLocaleString();
+    geo.draws = draws;
+    // Only meshes with a chain have a level worth reporting; everything else would just say L0/0.
+    geo.lod = levels.length ? levels.join(', ') : 'single level';
+    for (const c of geoCtrls) c.updateDisplay();
     // The `b` key writes renderer.debugView directly, so pull it back in rather than assuming the
     // dropdown is the only writer.
     if (viewState.buffer !== renderer.debugView) {

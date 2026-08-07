@@ -16,7 +16,8 @@ than having no meshes and a more useful one. The one dependency is a vendored co
 the tuning panel, loaded on demand and outside the render path.
 
 There is a second scene — a model viewer, for looking at those generated meshes on a turntable. Pick
-it from the dropdown under `g`.
+it from the dropdown under `g`, which also reports what the active scene is actually drawing:
+triangles, vertices, draw calls after culling, and which LOD level was selected.
 
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
 **space** to shoot.
