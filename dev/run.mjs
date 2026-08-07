@@ -23,6 +23,8 @@ const checks = [
   ['continuity', 'the aurora ribbon\'s parameterisation does not step on emission'],
   ['meshgen', 'the generated ring mesh is the same surface as the arithmetic it replaces'],
   ['dualcontour', 'the SDF mesher makes closed, manifold, correctly-wound surfaces'],
+  ['octree', 'adaptive dual contouring simplifies without cracking the mesh'],
+  ['lod', 'level-of-detail selection stays under its pixel budget'],
   ['frustum', 'the extracted frustum planes bound exactly what the camera sees'],
 ];
 

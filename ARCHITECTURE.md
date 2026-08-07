@@ -189,7 +189,7 @@ is an asset: there is no file to load, and the shapes are code.
 | Object | Source | Built by | Triangles |
 |---|---|---|---|
 | Rings | `rectTube` — a revolved rectangular profile | `meshgen.js` | 3 × 768 |
-| Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/dualcontour.js` | ~4.9k |
+| Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/octree.js` | 7.6k / 5.3k / 3.6k / 2.5k (4 LODs) |
 | Satellites | one unit `box`, instanced 15× | `meshgen.js` | 12 × 15 |
 
 ### The SDF pipeline
@@ -204,12 +204,68 @@ bound, because dual contouring places vertices by root-finding along edges and a
 puts them in the wrong place. And `scale` is **uniform only**: a non-uniform scale is not a distance
 field any more, and the failure is subtle enough that the operator refuses rather than approximates.
 
-`sdf/dualcontour.js` meshes it. Dual contouring rather than marching cubes for one reason that is
-visible in the result: it places one vertex per cell by minimising a **QEF** over the crossing
-planes, so a sharp edge is reconstructed as a sharp edge. Marching cubes bevels every one of them,
-which for a hard-surface hull is the whole silhouette. The QEF is Tikhonov-regularised toward the
-cell's mass point and the solution is clamped into its own cell, because an unregularised QEF on a
-nearly-flat cell is ill-conditioned and throws its vertex somewhere across the mesh.
+Dual contouring rather than marching cubes for one reason that is visible in the result: it places one
+vertex per cell by minimising a **QEF** over the crossing planes, so a sharp edge is reconstructed as
+a sharp edge. Marching cubes bevels every one of them, which for a hard-surface hull is the whole
+silhouette. The QEF is Tikhonov-regularised toward the cell's mass point and the solution is clamped
+into its own cell, because an unregularised QEF on a nearly-flat cell is ill-conditioned and throws
+its vertex somewhere across the mesh.
+
+The pipeline is three files, split where the responsibilities actually divide:
+
+| File | Owns |
+|---|---|
+| `sdf/grid.js` | sampling the field and finding the crossings — the expensive half, shared |
+| `sdf/qef.js` | the error function, in the form that can be **added** |
+| `sdf/octree.js` | the octree, its simplification, and the crack-free weave |
+| `sdf/dualcontour.js` | the uniform weave — the reference the adaptive one is checked against |
+
+### Adaptive simplification, and why it is on the octree
+
+A uniform grid spends the same triangles on a flat wing panel as on the nozzle rim, because it has no
+way to tell them apart. `octree.js` merges any eight cells whose surface a single vertex can represent
+to within a stated error, so triangles end up where the shape actually curves.
+
+The obvious alternative is to contour uniformly and then decimate with a quadric error metric. But
+dual contouring **has already computed that metric** — the QEF each cell solves is a quadric, built
+from the field's own gradients rather than reconstructed from the triangles those gradients produced.
+Decimating afterwards throws that away, rebuilds an approximation of it from the mesh, and pays for a
+full-resolution mesh first. Simplifying the octree uses the exact quantity and never builds the
+triangles it is going to delete.
+
+Two properties make it work:
+
+- **The QEF is additive.** In normal-equation form (`A = Σ nnᵀ`, `b = Σ n(n·p)`, `c = Σ (n·p)²`) a
+  parent's error is the exact sum of its children's, with no reference to the original planes. So one
+  threshold means the same thing at every level of the tree.
+- **Cracks are handled by the traversal, not by patching.** Where a merged cell meets small ones the
+  surface still has to be one closed sheet. The `cellProc` / `faceProc` / `edgeProc` descent (Ju et
+  al., *Dual Contouring of Hermite Data*, 2002) enumerates every minimal edge exactly once regardless
+  of how the tree is refined around it.
+
+Flat regions merge **for free**: a box drops from 13068 to 3732 triangles at a threshold of *zero*,
+with byte-identical accuracy, because eight coplanar cells genuinely cost one vertex no error at all.
+
+One addition to Ju's formulation was necessary. It checks only the error before collapsing, which is
+where adaptive DC's non-manifold vertices come from: a merged cell whose corner signs describe **two**
+separate surface sheets gets one vertex, welding them into a pinch. A 256-entry table
+(`SINGLE_SHEET`) refuses those collapses — the conservative half of what Manifold Dual Contouring
+(2007) does properly. With it, every level is closed, manifold and genus-0.
+
+### Level of detail
+
+The whole chain comes out of **one** octree. Simplification is monotone in the threshold, so the
+budgets are applied in increasing order against the same tree and each level starts from the previous
+one's result: four levels cost barely more than the coarsest. They are also **nested** by
+construction — a vertex in a coarse level exists in every finer one — which is why switching does not
+pop the way independently-built levels do.
+
+Selection is in **pixels**, not distance thresholds (`core/lod.js`). A level carries the world-space
+error it was simplified to; the selector converts that into the pixels it would occupy at the object's
+current distance and takes the coarsest level still under budget. Hand-tuned switch distances are
+wrong on every screen but the one they were tuned on; a pixel budget is a perceptual claim that stays
+true everywhere. It uses the same conversion as `resolutionForScreen` in reverse, deliberately — two
+different conversions would let the finest level be finer than anything the selector would ask for.
 
 Resolution is **derived, not fixed**: `resolutionForScreen` takes the object's size, the distance it
 is usually seen from, the focal length and a screen-space error budget in pixels, and returns the
@@ -235,11 +291,18 @@ An object opts in by offering a `worldSphere`; the satellites do not, because th
 evaluated in WGSL and never reach the CPU, and a second copy of the orbital mechanics in JavaScript
 to reject 180 triangles would cost more than it saves.
 
-**Verification.** The mesher is checked headlessly (`dev/dualcontour.mjs`): closed, manifold,
-genus-0 by Euler characteristic, every vertex on the field, unit outward normals, and zero inverted
-windings. Back-face culling was the only thing hiding two winding bugs before those checks existed —
-one in the ring generator, one in the contourer — so the assertions came first and the culling
-second. `dev/frustum.mjs` does the same for the planes.
+**Verification.** The meshers are checked headlessly: closed, manifold, genus-0 by Euler
+characteristic, every vertex on the field, unit outward normals, and zero inverted windings, at every
+simplification level (`dev/dualcontour.mjs`, `dev/octree.mjs`). Back-face culling was the only thing
+hiding two winding bugs before those checks existed — one in the ring generator, one in the
+contourer — so the assertions came first and the culling second.
+
+The strongest single assertion is the **equivalence** one: simplifying with a threshold of zero must
+reproduce the uniform contourer exactly on a curved surface, to the last decimal of every vertex.
+Ju's traversal tables are transcribed rather than derived, and a single wrong entry gives a hole, a
+doubled triangle or an inverted winding — all silent in a screenshot. That one number pins down every
+table at once, which is the reason the uniform contourer is still in the tree at all.
+`dev/frustum.mjs` and `dev/lod.mjs` do the same for the planes and the level selection.
 
 ## Resolution and resources
 

@@ -32,59 +32,21 @@
  *
  * RESOLUTION IS A SCREEN-SPACE DECISION. `resolutionForScreen` derives the cell count from how large a
  * cell is allowed to be in PIXELS at a given viewing distance, which is the only version of "enough
- * detail" that survives someone resizing the window or flying closer. Because the mesher is a pure
- * function of (tree, bounds, resolution), an LOD chain is the same call at several resolutions; nothing
- * here holds state that would need resetting between them.
+ * detail" that survives someone resizing the window or flying closer.
+ *
+ * THIS IS THE UNIFORM CONTOURER, AND IT IS NO LONGER WHAT SHIPS. `octree.js` does the same job
+ * adaptively — same cells, same QEF, but merging any eight whose surface one vertex can represent —
+ * and produces a fraction of the triangles for the same shape. This one stays for two reasons, both
+ * about trust rather than sentiment. It is the ORACLE the adaptive contourer is checked against:
+ * simplifying with a threshold of zero must reproduce this exactly on a curved surface, and that single
+ * assertion pins down every one of Ju's traversal tables at once. And it is the simplest correct thing
+ * that could work, which is what you want to fall back to when the clever one is under suspicion.
+ *
+ * The sampling stage both share lives in `grid.js`, so the two cannot drift apart in the half that
+ * would make the comparison meaningless.
  */
 
-/** Growable Float32Array that amortises like a JS array but stays a typed buffer. */
-class FloatList {
-  constructor(cap = 4096) {
-    this.a = new Float32Array(cap);
-    this.n = 0;
-  }
-
-  push3(x, y, z) {
-    if (this.n + 3 > this.a.length) this.#grow(this.n + 3);
-    this.a[this.n++] = x;
-    this.a[this.n++] = y;
-    this.a[this.n++] = z;
-  }
-
-  #grow(need) {
-    let cap = this.a.length * 2;
-    while (cap < need) cap *= 2;
-    const next = new Float32Array(cap);
-    next.set(this.a.subarray(0, this.n));
-    this.a = next;
-  }
-
-  trimmed() { return this.a.slice(0, this.n); }
-}
-
-class IntList {
-  constructor(cap = 8192) {
-    this.a = new Uint32Array(cap);
-    this.n = 0;
-  }
-
-  push3(x, y, z) {
-    if (this.n + 3 > this.a.length) this.#grow(this.n + 3);
-    this.a[this.n++] = x;
-    this.a[this.n++] = y;
-    this.a[this.n++] = z;
-  }
-
-  #grow(need) {
-    let cap = this.a.length * 2;
-    while (cap < need) cap *= 2;
-    const next = new Uint32Array(cap);
-    next.set(this.a.subarray(0, this.n));
-    this.a = next;
-  }
-
-  trimmed() { return this.a.slice(0, this.n); }
-}
+import { FloatList, IntList, CELL_EDGES, sampleGrid, findCrossings } from './grid.js';
 
 /**
  * How many cells across, for a given on-screen error budget.
@@ -180,93 +142,11 @@ function solveQef(px, py, pz, nx, ny, nz, count, cx, cy, cz, cell, bias, out) {
  *            vertexCount:number, triangleCount:number, cells:number[], cellSize:number}}
  */
 export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
-  // A cube cell, sized off the longest axis, so cells are isotropic. Anisotropic cells would make the
-  // QEF's error metric axis-dependent and tilt the vertices it places.
-  const span = [0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]);
-  const longest = Math.max(span[0], span[1], span[2]);
-  const cell = longest / resolution;
-
-  // Pad outward so a surface exactly on the bound still has a cell to be found in.
-  const lo = [0, 1, 2].map((i) => bounds.min[i] - pad * cell);
-  const n = [0, 1, 2].map((i) => Math.ceil((span[i] + 2 * pad * cell) / cell));
-  const [nxC, nyC, nzC] = n;
-  const cw = nxC + 1;
-  const ch = nyC + 1;
-  const cd = nzC + 1;
-
-  // ---- 1. one field evaluation per corner ----
-  const d = new Float32Array(cw * ch * cd);
-  for (let k = 0; k < cd; k++) {
-    const z = lo[2] + k * cell;
-    for (let j = 0; j < ch; j++) {
-      const y = lo[1] + j * cell;
-      const rowBase = (k * ch + j) * cw;
-      for (let i = 0; i < cw; i++) {
-        d[rowBase + i] = f(lo[0] + i * cell, y, z);
-      }
-    }
-  }
-  const cornerIdx = (i, j, k) => (k * ch + j) * cw + i;
-
-  // ---- 2. crossings on sign-changing edges, sparse ----
-  //
-  // Edge ids are (corner, axis): three per corner, so the map is 3x the corner count. Only the ones
-  // that change sign get an entry in the compact crossing arrays.
-  const edgeMap = new Int32Array(cw * ch * cd * 3).fill(-1);
-  const exs = new FloatList();
-  const ens = new FloatList();
-  let crossings = 0;
-
-  // Central differences for the normal, at the crossing rather than at a corner: the gradient varies
-  // across a cell and the QEF's plane is only as good as the normal it is given. Epsilon is a fraction
-  // of a cell, small enough to be local and large enough to stay out of the field's own noise floor.
-  const eps = cell * 0.25;
-  const grad = (x, y, z, out) => {
-    const gx = f(x + eps, y, z) - f(x - eps, y, z);
-    const gy = f(x, y + eps, z) - f(x, y - eps, z);
-    const gz = f(x, y, z + eps) - f(x, y, z - eps);
-    const l = Math.hypot(gx, gy, gz) || 1;
-    out[0] = gx / l; out[1] = gy / l; out[2] = gz / l;
-  };
+  // ---- 1 & 2. the grid and its crossings, shared with the adaptive contourer ----
+  const grid = sampleGrid(f, { bounds, resolution, pad });
+  const { d, lo, cell, cw, ch, cd, nxC, nyC, nzC, cornerIdx, cellIdx } = grid;
+  const { edgeMap, exs, ens, grad } = findCrossings(f, grid);
   const nrm = [0, 0, 0];
-
-  const addCrossing = (i, j, k, axis, di, dj, dk) => {
-    const a = d[cornerIdx(i, j, k)];
-    const b = d[cornerIdx(i + di, j + dj, k + dk)];
-    if ((a > 0) === (b > 0)) return;
-    // Linear interpolation, then ONE bisection step. Linear alone is exact for a planar field and off by
-    // a fraction of a cell on a curved one; a single refinement halves that for one extra evaluation,
-    // which is the cheapest accuracy in the whole function.
-    let t = a / (a - b);
-    const x0 = lo[0] + i * cell;
-    const y0 = lo[1] + j * cell;
-    const z0 = lo[2] + k * cell;
-    const step = cell;
-    let x = x0 + di * step * t;
-    let y = y0 + dj * step * t;
-    let z = z0 + dk * step * t;
-    const mid = f(x, y, z);
-    if ((mid > 0) === (a > 0)) t += (1 - t) * 0.5 * (Math.abs(mid) / (Math.abs(mid) + Math.abs(b)));
-    else t -= t * 0.5 * (Math.abs(mid) / (Math.abs(mid) + Math.abs(a)));
-    x = x0 + di * step * t;
-    y = y0 + dj * step * t;
-    z = z0 + dk * step * t;
-
-    grad(x, y, z, nrm);
-    edgeMap[(cornerIdx(i, j, k) * 3) + axis] = crossings++;
-    exs.push3(x, y, z);
-    ens.push3(nrm[0], nrm[1], nrm[2]);
-  };
-
-  for (let k = 0; k < cd; k++) {
-    for (let j = 0; j < ch; j++) {
-      for (let i = 0; i < cw; i++) {
-        if (i + 1 < cw) addCrossing(i, j, k, 0, 1, 0, 0);
-        if (j + 1 < ch) addCrossing(i, j, k, 1, 0, 1, 0);
-        if (k + 1 < cd) addCrossing(i, j, k, 2, 0, 0, 1);
-      }
-    }
-  }
 
   // ---- 3. one vertex per cell that any crossing touches ----
   const cellVert = new Int32Array(nxC * nyC * nzC).fill(-1);
@@ -282,15 +162,6 @@ export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
   const qny = new Float64Array(12);
   const qnz = new Float64Array(12);
   const vout = [0, 0, 0];
-
-  // The 12 edges of a cell, as (corner offset, axis).
-  const CELL_EDGES = [
-    [0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 1, 1, 0],
-    [0, 0, 0, 1], [1, 0, 0, 1], [0, 0, 1, 1], [1, 0, 1, 1],
-    [0, 0, 0, 2], [1, 0, 0, 2], [0, 1, 0, 2], [1, 1, 0, 2],
-  ];
-
-  const cellIdx = (i, j, k) => (k * nyC + j) * nxC + i;
 
   for (let k = 0; k < nzC; k++) {
     for (let j = 0; j < nyC; j++) {

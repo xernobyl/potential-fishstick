@@ -57,7 +57,9 @@ import { extractFrustum } from './core/frustum.js';
 import { rectTube, box, concatMeshes } from './scene/meshgen.js';
 import { shipTree, SHIP_MESH } from './scene/ship_sdf.js';
 import { compile, bounds } from './scene/sdf/nodes.js';
-import { dualContour, resolutionForScreen } from './scene/sdf/dualcontour.js';
+import { resolutionForScreen } from './scene/sdf/dualcontour.js';
+import { dualContourAdaptive } from './scene/sdf/octree.js';
+import { selectLod } from './core/lod.js';
 import { ringDims } from './scene/tuning.js';
 import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
@@ -100,24 +102,36 @@ function buildShipMesh() {
       errorPx: SHIP_MESH.errorPx,
     }),
   );
-  const mesh = dualContour(compile(tree), { bounds: b, resolution: res });
+  // THE WHOLE LOD CHAIN FROM ONE OCTREE. Passing the array of budgets simplifies progressively rather
+  // than meshing four times, so four levels cost barely more than the finest one — and the levels are
+  // nested, which is what stops a switch from popping.
+  const levels = dualContourAdaptive(compile(tree), {
+    bounds: b,
+    resolution: res,
+    error: SHIP_MESH.lodErrors,
+  });
 
-  // Body units -> world units, in place. A uniform scale leaves normals unchanged, which is the whole
-  // reason `scale` is uniform-only.
-  const positions = new Float32Array(mesh.positions.length);
-  for (let i = 0; i < positions.length; i++) positions[i] = mesh.positions[i] * SHIP_MESH.scale;
+  return levels.map((mesh, i) => {
+    // Body units -> world units. A uniform scale leaves normals unchanged, which is the whole reason
+    // `scale` is uniform-only.
+    const positions = new Float32Array(mesh.positions.length);
+    for (let j = 0; j < positions.length; j++) positions[j] = mesh.positions[j] * SHIP_MESH.scale;
 
-  // Through `concatMeshes` even though there is one object, rather than hand-rolling the ids and the
-  // empty `extra`. It is the same three lines either way until it is not: the first version wrote them by
-  // hand and silently skipped the per-object RANGE, so the ship fell back to a bounding sphere of
-  // Infinity and was never culled. One code path produces the ids, the extra data and the bounds
-  // together, so a mesh cannot arrive half-described.
-  return concatMeshes([{
-    positions,
-    normals: mesh.normals,
-    extra: new Float32Array(mesh.vertexCount * 4),
-    indices: mesh.indices,
-  }]);
+    // Through `concatMeshes` even though there is one object, rather than hand-rolling the ids and the
+    // empty `extra`. It is the same three lines either way until it is not: the first version wrote them
+    // by hand and silently skipped the per-object RANGE, so the ship fell back to a bounding sphere of
+    // Infinity and was never culled. One code path produces the ids, the extra data and the bounds
+    // together, so a mesh cannot arrive half-described.
+    const out = concatMeshes([{
+      positions,
+      normals: mesh.normals,
+      extra: new Float32Array(mesh.vertexCount * 4),
+      indices: mesh.indices,
+    }]);
+    // The budget this level was simplified to, in WORLD units — what the selector compares against.
+    out.errorWorld = SHIP_MESH.lodErrors[i] * SHIP_MESH.scale;
+    return out;
+  });
 }
 
 export class Renderer {
@@ -185,12 +199,21 @@ export class Renderer {
         label: 'ship-mesh',
         shader: 'shipmesh.wgsl',
         clear: false,
-        mesh: () => new Mesh(gpu.device, buildShipMesh(), 'ship'),
-        // The hull's sphere rides with the ship. Object-space radius times the mesh scale, centred on
-        // the ship's position — the orientation cannot change a sphere.
+        mesh: () => buildShipMesh().map((data, i) => {
+          const m = new Mesh(gpu.device, data, `ship-lod${i}`);
+          m.errorWorld = data.errorWorld;
+          return m;
+        }),
+        // The hull's sphere rides with the ship, centred on its position — an orientation cannot change
+        // a sphere, which is the whole reason this needs nothing but a position.
+        //
+        // The radius is used AS IS. `buildShipMesh` scales the vertices into world units before handing
+        // them to `concatMeshes`, so the radius measured from them is already world-space; multiplying
+        // by the mesh scale again shrank the sphere to 60% of the hull and would have culled the ship
+        // while part of it was still on screen. That was latent for exactly as long as the range was
+        // missing and the radius was Infinity.
         worldSphere: (_id, r) => [
-          this.ship.pos[0], this.ship.pos[1], this.ship.pos[2],
-          r.radius * SHIP_MESH.scale,
+          this.ship.pos[0], this.ship.pos[1], this.ship.pos[2], r.radius,
         ],
       }),
       rings: new SolidMeshPass(gpu, this.targets, this.shaders, {
@@ -428,6 +451,21 @@ export class Renderer {
     // The wireframe view swaps every solid mesh onto its line-list pipeline. Built on demand the first
     // time the view is selected, and the flag only takes effect once it exists, so selecting it never
     // stalls the frame waiting on a pipeline compile.
+    // LOD, once per frame per pass that has a chain. The distance is to the object's bounding sphere
+    // CENTRE, which is what the sphere-based culling already knows how to place — so the two share the
+    // same one fact about where an object is.
+    for (const m of this.solidPasses) {
+      if (!m.meshes || m.meshes.length < 2) continue;
+      const sphereOf = m.spec.worldSphere;
+      const s0 = sphereOf?.(0, m.mesh.ranges[0]);
+      if (!s0) continue;
+      const dx = s0[0] - this.camera.current.pos[0];
+      const dy = s0[1] - this.camera.current.pos[1];
+      const dz = s0[2] - this.camera.current.pos[2];
+      m.lod = selectLod(m.meshes, Math.hypot(dx, dy, dz), 1.2,
+                        Math.hypot(t.width, t.height), SHIP_MESH.lodErrorPx);
+    }
+
     const view = this.debugView >= 0 ? VIEWS[this.debugView] : null;
     const wire = !!view?.wireframe;
     for (const m of this.solidPasses) {

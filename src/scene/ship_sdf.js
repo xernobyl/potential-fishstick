@@ -96,29 +96,53 @@ export function shipTree() {
 export const SHIP_MESH = {
   /** Body units -> world units. Matches the marched hull it replaces. */
   scale: 0.60,
+
   /**
    * Largest a cell may appear on screen, in pixels, at the distance the ship is usually seen from.
    *
-   * CALIBRATED, not guessed. Measured on this tree, at the resolutions the derivation can land on:
+   * FINER THAN IT USED TO BE (6.0 -> 3.0), and that is the adaptive contourer paying for itself. A
+   * uniform grid spends the same triangles on a flat wing panel as on the nozzle rim, so asking for
+   * detail meant buying it everywhere; the budget had to be loose to keep the count sane. Simplification
+   * removes the waste where the surface is flat, so the resolution can be set by what the SHARP features
+   * need and the flat ones cost nothing. Measured on this tree, four LOD levels built from one octree:
    *
-   *     res 24    876 tris   26 ms    21 KB
-   *     res 32   2124 tris   33 ms    49 KB
-   *     res 40   3540 tris   43 ms    82 KB
-   *     res 48   4936 tris   38 ms   115 KB
-   *     res 64   8836 tris  101 ms   207 KB
+   *     res 48    74 ms    4672 / 4096 / 3110 / 2474 tris
+   *     res 64   144 ms    7564 / 5302 / 3550 / 2544 tris
+   *     res 80   167 ms   10364 / 6132 / 3564 / 2068 tris
    *
-   * 6 px lands the derivation around 40-48 at the chase distance, which is a few thousand triangles for
-   * a hull that is usually 40 px across, and a build that costs less than a shader compile. The first
-   * version asked for 2 px, derived 192, capped at 96, and spent 221 ms making 20044 triangles for a
-   * silhouette nobody can see the facets of anyway — the derivation was right and the budget was wrong.
-   *
-   * The resolution is still DERIVED rather than fixed, so the mesh suits the window rather than the
-   * machine it was authored on, and the same call at other resolutions is the LOD chain when that is
-   * wanted.
+   * res 64 is the pick: its finest level has the fidelity of a 64-cell grid at roughly the triangle
+   * count the old 48-cell UNIFORM mesh cost (4936), and the whole chain builds in about the time one
+   * uniform mesh used to.
    */
-  errorPx: 6.0,
+  errorPx: 3.0,
   /** Typical viewing distance in world units, for the resolution estimate. The chase camera's stand-off. */
   viewDistance: 3.2,
   /** Ceiling, so a huge window cannot ask for a mesh that takes visible time to build at startup. */
-  maxResolution: 48,
+  maxResolution: 64,
+
+  /**
+   * The LOD chain, as simplification budgets in BODY units — the same units this file authors in.
+   *
+   * Finest first. They are geometric ERROR, not triangle targets: a level is "the mesh you get when no
+   * vertex is allowed to be more than this far from the true surface", which is what makes the selector
+   * able to reason about them in pixels (see core/lod.js). Roughly geometric spacing, so each level is a
+   * meaningful step rather than a rounding of the last.
+   *
+   * The whole chain comes out of ONE octree, simplified progressively, so the levels are nested by
+   * construction — a vertex in a coarse level exists in every finer one. That is why switching between
+   * them does not pop in the way independently-built levels do.
+   *
+   * The finest is not zero: at zero the contourer still merges genuinely coplanar cells for no error at
+   * all, and a hair above zero also collects the cells that are flat to within a rounding error.
+   */
+  lodErrors: [0.0015, 0.004, 0.010, 0.025],
+
+  /**
+   * How large a geometric error may APPEAR before it is worth stepping to a finer level, in pixels.
+   *
+   * Sub-pixel is the honest threshold for "cannot be seen" and it is what this is set near. Raising it
+   * saves triangles on a ship that is usually small on screen; lowering it below about half a pixel buys
+   * nothing, because the resolve and the film grade are both operating at that scale already.
+   */
+  lodErrorPx: 0.9,
 };

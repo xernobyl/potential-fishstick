@@ -437,6 +437,30 @@ the method, not of a knob that can be turned off.
   Which also settles the candidate count: 9 is required rather than a preference. A wide analytic
   tail needs the true nearest star, and a truncated search bites wedges out of it.
 
+- **DONE: triangle reduction, on the octree rather than after the fact.** The hull was contoured on a
+  uniform grid, which spends the same triangles on a flat wing panel as on the nozzle rim. It is now
+  adaptively contoured: the octree merges any eight cells whose surface one vertex can represent to
+  within a stated error, so the triangles go where the shape actually curves.
+
+  The choice worth recording is *not* running an edge-collapse decimator over the finished mesh. Dual
+  contouring has already computed the quadric it would need — the QEF each cell solves — and it is
+  built from the field's own gradients rather than reconstructed from the triangles those gradients
+  produced. Decimating afterwards discards the exact quantity, rebuilds an approximation of it, and
+  pays for a full-resolution mesh first.
+
+  The measurement that makes the argument concrete: a box drops from 13068 to 3732 triangles at a
+  threshold of **zero**, with identical accuracy to the last decimal, because eight coplanar cells
+  genuinely cost one vertex no error. No decimator gets that for free.
+
+  It also gives the LOD chain away: simplification is monotone, so four levels come out of one octree
+  for barely more than the coarsest, nested by construction. Selection is budgeted in pixels — see
+  `core/lod.js`.
+
+  One thing Ju's 2002 formulation gets wrong and this does not: it checks only the error before
+  collapsing, so a merged cell describing two separate surface sheets gets one vertex and becomes
+  non-manifold. A 256-entry table refuses those. Every level is closed, manifold and genus 0, asserted
+  in `dev/octree.mjs`.
+
 - **Depth of field, switchable, with both pipelines available.** Not built. The design and the survey
   behind it, so it can be built without re-deciding anything.
 
@@ -535,6 +559,7 @@ src/
     profiler.js      timestamp queries
     mesh.js          a generated mesh on the GPU: one layout, one buffer pair
     frustum.js       view-frustum planes (five, not six) and sphere culling
+    lod.js           level selection, budgeted in PIXELS rather than distances
   scene/
     tuning.js        >>> every art-direction number lives here <<<
     camera.js        drift / arcball, and the view-projection matrices
@@ -548,7 +573,10 @@ src/
     ship_sdf.js      the hull as an SDF tree, and its mesh budget
     sdf/
       nodes.js       the shape language: primitives, booleans, blends, transforms
-      dualcontour.js SDF -> triangles, sharp features preserved (QEF)
+      grid.js        field sampling and surface crossings, shared by both meshers
+      qef.js         the error function, in the form that can be ADDED
+      octree.js      adaptive SDF -> triangles: simplified, crack-free, LOD chain
+      dualcontour.js the uniform mesher, kept as the oracle the adaptive one is checked against
   passes/            one file per pass, each records itself
     additive.js      ONE pass for the contrail, auroras and rail guns — see below
     solidmesh.js     ONE pass for every rasterised opaque mesh, for the same reason

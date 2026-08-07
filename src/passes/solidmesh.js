@@ -33,6 +33,8 @@ export class SolidMeshPass {
    * @param {string} spec.shader  WGSL module exposing `vs` and `fs`
    * @param {() => import('../core/mesh.js').Mesh} spec.mesh  resolved at init, so the caller can
    *        build the geometry lazily rather than before the device exists
+   * @param {() => (object|object[])} spec.mesh  one mesh, or an LOD chain finest-first. A chain makes
+   *        `pass.lod` meaningful; see core/lod.js for how the level is chosen.
    * @param {number} [spec.instances]  draw the mesh this many times, the vertex stage placing each
    *        from `@builtin(instance_index)`. For a shape repeated with different transforms — the
    *        satellites — this beats baking copies into the buffer.
@@ -52,7 +54,12 @@ export class SolidMeshPass {
 
   async init(frameBGL, defines) {
     const d = this.gpu.device;
-    this.mesh = this.spec.mesh();
+    // The spec may hand back one mesh or a chain of them, finest first. One is the common case and it
+    // becomes a chain of length one, so nothing downstream needs to know which it got.
+    const built = this.spec.mesh();
+    this.meshes = Array.isArray(built) ? built : [built];
+    this.lod = 0;
+    this.mesh = this.meshes[0];
     const module = await this.shaders.module(this.spec.shader, defines);
     this.pipeline = await d.createRenderPipelineAsync({
       label: this.spec.label,
@@ -181,6 +188,9 @@ export class SolidMeshPass {
       ...profiler.scope(this.spec.label),
     });
     const instances = this.spec.instances ?? 1;
+    // The level chosen for this frame. Set by the renderer, which owns the camera; the pass only has to
+    // honour it. Clamped rather than trusted, so a stale index from a resize cannot index off the end.
+    this.mesh = this.meshes[Math.min(Math.max(this.lod, 0), this.meshes.length - 1)];
     pass.setBindGroup(0, frameBG);
 
     // WIREFRAME, when the debug view asks for it and its pipeline is ready. Everything is drawn,
