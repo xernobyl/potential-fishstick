@@ -1,1 +1,4 @@
 .DS_Store
+
+# Local editor/agent scratch (launch configs, etc).
+.claude/

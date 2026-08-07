@@ -48,7 +48,7 @@ import { AdditivePass } from './passes/additive.js';
 import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
-import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL,
+import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
          TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { RingsPass } from './passes/rings.js';
 import { ScenePass } from './passes/scene.js';
@@ -108,6 +108,7 @@ export class Renderer {
     this.frameIndex = 0;
     this.dynres = new DynamicRes();
     this._warnedNoTimestamps = false;
+    this._fireSlot = -1;
     // The controller is FED, not polling: one genuine sample per resolved frame — see dynres.js.
     this.profiler.onFrame = (ms) => { if (QUALITY.dynamicRes) this.dynres.sample(ms); };
     this.accumFrames = 0;
@@ -240,7 +241,16 @@ export class Renderer {
     // into the view matrix it is about to build.
     this.ship.update(dt, input.cmd);
     this.contrail.update(dt, this.ship);
-    this.railgun.update(time, this.ship, !!input.cmd.fire);
+    // AUTO-FIRE while the ship is still cruising, so there is something to look at before anyone
+    // touches a key. A one-frame PULSE per period, not a held boolean: the rail gun deliberately
+    // triggers on a rising edge — holding it would fire once and then never again, which is the
+    // behaviour its own comment exists to explain.
+    let fire = !!input.cmd.fire;
+    if (!this.ship.flown) {
+      const slot = Math.floor(time / SHIP.autoFireEvery);
+      if (slot !== this._fireSlot) { this._fireSlot = slot; fire = true; }
+    }
+    this.railgun.update(time, this.ship, fire);
     this.aurora.update(dt, time);
     this.camera.setViewport(t.width, t.height);
     this.camera.update(time, dt, input, this.ship);

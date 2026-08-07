@@ -117,6 +117,10 @@ export class Ship {
   right() { return this._right; }
   speed() { return Math.hypot(this.vel[0], this.vel[1], this.vel[2]); }
 
+  /** True once the player has taken over; until then the ship cruises, rolls and fires
+   *  on its own. Latched on FLIGHT input only, so orbiting the camera does not end the show. */
+  get flown() { return this._flown; }
+
   /**
    * @param {number} dt seconds
    * @param {{pitch:number, yaw:number, roll:number, thrust:number}} cmd each -1..1
@@ -206,7 +210,19 @@ export class Ship {
     // `turnAccel`), the only trustworthy question is "does the roof lean the same way the
     // nose swings, as the player sees it". It does with this sign; it banked out of the
     // turn with the other one.
-    this.bank += (this.turn * T.bankPerTurn - this.bank) * Math.min(1, dt * T.bankRate);
+    if (this._flown) {
+      this.bank += (this.turn * T.bankPerTurn - this.bank) * Math.min(1, dt * T.bankRate);
+    } else {
+      // BARREL ROLL while cruising. INTEGRATED, not eased: the branch above pulls `bank` toward
+      // the value the current turn rate implies, which for a ship flying straight is zero — so
+      // easing would fight a continuous roll to a standstill. Wrapped so the angle cannot grow
+      // without bound and lose precision over a long session.
+      const TAU = Math.PI * 2;
+      // Wrapped SIGNED, into (-PI, PI]. Not just to bound the angle: when the player takes over
+      // mid-roll the eased branch above pulls `bank` toward ~0, and from +5.9 rad that unwinds
+      // the long way round as a reverse tumble. Signed-shortest makes the handover a level-out.
+      this.bank = ((this.bank + T.rollRate * dt + Math.PI) % TAU + TAU) % TAU - Math.PI;
+    }
 
     // ---- derive the orientation ------------------------------------------
     cross(right, up, h);

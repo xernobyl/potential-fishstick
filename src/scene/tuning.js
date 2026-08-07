@@ -352,6 +352,13 @@ export const SHIP = {
   /** Cosmetic lean, radians per rad/s of turn rate, and how fast it follows. Never
    *  feeds back into the motion. */
   bankPerTurn: 0.34,
+  /** Barrel-roll rate while cruising, rad/s. About five seconds a revolution — slow enough to
+   *  read as deliberate rather than as a tumble, and it puts the contrails through a helix. */
+  rollRate: 1.1,
+  /** Seconds between automatic shots while cruising. The rail gun triggers on a rising EDGE, so
+   *  the renderer pulses it for one frame per period; see there for why holding it would not
+   *  work. */
+  autoFireEvery: 2.4,
   bankRate: 5.0,
   /** Scales turn acceleration into what the RCS puffs show. */
   rcsFromAccel: 0.5,
