@@ -13,7 +13,12 @@ Everything is procedural. No textures, no meshes, no assets — every shape is a
 handful of instanced boxes. The one dependency is a vendored copy of `lil-gui` for the tuning panel,
 loaded on demand and outside the render path.
 
-Press **`g`** for the panel. **Drag** to orbit, **arrows/WASD** to fly, **space** to shoot.
+Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
+**space** to shoot.
+
+**[ARCHITECTURE.md](ARCHITECTURE.md)** is the shorter read: the layers, the frame graph, and the
+temporal contract that most of this renderer's bugs have lived in. Start there if you are going to
+change something rather than just look at it.
 
 ---
 
