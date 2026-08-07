@@ -49,8 +49,11 @@ fn fbm3(p0 : vec3f) -> f32 {
 
 /// Fine two-octave noise, used as a real displacement: it puts grain on the
 /// surface and fuzz on the silhouette.
+/// Surface grain. The frequencies are divided by R, which is what makes them a property of the
+/// BODY rather than of the world: a bare `p * 7.0` is 7 cycles per world unit, so doubling the
+/// planet halves the grain's relative size. Against R it is 7 cycles per body radius and stays put.
 fn detailNoise(p : vec3f) -> f32 {
-  return 0.62 * vnoise(p * 7.0) + 0.38 * vnoise(p * 15.0);
+  return 0.62 * vnoise(p * (7.0 / R)) + 0.38 * vnoise(p * (15.0 / R));
 }
 
 /// Radical inverse (van der Corput, base 2). A low-discrepancy sequence

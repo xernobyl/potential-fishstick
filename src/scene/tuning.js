@@ -616,7 +616,7 @@ export const MEDIUM = {
 };
 
 export const CORE = {
-  radius: 0.78,
+  radius: 1.56,
   attenuation: 1.6,
   colour: [1.0, 0.2, 0.045],
   intensity: 5.4,
@@ -1036,6 +1036,10 @@ export const VOLUME = {
    *  distance field approximated by a sphere, so this is both the penumbra and the honest width of
    *  the approximation. */
   bodySoft: 0.10,
+  /** Radius the body's shadow is cast from, as a multiple of R. R is the field's MEAN radius and
+   *  its lobes reach about half again as far, so a terminator at R leaks light through them. This
+   *  sits between the two — the best a single sphere can do against a silhouette that is not one. */
+  bodyR: 1.25,
   /** How much of a sun a ring blocks. Below 1 because a machined hoop seen edge-on is thin and the
    *  shell is deep — a fully opaque bar would read as a painted stripe. */
   ringOpacity: 0.85,
@@ -1169,6 +1173,7 @@ export function wgslDefines() {
     VOL_FALLOFF: VOLUME.falloff,
     VOL_AMBIENT: `vec3f(${VOLUME.ambient.map(f).join(', ')})`,
     VOL_BODY_SOFT: VOLUME.bodySoft,
+    VOL_BODY_R: VOLUME.bodyR,
     VOL_RING_SOFT: VOLUME.ringSoft,
     VOL_RING_SPREAD: VOLUME.ringSpread,
     // temporal — blend, gate and clip live in the frame UNIFORM now rather than here,

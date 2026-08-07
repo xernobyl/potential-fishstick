@@ -163,10 +163,13 @@ fn phaseHG(cosT : f32, g : f32) -> f32 {
 /// actually turns back up. It is the standard correction for atmospheric aerosol and costs two
 /// multiplies, so the atmosphere uses it while the body's interior keeps plain HG: inside a dense
 /// medium the light has forgotten which way it came from and the difference is unobservable.
-fn phaseCS(cosT : f32, g : f32) -> f32 {
+fn phaseCS(cosT : f32, g0 : f32) -> f32 {
+  // Clamped, because `g` is a UNIFORM now: the denominator vanishes as g approaches 1 with the
+  // forward lobe, and a value typed into the console should not be able to divide by zero.
+  let g = clamp(g0, 0.0, 0.95);
   let g2 = g * g;
   return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + cosT * cosT))
-       / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * cosT, 1.5));
+       / ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * g * cosT, 1e-4), 1.5));
 }
 
 // ---- camera ------------------------------------------------------------

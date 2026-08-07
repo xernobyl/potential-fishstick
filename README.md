@@ -597,6 +597,28 @@ the full reasoning; these are the ones worth knowing up front:
   one, with the ember pass's own spread WITHIN a configuration wider than the gap between
   configurations. This frame is bound by the march, not by additive fill. On much weaker hardware
   that stops being true, and it is one toggle in the panel.
+- **Scaling a world is mostly a hunt for the numbers that are secretly lengths.** Doubling the
+  planet was four tuning values and a day's worth of consequences, and the consequences were all
+  the same shape: a constant that reads as dimensionless but is not.
+  Halved, because they are coefficients PER UNIT LENGTH and now act over twice the distance: the
+  medium's optical depth, the core attenuation, the aerial haze. Left alone because they really are
+  ratios: the per-sphere jitter, the pulse amplitude, the shadow softness, the march's step scales
+  and its hit epsilon (which is relative to `t`).
+  And several were absolute lengths hiding in shader source rather than in tuning: the band over
+  which surface grain mixes into the field, the shadow ray's origin offset and reach, the step
+  clamps inside the shadow march, and the grain's own frequency — which is a length^-1, so it had
+  to go the other way. Those are all expressed against `R` now rather than as bare numbers, which
+  makes them scale-invariant by construction instead of correct until the next time.
+  Symptoms, for the record: the body went opaque and dark, the embers vanished entirely (their
+  spawn shell had not moved), and the surface grain became half the size it should be.
+- **A shader loop hoisted the wrong thing, and it cost more than the feature.** `ringShadow` called
+  `ringDefAt` inside the march — 12 steps times 2 suns times 3 rings is 72 evaluations per pixel of
+  a value that depends only on the ring index and the clock, each costing a hash, three sin/cos
+  pairs, a cross product and two normalises. Hoisted to 3, and the ring pass's share of the
+  atmosphere fell from 0.56 ms to 0.20.
+  Making a zero-thickness medium return early is what made that measurable at all: with `sigma` at
+  0 genuinely free rather than merely invisible, the slider doubles as an A/B, and the atmosphere's
+  cost reads straight off it — 1.94 ms on the march, 0.20 on the rings.
 - **The march rejects a lattice candidate before it knows where the candidate IS.** The single
   biggest perf win in the project: **raymarch 30.7 -> 22.9 ms, a 25% cut**, with the image
   unchanged.

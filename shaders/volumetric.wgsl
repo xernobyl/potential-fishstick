@@ -64,7 +64,12 @@ fn bodyShadow(p : vec3f, L : vec3f) -> f32 {
   // approach lies behind `p` the nearest point of the allowed segment is `p` itself.
   let pl = dot(p, L);
   let perp = select(sqrt(max(dot(p, p) - pl * pl, 0.0)), length(p), pl >= 0.0);
-  return smoothstep(R * (1.0 - VOL_BODY_SOFT), R * (1.0 + VOL_BODY_SOFT), perp);
+  // VOL_BODY_R, not R. R is the field's MEAN radius and the lumps reach half again as far, so a
+  // terminator at R lets light through where a lobe should be blocking it — a gap that grew with
+  // the body when the world doubled. This sits between the two, which is the best a single sphere
+  // can do against a silhouette that is not one.
+  let rs = R * VOL_BODY_R;
+  return smoothstep(rs * (1.0 - VOL_BODY_SOFT), rs * (1.0 + VOL_BODY_SOFT), perp);
 }
 
 /// How much of a sun reaches `p` past the rings. Exact, and cheap enough to do per sample.
@@ -77,22 +82,47 @@ fn bodyShadow(p : vec3f, L : vec3f) -> f32 {
 /// The penumbra widens with distance from the occluder, which is what a real one does and also
 /// what stops the edge aliasing: a hard analytic annulus sweeping through a low-step march is a
 /// crawling line, and this is a soft gradient several samples wide.
-fn ringShadow(p : vec3f, L : vec3f, t : f32) -> f32 {
-  var sh = 1.0;
+/// The only part of a ring the shadow test needs: its axis, its radius and its radial half-width.
+/// Four floats and a fifth, against RingDef's eighteen — and none of it depends on where along the
+/// ray you are, which is the whole point of `ringShadowSetup`.
+struct RingOccluder {
+  azr   : vec4f,   // xyz axis, w radius
+  halfW : f32,
+};
+
+/// Evaluate every ring's attitude ONCE.
+///
+/// `ringDefAt` is a function of the ring index and the clock — not of position — so calling it
+/// inside the march was pure waste: 12 steps times 2 suns times 3 rings is 72 evaluations per
+/// pixel of a value that changes 3 times per frame. Each one costs a hash, three sin/cos pairs, a
+/// cross product and two normalises. Hoisting it is the difference between the atmosphere costing
+/// 2.1 ms and costing a fraction of that.
+fn ringShadowSetup(t : f32) -> array<RingOccluder, RING_COUNT> {
+  var out : array<RingOccluder, RING_COUNT>;
   for (var i = 0u; i < u32(RING_COUNT); i++) {
     let r = ringDefAt(i, t);
-    let denom = dot(L, r.az);
+    out[i].azr = vec4f(r.az, r.radius);
+    out[i].halfW = r.halfW;
+  }
+  return out;
+}
+
+fn ringShadow(rings : array<RingOccluder, RING_COUNT>, p : vec3f, L : vec3f) -> f32 {
+  var sh = 1.0;
+  for (var i = 0u; i < u32(RING_COUNT); i++) {
+    let r = rings[i];
+    let denom = dot(L, r.azr.xyz);
     // A light travelling parallel to the ring's plane never crosses it.
     if (abs(denom) < 1e-4) { continue; }
-    let s = -dot(p, r.az) / denom;
+    let s = -dot(p, r.azr.xyz) / denom;
     // Only occluders BETWEEN the point and the sun.
     if (s <= 0.0) { continue; }
     let q = p + L * s;
     // `q` lies in the plane, so its length IS the in-plane radius.
     let rad = length(q);
     let soft = VOL_RING_SOFT * (1.0 + s * VOL_RING_SPREAD);
-    let inner = smoothstep(r.radius - r.halfW - soft, r.radius - r.halfW + soft, rad);
-    let outer = 1.0 - smoothstep(r.radius + r.halfW - soft, r.radius + r.halfW + soft, rad);
+    let inner = smoothstep(r.azr.w - r.halfW - soft, r.azr.w - r.halfW + soft, rad);
+    let outer = 1.0 - smoothstep(r.azr.w + r.halfW - soft, r.azr.w + r.halfW + soft, rad);
     sh *= 1.0 - frame.volume.y * inner * outer;
   }
   return sh;
@@ -127,6 +157,11 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
   out.inScatter = vec3f(0.0);
   out.transmittance = vec3f(1.0);
 
+  // A zero-thickness medium is the natural way to switch this off, and making it genuinely free
+  // rather than merely invisible is what lets the slider double as an A/B: the difference between
+  // sigma 0 and sigma 0.55 is then exactly what the atmosphere costs.
+  if (frame.volume.x <= 1e-5) { return out; }
+
   let shell = iSphere(ro, rd, ATMO_R);
   if (shell.y <= 0.0) { return out; }
   let t0 = max(shell.x, 0.0);
@@ -143,14 +178,17 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
   let ph1 = phaseCS(dot(rd, SUN1_DIR), frame.volume.z);
   let ph2 = phaseCS(dot(rd, SUN2_DIR), frame.volume.z);
 
+  // Once, not per sample per sun. See ringShadowSetup.
+  let rings = ringShadowSetup(frame.camPos.w);
+
   for (var i = 0; i < VOL_STEPS; i++) {
     let t = t0 + (f32(i) + jit) * dt;
     let p = ro + rd * t;
     let dens = volDensity(p);
     if (dens < 1e-4) { continue; }
 
-    let lit = SUN1_COL * (ph1 * bodyShadow(p, SUN1_DIR) * ringShadow(p, SUN1_DIR, frame.camPos.w))
-            + SUN2_COL * (ph2 * bodyShadow(p, SUN2_DIR) * ringShadow(p, SUN2_DIR, frame.camPos.w))
+    let lit = SUN1_COL * (ph1 * bodyShadow(p, SUN1_DIR) * ringShadow(rings, p, SUN1_DIR))
+            + SUN2_COL * (ph2 * bodyShadow(p, SUN2_DIR) * ringShadow(rings, p, SUN2_DIR))
             + VOL_AMBIENT;
 
     // ANALYTIC integration of the step rather than a midpoint sum. Over a step of constant

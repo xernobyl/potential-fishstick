@@ -199,7 +199,8 @@ fn mapBody(p : vec3f) -> f32 {
   var d = mapImpl(p, OCTAVES, true);
   // Grain only near the surface (a real saving), faded in smoothly: a hard
   // cutoff is a step in the field, and the marcher renders that as stripes.
-  let w = 1.0 - smoothstep(0.06, 0.20, d);
+  // Against R: this band is a distance from the SURFACE, so it has to scale with the body.
+  let w = 1.0 - smoothstep(R * 0.06, R * 0.20, d);
   if (w > 0.0) { d -= (detailNoise(p) - 0.5) * DETAIL * w; }
   return d;
 }
@@ -231,7 +232,9 @@ fn softshadow(ro : vec3f, rd : vec3f, mint : f32, maxt : f32, w : f32) -> f32 {
   for (var i = 0; i < 16; i++) {
     let h = mapImpl(ro + rd * t, 2, false);
     res = min(res, h / (w * t));
-    t += clamp(h, 0.03, 0.30);
+    // Body-space lengths, hence against R — a fixed floor would take twice as many steps to
+    // cross twice the body, and a fixed ceiling would step past it.
+    t += clamp(h, R * 0.03, R * 0.30);
     if (res < -1.0 || t > maxt) { break; }
   }
   res = max(res, -1.0);

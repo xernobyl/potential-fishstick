@@ -145,8 +145,10 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
 
   let f0 = vec3f(0.05);                                  // candy coat, IOR ~1.5
   let rough = clamp(mix(0.13, 0.70, sugar) + 0.10 * (dn - 0.5), 0.05, 1.0);
-  let sha1 = softshadow(p + N * 0.02, SUN1_DIR, 0.02, 6.0, 0.11);
-  let sha2 = softshadow(p + N * 0.02, SUN2_DIR, 0.02, 6.0, 0.11);
+  // Offsets and reach are body-space lengths, so they are expressed against R. `w` is a softness
+  // RATIO (h / (w * t)) and is dimensionless, so it stays put.
+  let sha1 = softshadow(p + N * (R * 0.02), SUN1_DIR, R * 0.02, R * 6.0, 0.11);
+  let sha2 = softshadow(p + N * (R * 0.02), SUN2_DIR, R * 0.02, R * 6.0, 0.11);
 
   let direct = sunLight(N, V, SUN1_DIR, SUN1_COL, alb, rough, f0, sha1)
              + sunLight(N, V, SUN2_DIR, SUN2_COL, alb, rough, f0, sha2)
