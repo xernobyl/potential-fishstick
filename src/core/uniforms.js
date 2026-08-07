@@ -69,7 +69,7 @@ const O = {
   // a const is baked at pipeline creation, so a slider bound to one moves nothing.
   grade: 136,       // x filmExposure, y white, z halation, w saturation
   grade2: 140,      // x vignette, y grain, z blackLift, w bloomStrength
-  grade3: 144,      // x contrast, y flareStrength, z bloomThreshold, w spare
+  grade3: 144,      // x contrast, y flareStrength, z bloomThreshold, w toneMap (0 Hable, 1 AgX)
   aurora: 148,      // x gain, y rays, z grazeFade, w emission phase 0..1
   addRes: 152,      // xy additive-target size, zw 1/size
   volume: 156,      // x sigma, y ringOpacity, z g, w spare
@@ -200,6 +200,7 @@ export class FrameUniforms {
 
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;
+    a[O.grade3 + 3] = gr.toneMap;
 
     a[O.addRes] = s.addWidth; a[O.addRes + 1] = s.addHeight;
     a[O.addRes + 2] = 1 / s.addWidth; a[O.addRes + 3] = 1 / s.addHeight;

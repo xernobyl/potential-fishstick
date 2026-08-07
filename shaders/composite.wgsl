@@ -24,6 +24,65 @@
 @group(1) @binding(4) var linSamp  : sampler;
 
 /// Filmic S-curve (Hable): long shoulder, gentle toe.
+// ---- AgX ------------------------------------------------------------------------------------
+//
+// A display transform rather than a tone curve, and the distinction is the point. Hable maps each
+// channel independently, so a bright saturated colour saturates one channel first and the HUE SHIFTS
+// as it clips - which in this scene is most of the interesting content: the rail guns, the sun discs,
+// the emissive core. AgX (Troy Sobotka's, as adopted by Blender 4.x) instead moves colour toward white
+// as it brightens, so an intense emitter converges on white the way film does and keeps its hue far
+// longer on the way there.
+//
+// Three stages, and the first is the one that does the work:
+//
+//   INSET. A matrix that mixes the channels slightly toward each other before the curve. That is what
+//   stops a single channel from clipping alone; the per-channel curve afterwards can no longer produce
+//   a pure primary out of a near-white input.
+//
+//   LOG then SIGMOID. Values are log2-encoded into a fixed exposure window and run through a sigmoid.
+//   The window's top is taken from FILM.white (as log2, so the existing slider keeps meaning: 13.4
+//   lands at 3.74 EV, near AgX's own 4.026 default) and its bottom is fixed at -12.47 EV, which is
+//   about as deep as the format carries anything.
+//
+//   OUTSET. The inverse of the inset - but applied to the CURVED values, so it does not undo the
+//   mixing. That asymmetry is where the highlight desaturation comes from; it is a feature of the
+//   construction, not a fudge.
+//
+// The sigmoid's output is display-referred, so unlike the Hable path this needs no gamma afterwards.
+// The polynomial is Benjamin Wrensch's sixth-order fit to AgX's default contrast curve, which is what
+// everyone ships instead of evaluating the sigmoid directly.
+const AGX_INSET = mat3x3f(
+  0.8424790622530940, 0.0784336000000000, 0.0792237451477643,
+  0.0423282422610123, 0.8784686364697720, 0.0791661274605434,
+  0.0423756549057051, 0.0784336000000000, 0.8791429737931040);
+
+const AGX_OUTSET = mat3x3f(
+   1.19687900512017,  -0.0980208811401368, -0.0990297440797205,
+  -0.0528968517574562, 1.15190312990417,   -0.0989611768448433,
+  -0.0529716355144438,-0.0980434501171241,  1.15107367264116);
+
+fn agxContrast(x : vec3f) -> vec3f {
+  let x2 = x * x;
+  let x4 = x2 * x2;
+  return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x
+       + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+
+/// Linear scene light -> display-referred, via AgX. `white` sets the top of the exposure window.
+fn agx(colIn : vec3f, white : f32) -> vec3f {
+  let minEv = -12.47393;
+  // Guarded: log2 of a non-positive white is not a number, and a window that is not increasing turns
+  // the normalisation below into a division by zero or a sign flip.
+  let maxEv = max(log2(max(white, 1.0001)), minEv + 1.0);
+  var v = AGX_INSET * max(colIn, vec3f(0.0));
+  // The clamp is the window. Below it there is nothing to show; above it, white.
+  v = clamp(log2(max(v, vec3f(1e-10))), vec3f(minEv), vec3f(maxEv));
+  v = (v - minEv) / (maxEv - minEv);
+  v = clamp(agxContrast(v), vec3f(0.0), vec3f(1.0));
+  // Outset on the CURVED values: this is what desaturates the highlights.
+  return clamp(AGX_OUTSET * v, vec3f(0.0), vec3f(1.0));
+}
+
 fn hableCurve(x : vec3f) -> vec3f {
   let A = 0.15; let B = 0.50; let C = 0.10;
   let D = 0.20; let E = 0.02; let F = 0.30;
@@ -46,8 +105,17 @@ fn filmGrade(c0 : vec3f) -> vec3f {
   // deliberately not where this lives.
   c *= frame.balance.rgb;
 
-  c = hableCurve(c * frame.grade.x) / hableCurve(vec3f(frame.grade.y));
-  c = pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2));   // display transfer
+  // The display transform. AgX is display-referred on the way out, so it needs no gamma; Hable is
+  // scene-referred and does. Kept switchable because it is the largest single change to the look in
+  // this file and being able to flip between them is how you tell a difference from a preference.
+  if (frame.grade3.w > 0.5) {
+    // AGX_GAIN is the placement compensation: AgX puts mid grey higher than the Hable path, so
+    // without it switching transforms changes brightness as well as character. See FILM.agxEv.
+    c = agx(c * frame.grade.x * AGX_GAIN, frame.grade.y);
+  } else {
+    c = hableCurve(c * frame.grade.x) / hableCurve(vec3f(frame.grade.y));
+    c = pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2));   // display transfer
+  }
 
   // Print: cool toe, warm highlights — where the teal/orange look comes from.
   let l = luma(c);

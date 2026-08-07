@@ -1340,6 +1340,29 @@ export const FILM = {
    * absent: there is nothing in this scene that needs it, and a knob with no subject is a knob that
    * gets set wrong.
    */
+  /**
+   * Display transform: 0 Hable, 1 AgX.
+   *
+   * AgX by default. Hable maps each channel independently, so a bright saturated colour clips one
+   * channel first and shifts hue on the way to white - and this scene is mostly bright saturated
+   * colour. AgX mixes the channels before the curve and un-mixes the CURVED result, which desaturates
+   * toward white instead. Hable is kept because being able to flip between them is how you tell a
+   * difference from a preference. See the note in composite.wgsl.
+   */
+  toneMap: 1,
+  /**
+   * AgX's own exposure placement, in stops, relative to the Hable path.
+   *
+   * AgX puts 18% grey higher than `hableCurve(x)/hableCurve(white)` followed by a 2.2 gamma does, so
+   * the same scene through it comes out 64% brighter in mean luma - measured, 43.3 to 71.1. That is a
+   * placement difference, not a look choice, and leaving it in would mean the exposure slider means
+   * something different depending on which transform is selected.
+   *
+   * -1.45 stops brings the two to the same mean luma, solved from a sweep (46.9 at -1.25, 38.9 at
+   * -1.75, target 43.3). So flipping the dropdown changes the CHARACTER of the highlights and nothing
+   * else, which is the only way to compare them honestly.
+   */
+  agxEv: -1.45,
   temperature: 4750,
   /** What the scene's own illuminant is taken to be. D65 because the sky and suns are authored that
    *  way; it exists so the adaptation has a stated reference rather than an implied one. */
@@ -1569,6 +1592,8 @@ export function wgslDefines() {
     SPHERO_TINT: `vec3f(${SPHERO.tint.map(f).join(', ')})`,
     // film
     // Only the look CONSTANTS remain compile-time; every level is a uniform now.
+    // 2^agxEv, folded in at the shader so the branch stays one multiply.
+    AGX_GAIN: f(Math.pow(2, FILM.agxEv)),
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
     FILM_PIVOT: FILM.pivot,
     // tiling

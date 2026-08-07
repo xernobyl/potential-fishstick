@@ -47,6 +47,7 @@ export function buildGui(renderer, live = {}) {
   // 12000 is deep shade, which is wider than anyone needs and cheap to allow. 3200 is where Eastman
   // 50T actually sits; the default of 4750 is where the hand-picked balance it replaced sat.
   film.add(FILM, 'temperature', 1800, 12000, 25).name('temperature (K)');
+  film.add(FILM, 'toneMap', { AgX: 1, Hable: 0 }).name('display transform');
   // Folders a PRESET covers, keyed by a stable string of our own rather than by lil-gui's
   // private `_title`: the key ends up in saved JSON, so it must not move if a folder is
   // renamed or reordered.
