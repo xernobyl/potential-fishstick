@@ -231,6 +231,24 @@ fn jitterClip(clip : vec4f) -> vec4f {
 /// Clip-space NDC (from a projection matrix) -> shared screen space.
 fn ndcToUV(ndc : vec2f) -> vec2f { return ndc * frame.screen.zw; }
 
+/// A finished motion vector for a world point that MOVED, given where it was last frame.
+///
+/// Project through the previous view-projection, convert to previous-frame pixels, measure the
+/// distance from the PREVIOUS camera - which is the only depth the history can be compared against
+/// without mixing up two camera positions - and carry the owner's hit distance so the consumer can
+/// tell whose motion this is. Every exact motion vector needs exactly these steps, so the ship and
+/// the satellites share this rather than each doing it slightly differently.
+///
+/// `px` must be the pixel CENTRE, not its integer corner: the stored vector is a delta between two
+/// pixel-space positions and `uvToPixel` returns centre-relative coordinates, so passing the corner
+/// would bias every motion vector by half a pixel - toward the same crawl the vector exists to fix.
+fn motionFor(prevWp : vec3f, px : vec2f, owner : f32) -> vec4f {
+  let clip = frame.prevViewProj * vec4f(prevWp, 1.0);
+  if (clip.w <= 1e-4) { return vec4f(MOTION_NONE, 0.0, 0.0, 0.0); }
+  let prevPx = uvToPixel(ndcToUV(clip.xy / clip.w));
+  return vec4f(prevPx - px, length(prevWp - frame.prevCamPos.xyz), owner);
+}
+
 /// A pixel coordinate in the RENDER grid, expressed in the ACCUMULATION grid.
 ///
 /// Identity when the two are the same size. It exists because the additive passes

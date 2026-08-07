@@ -58,7 +58,7 @@ const O = {
   // one pixel of reprojection error is legitimately a large depth change.
   taa2: 116,        // x depthGradSlack (pixels), y depthGradMax, z historyFilter, w taauSigma
   march: 120,       // x spare, y far, z near, w nearBand
-  probe: 124,       // x latticeTable, y showFieldEvals, z spare, w testPattern
+  probe: 124,       // x latticeTable, y showFieldEvals, z noSatMotion, w testPattern
   // Size of the ACCUMULATION buffer, which with temporal upsampling is the DISPLAY
   // resolution while frame.res stays the render resolution. Every accum consumer reads
   // this rather than assuming the two are equal.
@@ -164,6 +164,7 @@ export class FrameUniforms {
 
     a[O.probe] = s.probe.latticeTable;
     a[O.probe + 1] = s.probe.showFieldEvals;
+    a[O.probe + 2] = s.probe.noSatMotion;
     a[O.probe + 3] = s.probe.testPattern;
 
     a[O.accumRes] = s.accumWidth; a[O.accumRes + 1] = s.accumHeight;

@@ -36,6 +36,10 @@ struct SatHit {
   local : vec3f,   // box space, for the greeble
   mat   : i32,
   seed  : f32,
+  // Signed offset along the boom of the box that was hit: 0 for the bus, +-(boom + panel) for the
+  // two arrays. Stored rather than re-derived because `local` is in the hit box's OWN space and so
+  // cannot say which side of the bus that box was on - and the previous-frame transform needs it.
+  boom  : f32,
 };
 
 /// Slab test against a box of half-extents `rad`, centred at the origin of the
@@ -67,13 +71,16 @@ struct SatFrame {
   pw   : vec3f,   // array width axis
 };
 
-fn satFrame(i : f32) -> SatFrame {
+/// One satellite's frame AT A GIVEN TIME. Parameterised on `t` rather than reading the clock,
+/// because the exact motion vector needs this evaluated at the previous frame's time too - the same
+/// reason `ringDefAt` takes a time. `satFrame` is the now-shaped wrapper.
+fn satFrameAt(i : f32, t : f32) -> SatFrame {
   // Each on its own orbit: radius, inclination and phase all decorrelated, so
   // they never line up into a visible ring.
   let s = hash11(i * 4.31 + 0.7);
   let s2 = hash11(i * 9.17 + 3.1);
   let rad = SAT_ORB * (0.88 + 0.30 * s);
-  let ang = frame.camPos.w * SAT_RATE * (0.7 + 0.6 * s2) + i * 2.39996323;
+  let ang = t * SAT_RATE * (0.7 + 0.6 * s2) + i * 2.39996323;
   let inc = (s - 0.5) * 1.5;
 
   // Orbit in a plane tilted by `inc` about the along-track axis.
@@ -100,10 +107,30 @@ fn satFrame(i : f32) -> SatFrame {
   return f;
 }
 
+fn satFrame(i : f32) -> SatFrame { return satFrameAt(i, frame.camPos.w); }
+
+/// Where a satellite hit was ONE FRAME AGO, exactly. The orbits are analytic, so the previous
+/// transform is the same evaluation at the previous time: no stored velocities, no extra buffer,
+/// no estimate. This is what lets satellites carry a real motion vector instead of falling back to
+/// same-pixel screen-space history, which is what made them crawl while the rings sat still.
+fn satPrevWorld(h : SatHit, tPrev : f32) -> vec3f {
+  let f  = satFrameAt(h.seed, frame.camPos.w);
+  let pf = satFrameAt(h.seed, tPrev);
+  if (h.mat == SAT_MAT_PANEL) {
+    // The arrays rotate about the boom to track the sun, so their basis has to be mapped through
+    // as well. Using the bus basis for them would leave that rotation uncompensated, which is a
+    // slow error but exactly the kind that never averages out.
+    let cNow  = f.pos  + f.by  * h.boom;
+    let cPrev = pf.pos + pf.by * h.boom;
+    return cPrev + pf.pn * h.local.x + pf.by * h.local.y + pf.pw * h.local.z;
+  }
+  return pf.pos + pf.bx * h.local.x + pf.by * h.local.y + pf.bz * h.local.z;
+}
+
 /// Test one box given its basis as rows, narrowing `out` when it is closer.
 fn satBox(out : ptr<function, SatHit>, ro : vec3f, rd : vec3f,
           centre : vec3f, ax : vec3f, ay : vec3f, az : vec3f,
-          rad : vec3f, mat : i32, seed : f32) {
+          rad : vec3f, mat : i32, seed : f32, boom : f32) {
   // Into box space. The basis is orthonormal, so the inverse is the transpose,
   // i.e. three dot products.
   let rel = ro - centre;
@@ -116,6 +143,7 @@ fn satBox(out : ptr<function, SatHit>, ro : vec3f, rd : vec3f,
   (*out).local = lo + ld * h.x;
   (*out).mat = mat;
   (*out).seed = seed;
+  (*out).boom = boom;
   (*out).hit = true;
 }
 
@@ -127,6 +155,7 @@ fn hitSatellites(ro : vec3f, rd : vec3f, tmax : f32) -> SatHit {
   out.local = vec3f(0.0);
   out.mat = SAT_MAT_BUS;
   out.seed = 0.0;
+  out.boom = 0.0;
 
   for (var i = 0; i < SAT_COUNT; i++) {
     let fi = f32(i);
@@ -139,15 +168,16 @@ fn hitSatellites(ro : vec3f, rd : vec3f, tmax : f32) -> SatHit {
     if (bs.y < 0.0 || bs.x > out.t) { continue; }
 
     satBox(&out, ro, rd, f.pos, f.bx, f.by, f.bz,
-           vec3f(SAT_BUS), SAT_MAT_BUS, fi);
+           vec3f(SAT_BUS), SAT_MAT_BUS, fi, 0.0);
 
     let panelRad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
-    let off = f.by * (SAT_BOOM + SAT_PANEL_LEN);
+    let boom = SAT_BOOM + SAT_PANEL_LEN;
+    let off = f.by * boom;
     // Panel space: x is the thin axis (its face normal), y the boom, z the width.
     satBox(&out, ro, rd, f.pos + off, f.pn, f.by, f.pw,
-           panelRad, SAT_MAT_PANEL, fi);
+           panelRad, SAT_MAT_PANEL, fi, boom);
     satBox(&out, ro, rd, f.pos - off, f.pn, f.by, f.pw,
-           panelRad, SAT_MAT_PANEL, fi);
+           panelRad, SAT_MAT_PANEL, fi, -boom);
   }
   return out;
 }

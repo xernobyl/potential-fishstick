@@ -831,6 +831,15 @@ export const PROBE = {
    * handling. Costs no uniform slot — the jitter is computed on the CPU.
    */
   zeroJitter: 0,
+  /**
+   * 1 = withhold the satellites' motion vector, leaving them on camera reprojection alone.
+   *
+   * Exists so the fix that gave them one can be A/B'd at a FIXED resolution and on the same frame.
+   * The stability metric moves with image sharpness and content, so a before-and-after taken across
+   * a window resize or a scene change says nothing - which is a mistake this project has already
+   * made once, in the first version of the shake probe.
+   */
+  noSatMotion: 0,
 };
 
 /** Zone-plate chirp rate. Chosen so the corners land near the sampling Nyquist while the

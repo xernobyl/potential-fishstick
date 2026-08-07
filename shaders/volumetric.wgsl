@@ -128,10 +128,12 @@ fn ringShadow(rings : array<RingOccluder, RING_COUNT>, p : vec3f, L : vec3f) -> 
   return sh;
 }
 
-/// Where in its step each sample sits: interleaved gradient noise (Jimenez), spatial only.
+/// Where in its step each sample sits: interleaved gradient noise (Jimenez) over space, plus one
+/// GLOBAL golden-ratio step per frame.
 ///
-/// FRAME-STATIC, and the first version was not — it advanced by the golden ratio every frame so
-/// the accumulation would converge the integral. That reasoning was wrong, and measurably so.
+/// The temporal term is back, but NOT the one that failed. The first version advanced the per-pixel
+/// offset every frame, and that measured worse for the reason below. This one adds the SAME step to
+/// every pixel, which is the property that matters.
 ///
 /// Injecting per-frame noise into a VARIANCE-CLIPPED accumulator does not just add noise that
 /// averages away. The clip box is built from the 3x3 neighbourhood of the CURRENT sample, so a
@@ -146,12 +148,28 @@ fn ringShadow(rings : array<RingOccluder, RING_COUNT>, p : vec3f, L : vec3f) -> 
 /// reproject — the same contract every other part of this renderer honours. The step count carries
 /// the quality instead, and the spatial dither keeps it from reading as shells.
 ///
-/// This also removes the THIRD independent source of per-frame randomness. There should be one: the
-/// shared `frame.jitter`, expressed as a ray offset by the compute passes and as a clip offset by
-/// the raster ones (see `jitterClip`). Two expressions of one number is inherent; a third number of
-/// its own was not.
+/// WHY A GLOBAL STEP IS ALLOWED WHERE A PER-PIXEL ONE WAS NOT. The clip box is built from the 3x3
+/// neighbourhood of the current sample, so it measures how much the samples DISAGREE WITH EACH
+/// OTHER. A per-pixel temporal offset makes neighbours disagree, inflates sigma, and admits stale
+/// history everywhere. A single offset shared by all nine taps moves them together: sigma is
+/// unchanged, the box travels with the sample, and the integral still converges over frames because
+/// the offset walks the step. One number per frame, not one per pixel.
+///
+/// The cost of NOT having a temporal term was the other half of the dilemma, and it was the larger
+/// half: with the pattern welded to the screen, a moving camera drags the geometry across a fixed
+/// error field, so nothing averages out. Measured with `beep.shake()` - a frozen clock settles to
+/// 0.25% frame-to-frame flicker while the drifting camera sat at 1.8%, and every TAA gate widened in
+/// turn moved that by at most 13%. The samples were genuinely disagreeing; no gate can fix that.
+///
+/// The per-frame number is `frameIndex()`, which until now had no consumer at all - the sign that
+/// every stochastic source in the march had become spatial-only.
 fn volStepOffset(px : vec2f) -> f32 {
-  return fract(52.9829189 * fract(dot(px, vec2f(0.06711056, 0.00583715))));
+  // Spatial: interleaved gradient noise, which decorrelates neighbours so the steps do not read as
+  // shells. Unchanged.
+  let sp = fract(52.9829189 * fract(dot(px, vec2f(0.06711056, 0.00583715))));
+  // Temporal: the golden ratio, the standard low-discrepancy walk of the unit interval - successive
+  // frames land as far from each other as possible, so a short history covers the step evenly.
+  return fract(sp + frameIndex() * 0.6180339887);
 }
 
 /**

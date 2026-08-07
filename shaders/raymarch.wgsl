@@ -115,7 +115,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   let sat = hitSatellites(ray.o, ray.d, nearT);
   if (sat.hit) {
     col = shadeSatellite(sat, ray.o, ray.d);
-    depthTag = tagDynamic(sat.t);
+    // A POSITIVE tag, as the ship writes: the motion vector below is exact for these too, so they
+    // take the reprojecting path instead of the dynamic tag's same-pixel history. That fallback is
+    // why they crawled while the rings - which do reproject along their own motion - sat still.
+    depthTag = sat.t;
     nearT = sat.t;
   }
 
@@ -156,17 +159,19 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   // point in the hull's own space, so the same piece of hull can be found in last
   // frame's transform directly.
   var motion = vec4f(MOTION_NONE, 0.0, 0.0, 0.0);
+  // The PIXEL CENTRE, shared by both writers below. `uvToPixel` returns centre-relative
+  // coordinates, so pairing it with the integer corner would put a fixed half-pixel bias into every
+  // motion vector - which is indistinguishable from the crawl these are here to remove.
+  let motionPx = vec2f(gid.xy) + 0.5;
   if (ship.hit) {
-    let prevWp = frame.prevShipPos.xyz + qrotate(frame.prevShipRot, ship.lp);
-    let clip = frame.prevViewProj * vec4f(prevWp, 1.0);
-    if (clip.w > 1e-4) {
-      let prevPx = uvToPixel(ndcToUV(clip.xy / clip.w));
-      // z carries the distance from the PREVIOUS camera, which is the only depth the
-      // history can be compared against without mixing up two camera positions.
-      motion = vec4f(prevPx - (vec2f(gid.xy) + 0.5),
-                     length(prevWp - frame.prevCamPos.xyz),
-                     ship.t);                       // ownership: who this is about
-    }
+    // Exact: `lp` is the hit point in the hull's own space, so the same piece of hull is found
+    // directly in last frame's transform.
+    motion = motionFor(frame.prevShipPos.xyz + qrotate(frame.prevShipRot, ship.lp),
+                       motionPx, ship.t);
+  } else if (sat.hit && frame.probe.z <= 0.5) {
+    // Also exact, and for the same reason by a different route: the orbits are analytic, so the
+    // previous transform is the same evaluation one frame back. `misc.w` is dt.
+    motion = motionFor(satPrevWorld(sat, frame.camPos.w - frame.misc.w), motionPx, sat.t);
   }
   textureStore(motionTex, vec2i(gid.xy), motion);
 
