@@ -51,7 +51,10 @@ import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
          TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
-import { RingsPass } from './passes/rings.js';
+import { SolidMeshPass } from './passes/solidmesh.js';
+import { Mesh } from './core/mesh.js';
+import { rectTube, concatMeshes } from './scene/meshgen.js';
+import { ringDims } from './scene/tuning.js';
 import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
 import { BloomPass } from './passes/bloom.js';
@@ -123,7 +126,18 @@ export class Renderer {
       flare: new LensFlarePass(gpu, this.targets, this.shaders),
       composite: new CompositePass(gpu, this.targets, this.shaders),
       debugview: new DebugViewPass(gpu, this.targets, this.shaders),
-      rings: new RingsPass(gpu, this.targets, this.shaders, RINGS),
+      rings: new SolidMeshPass(gpu, this.targets, this.shaders, {
+        label: 'rings',
+        shader: 'rings.wgsl',
+        // Built at init, not here: the three hoops concatenated into one buffer, each vertex tagged
+        // with its ring index so one draw covers all of them and the vertex shader fetches each
+        // ring's precessing basis. Baked in ring-local space, which is what keeps the motion vectors
+        // exact - see meshgen.js.
+        mesh: () => new Mesh(gpu.device, concatMeshes(
+          Array.from({ length: RINGS.count }, (_, i) => rectTube({
+            segments: RINGS.segments, ...ringDims(i),
+          }))), 'rings'),
+      }),
       // Three instanced additive draws that differ only in their data — see AdditivePass. The
       // `source` thunks are called when bind groups are built rather than captured now, so an
       // owner is free to reallocate its buffer.

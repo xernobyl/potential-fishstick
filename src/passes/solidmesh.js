@@ -1,6 +1,13 @@
+import { MESH_VERTEX_LAYOUT } from '../core/mesh.js';
+
 /**
- * The rings pass — and more generally, the project's one pass for RASTERISED OPAQUE
- * geometry.
+ * The project's one pass for RASTERISED OPAQUE geometry: a generated mesh into the solid target.
+ *
+ * It used to be the rings pass, and the rename is the point. It now takes a mesh and a shader, so a
+ * second generated shape is `new SolidMeshPass(...)` with a different mesh and a different fragment
+ * stage - not another pass, another target, another binding and another branch in the composite. The
+ * vertex front end those shaders share lives in `mesh_vertex.wgsl`; the geometry comes from
+ * `meshgen.js` through `core/mesh.js`.
  *
  * It draws into `targets.solid`, whose alpha carries linear view distance, and the
  * composite resolves that against the raymarched body by comparing distances. The
@@ -18,27 +25,31 @@
  * to be clean, so staying out costs nothing.
  */
 
-/** Four faces per segment, two triangles each. */
-const VERTS_PER_SEGMENT = 4 * 6;
-
-export class RingsPass {
-  constructor(gpu, targets, shaders, tuning) {
+export class SolidMeshPass {
+  /**
+   * @param {object} spec
+   * @param {string} spec.label   pass, pipeline and profiler-scope name
+   * @param {string} spec.shader  WGSL module exposing `vs` and `fs`
+   * @param {() => import('../core/mesh.js').Mesh} spec.mesh  resolved at init, so the caller can
+   *        build the geometry lazily rather than before the device exists
+   */
+  constructor(gpu, targets, shaders, spec) {
     this.gpu = gpu;
     this.targets = targets;
     this.shaders = shaders;
-    this.count = tuning.count;
-    this.vertexCount = VERTS_PER_SEGMENT * tuning.segments;
+    this.spec = spec;
     this.generation = -1;
     this.pipeline = null;
   }
 
   async init(frameBGL, defines) {
     const d = this.gpu.device;
-    const module = await this.shaders.module('rings.wgsl', defines);
+    this.mesh = this.spec.mesh();
+    const module = await this.shaders.module(this.spec.shader, defines);
     this.pipeline = await d.createRenderPipelineAsync({
-      label: 'rings',
+      label: this.spec.label,
       layout: d.createPipelineLayout({ bindGroupLayouts: [frameBGL] }),
-      vertex: { module, entryPoint: 'vs' },
+      vertex: { module, entryPoint: 'vs', buffers: [MESH_VERTEX_LAYOUT] },
       fragment: {
         module,
         entryPoint: 'fs',
@@ -74,7 +85,7 @@ export class RingsPass {
     if (!this.pipeline) return;
     this.#sync();
     const pass = encoder.beginRenderPass({
-      label: 'rings',
+      label: this.spec.label,
       colorAttachments: [
         {
           view: this.colourView,
@@ -97,11 +108,11 @@ export class RingsPass {
         depthLoadOp: 'clear',
         depthStoreOp: 'discard',      // never read after this pass
       },
-      ...profiler.scope('rings'),
+      ...profiler.scope(this.spec.label),
     });
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, frameBG);
-    pass.draw(this.vertexCount, this.count);
+    this.mesh.draw(pass);
     pass.end();
   }
 }

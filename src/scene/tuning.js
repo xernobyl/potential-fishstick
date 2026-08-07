@@ -298,6 +298,16 @@ export const RINGS = {
   gap: 0.64,
   width: 0.11,        // radial half-thickness
   height: 0.22,        // axial half-height
+  /**
+   * Per-ring taper. Widths shrink outward, which reads as a hierarchy.
+   *
+   * Here rather than as literals inside `ringDefAt` because the CPU mesh generator needs the same
+   * numbers: the geometry is baked per ring, so a drift between the shader's idea of a ring's size
+   * and the generator's would show up as the wrong-sized hoop, or as a motion vector describing a
+   * ring that is not the one on screen. Injected into WGSL and read by `ringDims` below.
+   */
+  widthTaper: 0.18,
+  heightTaper: 0.12,
   precess: 0.045,      // axis tumble rate, rad/s
   spin: 0.17,          // rotation about its own axis; visible via surface detail
   roughness: 0.3,
@@ -835,6 +845,22 @@ export const CAMERA = {
  * anything under about 5%. Several "obvious" wins in this project turned out to be inside
  * the noise, and one turned out to be a loss. A toggle costs one uniform compare.
  */
+/**
+ * A ring's SIZE, which depends only on its index — the half of `ringDefAt` that does not involve
+ * time. The other half, the precessing basis, stays in WGSL because it is evaluated per vertex.
+ *
+ * This exists so the CPU mesh generator and the shader cannot disagree about how big a ring is. The
+ * expression is mirrored in `ringDefAt`; the CONSTANTS are shared rather than copied, and
+ * `dev/meshgen.mjs` pins the two together.
+ */
+export function ringDims(i) {
+  return {
+    radius: RINGS.radius0 + i * RINGS.gap,
+    halfW: RINGS.width * (1.0 - RINGS.widthTaper * i),
+    halfH: RINGS.height * (1.0 - RINGS.heightTaper * i),
+  };
+}
+
 export const PROBE = {
   /**
    * 1 = read the layer rotations from the injected table (lattice.js);
@@ -1463,6 +1489,8 @@ export function wgslDefines() {
     RING_R0: RINGS.radius0,
     RING_GAP: RINGS.gap,
     RING_W: RINGS.width,
+    RING_WTAPER: RINGS.widthTaper,
+    RING_HTAPER: RINGS.heightTaper,
     RING_H: RINGS.height,
     RING_PRECESS: RINGS.precess,
     RING_SPIN: RINGS.spin,

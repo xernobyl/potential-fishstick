@@ -17,6 +17,7 @@
 //!include "common.wgsl"
 //!include "hash.wgsl"
 //!include "ring_geom.wgsl"
+//!include "mesh_vertex.wgsl"
 //!include "volumetric.wgsl"
 //!include "sky.wgsl"
 //!include "brdf.wgsl"
@@ -25,14 +26,9 @@
 
 /// Rectangular cross-section, as (radial, axial) offsets scaled by half-width and
 /// half-height. Two corners per side, plus that side's normal in the same basis.
-const RC0 = array<vec2f, 4>(vec2f( 1.0,-1.0), vec2f( 1.0, 1.0), vec2f(-1.0, 1.0), vec2f(-1.0,-1.0));
-const RC1 = array<vec2f, 4>(vec2f( 1.0, 1.0), vec2f(-1.0, 1.0), vec2f(-1.0,-1.0), vec2f( 1.0,-1.0));
-const RN  = array<vec2f, 4>(vec2f( 1.0, 0.0), vec2f( 0.0, 1.0), vec2f(-1.0, 0.0), vec2f( 0.0,-1.0));
 
-const QUAD = array<vec2f, 6>(
-  vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
-  vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0),
-);
+
+
 
 /// One ring's rigid frame plus its dimensions.
 
@@ -40,17 +36,6 @@ const QUAD = array<vec2f, 6>(
 /// so the vertex shader can evaluate it TWICE — now and one frame ago — which is what
 /// makes an exact motion vector possible for rigid motion. No approximation needed:
 /// the motion is analytic, so the previous position is too.
-fn ringVertex(ii : u32, vi : u32, t : f32) -> vec3f {
-  let r = ringDefAt(ii, t);
-  let quad = vi / 6u;
-  let corner = QUAD[vi % 6u];
-  let seg = quad / 4u;
-  let side = quad % 4u;
-  let au = ((f32(seg) + corner.x) / f32(RING_SEGMENTS)) * TAU;
-  let cs = mix(RC0[side], RC1[side], corner.y) * vec2f(r.halfW, r.halfH);
-  let radial = r.ax * cos(au) + r.ay * sin(au);
-  return radial * (r.radius + cs.x) + r.az * cs.y;
-}
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -74,41 +59,27 @@ struct FOut {
 };
 
 @vertex
-fn vs(@builtin(vertex_index) vi : u32,
-      @builtin(instance_index) ii : u32) -> VOut {
+fn vs(v : MeshVertex) -> VOut {
+  // The geometry is a GENERATED MESH now, in ring-local space, rather than arithmetic on
+  // `vertex_index`. What used to be computed per vertex is read per vertex; what remains here is the
+  // part that could never be baked - the precessing basis, which is a function of time.
+  let ii = u32(v.objId + 0.5);
   let r = ringDefAt(ii, frame.camPos.w);
-
-  let quad = vi / 6u;
-  let corner = QUAD[vi % 6u];
-  let seg = quad / 4u;             // which segment around the ring
-  let side = quad % 4u;            // which of the four faces
-
-  // Major angle, spanning one segment.
-  let u = (f32(seg) + corner.x) / f32(RING_SEGMENTS);
-  let au = u * TAU;
-  let cs = mix(RC0[side], RC1[side], corner.y) * vec2f(r.halfW, r.halfH);
-
-  // Radial direction in the ring's plane, then out into world space.
-  let radial = r.ax * cos(au) + r.ay * sin(au);
-  let wp = radial * (r.radius + cs.x) + r.az * cs.y;
-  let n2 = RN[side];
-  let wn = radial * n2.x + r.az * n2.y;
+  let rp = ringDefAt(ii, frame.camPos.w - frame.misc.w);
+  let x = meshXform(v, MeshBasis(r.ax, r.ay, r.az), MeshBasis(rp.ax, rp.ay, rp.az));
 
   var out : VOut;
-  // Jittered, like the marched geometry it is composited against — see jitterClip.
-  out.pos = jitterClip(frame.viewProj * vec4f(wp, 1.0));
-  out.wp = wp;
-  out.wn = wn;
-  out.uv = vec2f(u, corner.y);
-  out.side = f32(side);
-  out.viewZ = length(wp - frame.camPos.xyz);
+  out.pos = x.clip;
+  out.wp = x.wp;
+  out.wn = x.wn;
+  // `extra` is what the generator put there: u around the sweep, v across the profile edge, and
+  // which edge - the same quantities the old index arithmetic derived, now carried by the vertex.
+  out.uv = vec2f(v.extra.x, v.extra.y);
+  out.side = v.extra.z;
+  out.viewZ = x.viewZ;
   out.inst = f32(ii);
-  // Where this same vertex was one frame ago, through the matrix the history was
-  // rendered with. Interpolated as a vec4 and divided in the fragment shader, which
-  // is what keeps it correct under perspective.
-  let prevWp = ringVertex(ii, vi, frame.camPos.w - frame.misc.w);
-  out.prevClip = frame.prevViewProj * vec4f(prevWp, 1.0);
-  out.prevViewZ = length(prevWp - frame.prevCamPos.xyz);
+  out.prevClip = x.prevClip;
+  out.prevViewZ = x.prevViewZ;
   return out;
 }
 

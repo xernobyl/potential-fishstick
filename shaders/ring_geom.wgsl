@@ -34,8 +34,10 @@ fn ringDefAt(i : u32, t : f32) -> RingDef {
   // Concentric: each ring a fixed step further out, so they nest rather than
   // intersecting. Widths shrink outward, which reads as a hierarchy.
   r.radius = RING_R0 + fi * RING_GAP;
-  r.halfW = RING_W * (1.0 - 0.18 * fi);
-  r.halfH = RING_H * (1.0 - 0.12 * fi);
+  // Mirrored by `ringDims` in tuning.js, which the mesh generator uses; the taper constants are
+  // injected from there rather than written twice.
+  r.halfW = RING_W * (1.0 - RING_WTAPER * fi);
+  r.halfH = RING_H * (1.0 - RING_HTAPER * fi);
 
   // Pseudo-random axis, precessing on two incommensurate periods so no ring ever
   // returns to the same attitude and none of them share a rhythm.
