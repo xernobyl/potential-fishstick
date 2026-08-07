@@ -28,8 +28,7 @@ import { Scene } from './scene.js';
 import { ScenePass } from '../passes/scene.js';
 import { SolidMeshPass } from '../passes/solidmesh.js';
 import { Mesh } from '../core/mesh.js';
-import { buildShipMesh } from './planetoid.js';
-import { box, concatMeshes } from '../scene/meshgen.js';
+import { buildShipMesh, buildSatelliteMesh } from './planetoid.js';
 import { MODELVIEW, SATELLITES, wgslDefines } from '../scene/tuning.js';
 
 /**
@@ -90,9 +89,9 @@ export class ModelViewScene extends Scene {
       satellite: new SolidMeshPass(gpu, targets, shaders, {
         label: 'model-satellite',
         shader: 'satmesh.wgsl',
-        mesh: () => new Mesh(gpu.device, concatMeshes([box()]), 'model-satellite'),
-        // Three boxes: the bus and two array wings. One satellite, not the whole swarm.
-        instances: 3,
+        mesh: () => new Mesh(gpu.device, buildSatelliteMesh(), 'model-satellite'),
+        // ONE satellite, not the whole swarm: one bus and its two array wings.
+        instances: (range) => (range.id === 0 ? 1 : 2),
       }),
     };
   }

@@ -27,8 +27,9 @@ import { Ship } from '../scene/ship.js';
 import { Contrail } from '../scene/contrail.js';
 import { Railgun } from '../scene/railgun.js';
 import { Aurora } from '../scene/aurora.js';
-import { rectTube, box, concatMeshes } from '../scene/meshgen.js';
+import { rectTube, concatMeshes } from '../scene/meshgen.js';
 import { shipTree, SHIP_MESH } from '../scene/ship_sdf.js';
+import { satelliteBusTree, satellitePanelTree, SAT_MESH } from '../scene/satellite_sdf.js';
 import { compile, bounds } from '../scene/sdf/nodes.js';
 import { resolutionForScreen } from '../scene/sdf/dualcontour.js';
 import { dualContourAdaptive } from '../scene/sdf/octree.js';
@@ -105,6 +106,37 @@ export function buildShipMesh() {
   return out;
 }
 
+/**
+ * The satellite: a bus and one array wing, contoured and concatenated into one buffer.
+ *
+ * TWO RANGES, NOT TWO MESHES, so the whole swarm is one buffer and one bind. The vertex tag
+ * `concatMeshes` writes is what tells the shader which of the two a vertex belongs to, and the pass
+ * draws each range with its own instance count — one bus per satellite, two wings.
+ */
+let satMeshCache = null;
+
+export function buildSatelliteMesh() {
+  if (satMeshCache) return satMeshCache;
+  const parts = [
+    [satelliteBusTree(), SAT_MESH.busResolution],
+    [satellitePanelTree(), SAT_MESH.panelResolution],
+  ].map(([tree, resolution]) => {
+    const b = bounds(tree);
+    // The coarser of the two budgets: these are small on screen and there are fifteen of them.
+    const m = dualContourAdaptive(compile(tree), {
+      bounds: b, resolution, error: SAT_MESH.error[1],
+    });
+    return {
+      positions: m.positions,
+      normals: m.normals,
+      extra: new Float32Array(m.vertexCount * 4),
+      indices: m.indices,
+    };
+  });
+  satMeshCache = concatMeshes(parts);
+  return satMeshCache;
+}
+
 /** The three hoops, concatenated into one buffer with a per-vertex ring index. */
 export function buildRingMesh() {
   return concatMeshes(Array.from({ length: RINGS.count }, (_, i) => rectTube({
@@ -166,8 +198,8 @@ export class PlanetoidScene extends Scene {
           this.ship.pos[0], this.ship.pos[1], this.ship.pos[2], r.radius,
         ],
       }),
-      // Fifteen boxes — five satellites, a bus and two array wings each — as ONE unit cube drawn
-      // fifteen times, each instance scaled and placed by the orbital frame its instance index selects.
+      // Five satellites, each a contoured bus and two contoured array wings — see satellite_sdf.js.
+      // One buffer, two ranges, each instanced by the orbital frame its instance index selects.
       //
       // No `worldSphere`, so nothing is culled: the orbits are evaluated in WGSL and never reach the
       // CPU, and a second copy of them in JavaScript to reject 180 triangles would cost more than it
@@ -176,8 +208,9 @@ export class PlanetoidScene extends Scene {
         label: 'satellites',
         shader: 'satmesh.wgsl',
         clear: false,
-        mesh: () => new Mesh(gpu.device, concatMeshes([box()]), 'satellites'),
-        instances: SATELLITES.count * 3,
+        mesh: () => new Mesh(gpu.device, buildSatelliteMesh(), 'satellites'),
+        // Range 0 is the bus, one per satellite; range 1 is an array wing, two per satellite.
+        instances: (range) => (range.id === 0 ? SATELLITES.count : SATELLITES.count * 2),
       }),
 
       // Three instanced additive draws that differ only in their data — see AdditivePass. The `source`

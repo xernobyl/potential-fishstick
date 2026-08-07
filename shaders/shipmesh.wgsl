@@ -99,8 +99,10 @@ fn fs(in : VOut) -> FOut {
   // The canopy is glass. Tested against the blister's own sphere from ship_sdf.js rather than against a
   // slab, so the region follows the shape it belongs to: inside the sphere AND on its upper dome, which
   // leaves the blended skirt where it meets the spine as hull.
-  let toCanopy = al - vec3f(0.0, 0.070, 0.13);
-  let isGlass = smoothstep(0.092, 0.076, length(toCanopy)) * smoothstep(0.055, 0.076, al.y);
+  // Matches the dome in ship_sdf.js: centre and radius, plus a gate at the sill so the frame ring and
+  // the coaming stay painted hull rather than becoming glass.
+  let toCanopy = al - vec3f(0.0, 0.062, 0.145);
+  let isGlass = smoothstep(0.098, 0.082, length(toCanopy)) * smoothstep(0.046, 0.066, al.y);
 
   // A painted stripe out along each wing, because a readable silhouette wants a graphic. The wings now
   // run from |x| ~ 0.03 out to the gun pods at 0.55 and are thin in y, so the gate keeps it off the

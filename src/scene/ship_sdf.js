@@ -86,11 +86,20 @@ export function shipTree() {
   // A blunt cone for the nose, blended in so there is no crease where it meets the body.
   const nose = translate([0, -0.005, 0.40], alongZ(cone(0.095, 0.014, 0.14)));
 
-  // The canopy: a sphere FLATTENED by intersecting a box. `scale` is uniform-only on purpose, so a
-  // squashed dome is built by cutting one rather than by stretching one — and the cut leaves a crisp
-  // sill along the sides, which is what a canopy frame looks like.
-  const canopy = translate([0, 0.070, 0.13],
-    intersect(sphere(0.085), box([0.075, 0.052, 0.13])));
+  // A DOME FOR THE PILOT — a real bubble, not the flattened blister this used to be.
+  //
+  // The sphere is cut off BELOW its equator rather than through it: a hemisphere sitting on a hull
+  // reads as a bump, where a sphere cut low reads as a bubble you could sit inside, because you can
+  // see the glass turn back under itself at the sill. The box is what does the cutting, and its top
+  // is above the sphere's top so only the bottom is trimmed.
+  const domeR = 0.090;
+  const dome = translate([0, 0.062, 0.145],
+    intersect(sphere(domeR), translate([0, 0.030, 0], box([domeR, domeR, domeR]))));
+  // A frame ring around the sill, so the glass meets the hull at something rather than just ending.
+  const domeRing = translate([0, 0.040, 0.145], alongZ(cylinder(0.082, 0.010)));
+  // And the coaming: a raised lip in front of the glass, which is the detail that makes a canopy
+  // read as a cockpit rather than as a glass ball stuck on a fuselage.
+  const coaming = translate([0, 0.052, 0.225], roundBox([0.062, 0.020, 0.030], 0.010));
 
   // ---- wings ----
   //
@@ -163,7 +172,9 @@ export function shipTree() {
   const hull = smoothUnion(0.045,
     fuselage,
     nose,
-    canopy,
+    dome,
+    domeRing,
+    coaming,
     mirror(0, wing),
     mirror(0, pylon),
     mirror(0, nacelle),

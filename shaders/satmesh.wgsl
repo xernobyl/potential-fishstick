@@ -15,11 +15,11 @@
 // has twelve triangles' worth. For a box that is the same thing — a box IS its twelve triangles, so the
 // silhouette is exact rather than approximated. This is the case where the conversion is lossless.
 //
-// ONE UNIT CUBE, SCALED PER INSTANCE, rather than fifteen baked boxes in a buffer: the bus and the two
-// array wings are wildly different shapes, and baking them would put the same 24 vertices in memory
-// fifteen times over so that a matrix could be avoided. The scale is axis-aligned and so are the face
-// normals, so a normal along an axis stays along that axis — the one case where skipping the
-// inverse-transpose is exact, not an approximation. See `box()` in meshgen.js.
+// TWO CONTOURED MESHES, one bus and one array wing, each drawn once per place it belongs: the bus range
+// instanced once per satellite, the wing range twice. They are real shapes now rather than a unit cube
+// scaled per instance — see satellite_sdf.js — so the vertex stage applies a RIGID frame and nothing
+// else. No per-instance scale means no inverse-transpose question to get right, and the mesh's own
+// dimensions are the only ones in play.
 //
 // NOT FRUSTUM CULLED, deliberately. A satellite's position comes from `satFrameAt` in WGSL and never
 // reaches the CPU, so culling these would mean a second implementation of the orbital mechanics in
@@ -69,9 +69,20 @@ fn satRigid(p : SatPart) -> MeshRigid {
 
 @vertex
 fn vs(v : MeshVertex, @builtin(instance_index) inst : u32) -> VOut {
-  // Three boxes per satellite, laid out so the instance number decomposes without any lookup.
-  let sat = f32(inst / 3u);
-  let part = inst % 3u;
+  // WHICH SHAPE this vertex belongs to comes from the mesh, not the instance: `concatMeshes` tags every
+  // vertex with the index of the part it came from, so range 0 is the bus and range 1 is a wing. The
+  // instance then says WHICH satellite, and for a wing, which side.
+  let isPanel = v.objId > 0.5;
+  var sat : f32;
+  var part : u32;
+  if (isPanel) {
+    // Two wings per satellite: instance 2i and 2i+1 are the two sides of satellite i.
+    sat = f32(inst / 2u);
+    part = 1u + (inst % 2u);
+  } else {
+    sat = f32(inst);
+    part = 0u;
+  }
 
   // In the model viewer the same three boxes are laid out on a turntable instead of in orbit. Both
   // layouts are parameterised on their own notion of "when", so the previous frame is an evaluation
@@ -89,11 +100,8 @@ fn vs(v : MeshVertex, @builtin(instance_index) inst : u32) -> VOut {
     prev = satPart(sat, part, frame.camPos.w - frame.misc.w);
   }
 
-  // Unit cube -> this box's shape. Position scales; the normal does not need to, because both the box
-  // and the scale are axis-aligned (see the header).
-  var vv = v;
-  vv.pos = v.pos * now.rad;
-  let x = meshXform(vv, satRigid(now), satRigid(prev));
+  // The mesh is already the right size, so this is a rigid placement and nothing more.
+  let x = meshXform(v, satRigid(now), satRigid(prev));
 
   var out : VOut;
   out.pos = x.clip;
@@ -102,7 +110,10 @@ fn vs(v : MeshVertex, @builtin(instance_index) inst : u32) -> VOut {
   out.viewZ = x.viewZ;
   out.prevClip = x.prevClip;
   out.prevViewZ = x.prevViewZ;
-  out.local = vv.pos;
+  // The vertex in its own part's space, which is what every surface feature is authored against — the
+  // cell grid on a wing, the greeble and wrinkle on the bus. Unchanged from the analytic version,
+  // because the meshes are built in the same axes the boxes were.
+  out.local = v.pos;
   out.mat = f32(now.mat);
   out.seed = sat;
   return out;

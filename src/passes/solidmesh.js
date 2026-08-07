@@ -35,9 +35,10 @@ export class SolidMeshPass {
    *        build the geometry lazily rather than before the device exists
    * @param {() => (object|object[])} spec.mesh  one mesh, or an LOD chain finest-first. A chain makes
    *        `pass.lod` meaningful; see core/lod.js for how the level is chosen.
-   * @param {number} [spec.instances]  draw the mesh this many times, the vertex stage placing each
-   *        from `@builtin(instance_index)`. For a shape repeated with different transforms — the
-   *        satellites — this beats baking copies into the buffer.
+   * @param {number|((range:object)=>number)} [spec.instances]  draw this many times, the vertex stage
+   *        placing each from `@builtin(instance_index)`. A FUNCTION when the ranges need different
+   *        counts: a satellite is one bus and two array wings, so the bus range is drawn once per
+   *        satellite and the panel range twice.
    * @param {(id: number, range: object) => number[]} [spec.worldSphere]  where this object's bounding
    *        sphere is in the world, as [x, y, z, r]. Supplying it is what opts an object into frustum
    *        culling: only the caller knows the transform, and some transforms (the satellites' orbits)
@@ -206,7 +207,8 @@ export class SolidMeshPass {
       },
       ...profiler.scope(this.spec.label),
     });
-    const instances = this.spec.instances ?? 1;
+    const spread = this.spec.instances ?? 1;
+    const instancesFor = typeof spread === 'function' ? spread : () => spread;
     // The level chosen for this frame. Set by the renderer, which owns the camera; the pass only has to
     // honour it. Clamped rather than trusted, so a stale index from a resize cannot index off the end.
     this.mesh = this.meshes[Math.min(Math.max(this.lod, 0), this.meshes.length - 1)];
@@ -217,7 +219,7 @@ export class SolidMeshPass {
     // exactly the thing you would want to notice was missing.
     if (this.wireframe && this.wirePipeline) {
       pass.setPipeline(this.wirePipeline);
-      this.mesh.drawWireframe(pass, this.gpu.device, instances);
+      this.mesh.drawWireframe(pass, this.gpu.device, instancesFor(this.mesh.ranges[0]));
       this.drawn = this.mesh.ranges.length;
       pass.end();
       return;
@@ -243,12 +245,17 @@ export class SolidMeshPass {
       for (const r of this.mesh.ranges) {
         const s = sphereOf(r.id, r);
         if (s && !sphereVisible(planes, s[0], s[1], s[2], s[3])) continue;
-        this.mesh.drawRange(pass, r, instances);
+        this.mesh.drawRange(pass, r, instancesFor(r));
         this.drawn++;
       }
     } else {
-      pass.drawIndexed(this.mesh.indexCount, instances);
-      this.drawn = this.mesh.ranges.length;
+      // One draw per range even without culling, because the counts may differ between them.
+      this.mesh.bind(pass);
+      this.drawn = 0;
+      for (const r of this.mesh.ranges) {
+        this.mesh.drawRange(pass, r, instancesFor(r));
+        this.drawn++;
+      }
     }
     pass.end();
   }

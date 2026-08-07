@@ -248,7 +248,7 @@ is an asset: there is no file to load, and the shapes are code.
 |---|---|---|---|
 | Rings | `rectTube` — a revolved rectangular profile | `meshgen.js` | 3 × 768 |
 | Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/octree.js` | 14.2k / 10.8k / 7.1k / 4.3k (4 LODs) |
-| Satellites | one unit `box`, instanced 15× | `meshgen.js` | 12 × 15 |
+| Satellites | two SDF trees in `satellite_sdf.js` | `sdf/octree.js` | 4.6k bus + 2.9k wing, instanced |
 
 ### The SDF pipeline
 

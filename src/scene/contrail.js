@@ -40,6 +40,8 @@ export class Contrail {
     this.device = device;
     this._acc = 0;
     this._primed = false;
+    /** Scratch for the live head, so a per-frame write allocates nothing. */
+    this._head = [0, 0, 0];
   }
 
   /** @param {number} dt seconds @param {import('./ship.js').Ship} ship */
@@ -57,6 +59,19 @@ export class Contrail {
       this._primed = true;
     }
 
+    // WHERE A NOZZLE IS RIGHT NOW, in world space. The full local-to-world transform, not two thirds
+    // of it: the emit used to apply the lateral and the along-track offsets and silently drop the
+    // vertical one, so the trails started a little above the holes they come out of.
+    const nozzleAt = (side, out) => {
+      const f = ship.forward();
+      const r = ship.right();
+      const u = ship.up();
+      for (let k = 0; k < 3; k++) {
+        out[k] = ship.pos[k] + r[k] * side + u[k] * CONTRAIL.rise - f[k] * CONTRAIL.offset;
+      }
+      return out;
+    };
+
     this._acc += dt;
     // Catch up if several intervals elapsed, but bounded: after a long stall, replaying
     // hundreds of intervals would just refill the buffer with one position anyway.
@@ -64,25 +79,33 @@ export class Contrail {
     while (this._acc >= CONTRAIL.interval && steps < 4) {
       this._acc -= CONTRAIL.interval;
       steps++;
-      const f = ship.forward();
-      const r = ship.right();
       for (let rib = 0; rib < this.ribbons; rib++) {
         const base = rib * n * 4;
         // Shift this half down by one and append. n is a few dozen and this runs once
         // per interval, not per frame, so a copy beats the index arithmetic a true ring
         // would force into the shader.
         a.copyWithin(base, base + 4, base + n * 4);
-        const o = base + (n - 1) * 4;
-        // Behind the hull, and out to this nacelle. `right()` is the banked axis, so the
-        // two trails swap sides through a roll exactly as the nozzles do.
-        const side = rib === 0 ? -CONTRAIL.spread : CONTRAIL.spread;
-        for (let k = 0; k < 3; k++) {
-          a[o + k] = ship.pos[k] - f[k] * CONTRAIL.offset + r[k] * side;
-        }
-        a[o + 3] = ship.throttle;
       }
     }
-    if (steps) this.device.queue.writeBuffer(this.buffer, 0, this.cpu);
+
+    // THE HEAD IS LIVE, REWRITTEN EVERY FRAME. The interval above decides when a sample is FROZEN
+    // into the history; it should never have decided where the trail starts.
+    //
+    // With the head left as the last frozen sample it lagged the ship by up to one interval — 45 ms,
+    // which at cruise is a fair fraction of a hull length. Flying straight that lag sits directly
+    // behind the nozzle and is invisible; in a turn the ship has rotated away from it, so the trail
+    // appeared to leave from the SIDE of the hull rather than from the hole. The symptom looked like a
+    // bad offset and was actually a stale one.
+    //
+    // `right()` is the banked axis, so the two trails swap sides through a roll exactly as the nozzles
+    // do.
+    for (let rib = 0; rib < this.ribbons; rib++) {
+      const o = rib * n * 4 + (n - 1) * 4;
+      nozzleAt(rib === 0 ? -CONTRAIL.spread : CONTRAIL.spread, this._head);
+      a[o] = this._head[0]; a[o + 1] = this._head[1]; a[o + 2] = this._head[2];
+      a[o + 3] = ship.throttle;
+    }
+    this.device.queue.writeBuffer(this.buffer, 0, this.cpu);
   }
 
   destroy() { this.buffer.destroy(); }

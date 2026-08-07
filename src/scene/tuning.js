@@ -422,6 +422,8 @@ export const CONTRAIL = {
    */
   get offset() { return -SHIP_HARDPOINTS.nozzleZ * SHIP_MESH.scale; },
   get spread() { return SHIP_HARDPOINTS.nacelle[0] * SHIP_MESH.scale; },
+  /** Vertical offset of the nacelle from the spine — the third component the emit used to drop. */
+  get rise() { return SHIP_HARDPOINTS.nacelle[1] * SHIP_MESH.scale; },
   /** Half-width at emission, and how much it disperses over the trail's life. */
   width: 0.012,
   widthGrow: 0.055,

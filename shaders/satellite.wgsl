@@ -82,12 +82,14 @@ fn satFrameAt(i : f32, t : f32) -> SatFrame {
 /// indexes them, so `satPart(i / 3, i % 3, t)` turns a flat instance number into a placement. Taking the
 /// time as a parameter is what lets the vertex stage ask the same question about the PREVIOUS frame and
 /// get an exact answer rather than an estimate.
+/// Where one drawable piece of a satellite sits. A FRAME, with no size in it: the bus and the array
+/// wing are contoured meshes now (see satellite_sdf.js) and carry their own dimensions, where the
+/// analytic version scaled a unit cube and had to be told.
 struct SatPart {
   centre : vec3f,
-  ax     : vec3f,   // the box's own x, y, z in world space
+  ax     : vec3f,   // the piece's own x, y, z in world space
   ay     : vec3f,
   az     : vec3f,
-  rad    : vec3f,   // half-extents along those axes
   mat    : i32,
 };
 
@@ -111,18 +113,16 @@ fn satPartDisplay(part : u32, spin : f32) -> SatPart {
   if (part == 0u) {
     o.centre = MODEL_ORIGIN;
     o.ax = sx; o.ay = sy; o.az = sz;
-    o.rad = vec3f(SAT_BUS);
     o.mat = SAT_MAT_BUS;
   } else {
     let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
-    o.centre = MODEL_ORIGIN + sx * boom;
+    o.centre = MODEL_ORIGIN + sx * (boom * 0.5);
     // Panel space is x thin, y along the boom, z across the width. `az` comes from a cross product
     // rather than being written out, so the basis is right-handed by construction — a hand-written
     // third axis is exactly how a display-only layout ends up mirrored.
     o.ax = sy;
     o.ay = sx;
     o.az = cross(o.ax, o.ay);
-    o.rad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
     o.mat = SAT_MAT_PANEL;
   }
   return o;
@@ -135,7 +135,6 @@ fn satPart(sat : f32, part : u32, t : f32) -> SatPart {
     // The bus, on the orbital frame itself.
     o.centre = f.pos;
     o.ax = f.bx; o.ay = f.by; o.az = f.bz;
-    o.rad = vec3f(SAT_BUS);
     o.mat = SAT_MAT_BUS;
   } else {
     // An array wing, out along the boom either side. Panel space is x thin (the face normal), y along
@@ -143,9 +142,10 @@ fn satPart(sat : f32, part : u32, t : f32) -> SatPart {
     // rotation that has to be carried into the previous frame as well or the panels shear in the
     // history.
     let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
-    o.centre = f.pos + f.by * boom;
+    // The wing's own mesh already reaches out along the boom, so the frame is placed at the JOINT
+    // rather than at the panel's centre — the geometry decides where the panel is.
+    o.centre = f.pos + f.by * (boom * 0.5);
     o.ax = f.pn; o.ay = f.by; o.az = f.pw;
-    o.rad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
     o.mat = SAT_MAT_PANEL;
   }
   return o;
@@ -194,14 +194,21 @@ fn shadeSatSurface(local : vec3f, nor : vec3f, mat : i32, seed : f32,
     alb = SAT_PANEL_COL * (0.82 + 0.36 * ch);
     // The gaps show the substrate, the busbars show tinned metal.
     alb = mix(alb, SAT_PANEL_COL * 0.25, gap);
-    f0 = mix(vec3f(0.05), vec3f(0.78, 0.79, 0.80), bus * 0.6);
-    rough = mix(0.055 + 0.03 * ch, 0.28, max(gap, bus * 0.5));
+    // GLASSIER. Cover glass is a dielectric with an index near 1.5, which is an f0 of about 0.04 — and
+    // it is polished, so the roughness belongs down where a reflection stays a reflection instead of
+    // becoming a sheen. The first pass had it at 0.055 rising to 0.28 in the gaps, which is frosted
+    // glass; a real array mirrors the planet cleanly enough to read what it is looking at.
+    f0 = mix(vec3f(0.043), vec3f(0.78, 0.79, 0.80), bus * 0.6);
+    rough = mix(0.022 + 0.018 * ch, 0.11, max(gap, bus * 0.5));
 
     // The cover glass stays geometrically flat — that mirror-flatness is the
     // whole point of it, and perturbing it would cost the array its sheen.
     // A faint blue cast at grazing angles, from the anti-reflective coating.
+    // The anti-reflective coating's grazing cast, and a touch harder than it was: on a smooth surface
+    // the Fresnel rise is the whole story at glancing angles, so a fifth power reads as glass where a
+    // fourth reads as a slightly shiny plastic.
     let NoV = clamp(dot(N, V), 0.0, 1.0);
-    emis += SAT_PANEL_SHEEN * pow(1.0 - NoV, 4.0);
+    emis += SAT_PANEL_SHEEN * pow(1.0 - NoV, 5.0) * 1.35;
   } else {
     // The bus: multi-layer insulation. Metallised film is never flat — it is
     // crinkled, and the crinkle is most of what identifies it — so the normal is
@@ -229,7 +236,10 @@ fn shadeSatSurface(local : vec3f, nor : vec3f, mat : i32, seed : f32,
     let gold = step(0.42, gh);
     f0 = mix(SAT_FILM_AL, SAT_FILM_AU, gold);
     alb = vec3f(0.0);                     // conductor: no diffuse lobe
-    rough = 0.14 + 0.34 * gh + 0.22 * seam;
+    // Tighter than before too. Metallised film is crinkled, not matte — the crinkle is carried by the
+    // NORMAL above, so the roughness only has to describe the finish between wrinkles, and a lower
+    // one lets the wrinkle read as wrinkle rather than as a general softness.
+    rough = 0.10 + 0.26 * gh + 0.20 * seam;
 
     // A few cells read as shadowed recesses - vents, thruster ports, harness.
     let recess = step(0.93, gh);
