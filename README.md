@@ -659,18 +659,29 @@ the full reasoning; these are the ones worth knowing up front:
   The five things that DO keep state already store it as parallel typed arrays, which is the layout
   an ECS exists to produce. A registry over them would add indirection and a scheduler to a problem
   that has neither dynamic composition nor a mix of behaviours to dispatch between.
-- **OPEN: temporal lag is worse than it was, and the cause is not identified.** `beep.lag()` reads
-  4.9x noise against a historical 3.6x, and `stability` 2.2% against 1.26%. Both were measured after
-  the world doubled, and the isolation so far RULES OUT the two changes that looked guilty:
-  switching the atmosphere off leaves lag at 5.5x and switching the jitter off leaves it at 6.4x —
-  both worse, not better. So it is neither the volumetrics nor the newly-jittered rings.
-  That leaves the scale change, and the mechanism is not found. The obvious candidates check out as
-  relative rather than absolute: the depth gate is a fraction of distance, the gradient slack is in
-  pixels, the lens offset's parallax scales with aperture over distance, and the detail noise's
-  amplitude and frequency moved in opposite directions so the field's gradient is unchanged. Worth
-  noting the baseline is also not like-for-like — 3.6x was measured on a different scene — so part
-  of this may be the content under the measurement window rather than a regression. Do not treat
-  this as settled either way.
+- **CLOSED: the "lag regression" was the metric's denominator, not lag.** `beep.lag()` reports
+  `lag / noiseFloor`, and reading that ratio as a regression signal is wrong because the floor moves
+  far more than the numerator does. Measured across render scales and aperture settings, absolute
+  lag held at 6.0-7.7% while the floor ran 0.65-2.33%, so the ratio swung between 2.6x and 11.3x
+  with nothing about the lag changing.
+  The proof is the aperture case. Setting `CAMERA.aperture` to 0 removes per-frame randomness and
+  can only improve the image — and it produces the WORST ratio of the lot, 11.33x, with lag
+  unchanged at 7.31%. It is dividing by the noise it just removed.
+  So nothing regressed: the 3.6x historical figure and the 4.9x that replaced it are the same lag
+  against different noise floors. The report now leads with ABSOLUTE lag and spells out that the
+  ratio is a visibility test — is the lag that exists visible above the sampling noise — and not
+  something to compare between builds.
+- **The atmosphere was twice the intended thickness after the world doubled.** `VOLUME.sigma` is a
+  coefficient per unit length and the shell it integrates through went from 2.75 to 5.5, so the
+  same 0.55 bought twice the atmosphere. Eased to 0.38, with the albedo's blue weighting softened
+  from 0.42/0.62/1.0 to 0.55/0.70/1.0 — a thin aerosol's ratio is gentler than the pure-Rayleigh
+  lambda^-4 that inspired the first pass.
+  This was ALSO an attempt to explain the image reading cooler than it used to, and as an
+  explanation it failed: mean chromaticity moved from 0.926 to 0.939 red-over-blue, which is
+  nothing. The magenta bias is the body and the sky, which were always that colour. Recorded
+  because a measurement that refutes your hypothesis is worth keeping — the perceptual change has
+  no measurable baseline behind it, so it stays a taste call on the Film sliders rather than
+  something to be chased with numbers.
 - **Scaling a world is mostly a hunt for the numbers that are secretly lengths.** Doubling the
   planet was four tuning values and a day's worth of consequences, and the consequences were all
   the same shape: a constant that reads as dimensionless but is not.

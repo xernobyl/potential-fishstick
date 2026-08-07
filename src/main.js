@@ -368,9 +368,16 @@ function reportLag(r) {
         : 'heavy ghosting';
   return [
     `mode        lag   samples ${r.samples}   patch ${r.patch}`,
-    `lag         ${pct(r.medianLag)} median   ${pct(r.p95Lag)} p95`,
+    `LAG         ${pct(r.medianLag)} median   ${pct(r.p95Lag)} p95   <- the regression signal`,
     `noise floor ${pct(r.medianResidual)}   (same frames, so directly comparable)`,
     `ratio       ${n.toFixed(2)}x noise — ${verdict}`,
+    '            ^ a VISIBILITY test, not a regression signal. The ratio moves when either',
+    '            term moves, and the floor moves far more: measured across render scales and',
+    '            aperture settings, absolute lag held at 6.0-7.7% while the floor ran 0.65-2.33%,',
+    '            so the ratio swung 2.6x-11.3x. Zeroing the aperture — which can only improve the',
+    '            image — gives the WORST ratio of all, because it removes the noise it is divided',
+    '            by. Compare absolute lag between builds; read the ratio only to ask whether the',
+    '            lag that exists is visible above the sampling noise.',
     `sharpness   ${r.sharpness.toFixed(4)} moving   ${r.refSharpness.toFixed(4)} converged`,
     '            (higher is more retained detail; only the moving figure sees the filter)',
   ].join('\n');

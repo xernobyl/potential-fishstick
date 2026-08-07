@@ -1085,13 +1085,21 @@ export const VOLUME = {
   trSteps: 6,
   /** Extinction per unit of density-length. With `albedo` below this also sets how much the
    *  atmosphere hides what is behind it, so it is the knob that reads as "thickness". */
-  sigma: 0.55,
+  // Eased back from 0.55 when the world doubled. This is a coefficient PER UNIT LENGTH and the
+  // shell it integrates through is now twice as deep, so the same number is twice the atmosphere.
+  // Measured: it had pushed the whole frame blue-dominant — mean RGB 0.177/0.079/0.191, blue past
+  // red — where the grade is built around a warm balance. Reducing the coefficient rather than the
+  // albedo keeps the physics of the scattering intact and only asks for less of it.
+  sigma: 0.38,
   /**
    * Scattering albedo — what fraction of extinguished light is scattered rather than absorbed, per
    * channel. Blue-weighted because short wavelengths scatter more, which is the whole reason a sky
    * is blue; near 1 because a gas absorbs very little.
    */
-  albedo: [0.42, 0.62, 1.0],
+  // Less STEEPLY blue-weighted than the first pass. At 0.42/0.62/1.0 the scattering was blue
+  // enough to tilt the whole frame off the warm balance the rest of the grade is built around, and
+  // a thin aerosol's real ratio is gentler than the pure-Rayleigh lambda^-4 that inspired it.
+  albedo: [0.55, 0.70, 1.0],
   /** How fast density falls with altitude above the body, per world unit. The inverse of a scale
    *  height: larger is a thinner, more sharply bounded shell. */
   falloff: 1.3,
