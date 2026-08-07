@@ -73,9 +73,16 @@ export class Targets {
     // `taau` false, and the flag was quietly declining to take it.
     const wantAddW = QUALITY.additiveDisplayRes ? displayW : w;
     const renderSame = w === this.width && h === this.height;
-    const outSame = wantAccumW === this.accumWidth && wantAddW === this.addWidth
-                 && displayW === this.displayWidth && displayH === this.displayHeight;
-    if (renderSame && outSame) return false;
+    // THREE lifetimes, not two, and the additive target needs its own — which the first version of
+    // this got wrong in a way that only appeared once dynamic resolution existed. Its size depends
+    // on `additiveDisplayRes`, and the resolution ladder's bottom rung flips exactly that flag. With
+    // the additive size folded into the accumulation group's test, taking that rung destroyed the
+    // history — defeating the entire reason for splitting the groups, at the one moment the feature
+    // most needs it.
+    const accumSame = wantAccumW === this.accumWidth
+                   && displayW === this.displayWidth && displayH === this.displayHeight;
+    const addSame = wantAddW === this.addWidth;
+    if (renderSame && accumSame && addSame) return false;
 
     // ONLY WHAT CHANGED. A render-scale change leaves the output group — the accumulation buffers
     // above all — untouched, so the accumulated image survives it. That is the whole point: see
@@ -83,7 +90,9 @@ export class Targets {
     // the caller knows whether it has to reset the accumulator, and a scale change no longer
     // reports that it does.
     this.destroyOwned();
-    if (!outSame) this.destroyOwnedOut();
+    if (!accumSame) this.destroyOwnedOut();
+    // Just this one entry, so the accumulation buffers beside it survive.
+    else if (!addSame) this.dropOut('ember');
     this.width = w;
     this.height = h;
     this.displayWidth = displayW;
@@ -251,9 +260,9 @@ export class Targets {
     });
 
     this.generation++;
-    // TRUE means the history is gone and the caller must reset the accumulator. A render-scale
-    // change alone does not lose it.
-    return !outSame;
+    // TRUE means the history is gone and the caller must reset the accumulator. Neither a
+    // render-scale change nor an additive-resolution change loses it.
+    return !accumSame;
   }
 
   /** The accumulation target being written this frame, and last frame's. */
@@ -299,6 +308,14 @@ export class Targets {
   destroyOwned() {
     for (const t of this._owned) t.destroy();
     this._owned.length = 0;
+  }
+
+  /** Retire one output-group entry, leaving the rest — see the note in `resize`. */
+  dropOut(key) {
+    const t = this._ownedOut.get(key);
+    if (!t) return;
+    t.destroy();
+    this._ownedOut.delete(key);
   }
 
   destroyOwnedOut() {
