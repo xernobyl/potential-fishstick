@@ -353,24 +353,9 @@ export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
     // normal disagrees with the outward direction on a convex shape, and the first version had 9560 of
     // 9564 inverted. Nothing culls backfaces today, so this would have been invisible until something
     // did — exactly how the ring mesh's winding bug hid.
-    // WINDING, and a known residue.
-    //
-    // The sign at the edge's low corner picks which of the two orders faces outward. Verified on a
-    // sphere against the field's own gradient normals: 9524 of 9564 triangles are wound outward, 36 have
-    // zero area so orientation is undefined for them, and FOUR are genuinely inverted.
-    //
-    // Those four are systematic rather than noise — identical area, identical error magnitude, one at
-    // each of the +-X and +-Z axis-tangent points, none on Y. Y is the axis whose four cells wind the
-    // opposite way around the edge (x->z is a negative rotation about +y where y->z and x->y are
-    // positive), which is why its sign test is inverted below; the residue is almost certainly in that
-    // handedness argument rather than in the geometry. Choosing the split diagonal per quad by normal
-    // agreement was tried and did not touch them, so that attempt was removed rather than left as
-    // unearned complexity.
-    //
-    // Left as a documented limitation because nothing here culls backfaces - the ring pass sets
-    // cullMode 'none' deliberately, since thin geometry needs both faces - so 0.04% of triangles facing
-    // in is currently invisible. It stops being invisible the moment culling is enabled, and the fix is
-    // a careful re-derivation of the per-axis cell ordering, not a threshold.
+    // Winding from the sign at the edge's low corner. One rule for all three axes, which is only
+    // possible because the cell traversal above is right-handed per axis — see that note. Verified
+    // against the field's own gradient normals: zero inverted triangles on a sphere and on a box.
     if (flip) {
       indices.push3(v0, v2, v1);
       indices.push3(v0, v3, v2);
@@ -390,16 +375,29 @@ export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
       for (let i = 0; i < cw; i++) {
         const base = cornerIdx(i, j, k) * 3;
         // An X edge is shared by the four cells around it in Y and Z, and so on by symmetry.
+        // THE FOUR CELLS ARE TRAVERSED IN THE RIGHT-HANDED PAIR FOR THAT AXIS, and getting that wrong
+        // is what produced the four inverted triangles this used to ship with.
+        //
+        // For an edge along axis a, the perpendicular pair (b, c) must be the right-handed cycle:
+        // (Y,Z) for X, (Z,X) for Y, (X,Y) for Z. The Y case used (X,Z) — the reverse — so its loop wound
+        // the opposite way from the other two. That was compensated for with an inverted sign test,
+        // which works everywhere the quad is well-conditioned and fails exactly where it is not: four
+        // triangles, at the +-X and +-Z axis-tangent points.
+        //
+        // With the ordering correct, ALL THREE AXES SHARE ONE SIGN RULE, which is the tell that the
+        // handedness is now right rather than merely patched. Backface culling is on, so this is load
+        // bearing.
+        const flip = d[cornerIdx(i, j, k)] > 0;
         if (edgeMap[base] >= 0 && j > 0 && k > 0) {
-          const flip = d[cornerIdx(i, j, k)] > 0;
+          // a = X, (b, c) = (Y, Z)
           quad(at(i, j - 1, k - 1), at(i, j, k - 1), at(i, j, k), at(i, j - 1, k), flip);
         }
         if (edgeMap[base + 1] >= 0 && i > 0 && k > 0) {
-          const flip = d[cornerIdx(i, j, k)] < 0;
-          quad(at(i - 1, j, k - 1), at(i, j, k - 1), at(i, j, k), at(i - 1, j, k), flip);
+          // a = Y, (b, c) = (Z, X)
+          quad(at(i - 1, j, k - 1), at(i - 1, j, k), at(i, j, k), at(i, j, k - 1), flip);
         }
         if (edgeMap[base + 2] >= 0 && i > 0 && j > 0) {
-          const flip = d[cornerIdx(i, j, k)] > 0;
+          // a = Z, (b, c) = (X, Y)
           quad(at(i - 1, j - 1, k), at(i, j - 1, k), at(i, j, k), at(i - 1, j, k), flip);
         }
       }

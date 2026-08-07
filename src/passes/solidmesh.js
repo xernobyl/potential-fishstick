@@ -58,9 +58,19 @@ export class SolidMeshPass {
           { format: 'rgba16float' },   // xy pixel delta, z previous view distance
         ],
       },
-      // No culling: a ring is thin and its inner face is legitimately visible
-      // through the hoop from most angles, so back faces are real surface here.
-      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      // BACKFACE CULLING, which the geometry now earns.
+      //
+      // This used to be 'none', on the grounds that a ring is thin and its inner face is legitimately
+      // visible through the hoop. That was true of the shape and false about the surface: a
+      // rectangular-section tube is CLOSED, so what you see looking through the hoop is the tube's far
+      // outer wall, not its inside. Culling removes only the faces pointing away from the eye, which
+      // are behind an opaque wall in every case.
+      //
+      // It was also the only thing hiding two winding bugs - the ring mesh's, and four inverted
+      // triangles in the dual contourer - both of which are now fixed and asserted rather than
+      // tolerated. Roughly half the fragments of a closed mesh are back faces, so this is the cheapest
+      // fragment saving available, and from here on a winding mistake is visible instead of latent.
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
       depthStencil: {
         format: 'depth24plus',
         depthWriteEnabled: true,

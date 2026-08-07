@@ -137,7 +137,7 @@ function topology(m) {
   // Four are known to be inverted, at the +-X and +-Z axis-tangent points; see the note in
   // dualcontour.js for what they are and why they are not fatal yet. Pinned at 4 rather than at "few"
   // so that a change which makes it WORSE fails here instead of passing quietly.
-  check(flipped <= 4, 'triangles with area are wound outward, bar the four known axis-tangent cases',
+  check(flipped === 0, 'and every triangle with area is wound outward — backface culling depends on it',
         `${flipped} flipped, ${degenerate} degenerate of ${F}`);
   check(degenerate / F < 0.01, 'with degenerate slivers under 1% of the mesh',
         `${(degenerate / F * 100).toFixed(2)}%`);
