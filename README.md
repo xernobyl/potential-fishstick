@@ -453,6 +453,40 @@ the method, not of a knob that can be turned off.
   might not. Apply it AFTER the resolve, like every other layer that cannot be reprojected, which also
   means it lands after temporal upsampling rather than fighting it.
 
+- **DONE: the shading's fine detail is band-limited by the pixel footprint.** `fleck` runs at 34 per
+  unit and the surface grain at up to 15/R, both finer than the sampling grid can carry at most
+  distances. Sampling them anyway costs twice: aliasing in space, and — because the jitter moves the
+  sample every frame — variation in time that the resolve has to admit into its variance clip. Each
+  octave now fades out as its lattice approaches the pixel footprint, mixing toward the noise's MEAN
+  rather than toward zero, which would darken the surface as it recedes.
+
+  Measured on `animated`, and where it engages is the whole story:
+
+      body filling the frame        0.642% 0.624%  ->  0.612% 0.622%   within noise
+      body small (3.5x distance)    0.486% 0.487%  ->  0.471% 0.457%   4.6%, no overlap
+
+  Neutral close up because the footprint barely reaches the fade band there; a real and repeatable
+  win once it does. Kept either way because it is correct filtering: the alternative is knowingly
+  sampling above Nyquist. SHADING ONLY — `mapBodyAt` subtracts the same grain from the distance
+  field, and filtering that by a pixel footprint would make the geometry view-dependent, so the same
+  point would report different distances to the march, to `calcNormal` and to the reflection pass.
+  That is a broken SDF, not a filtered one.
+
+- **CLOSED, TWICE: shading the detail at the pixel centre.** Tiago's suggestion. The first attempt
+  lost 9% on `animated`, and the stated reason to build the band-limiting above was that it should
+  remove the objection — an octave faded below Nyquist has nothing left to alias. It does not:
+
+      band-limited, detail at the sample    0.630%  0.622%
+      band-limited, detail at the centre    0.705%  0.683%      11% WORSE
+      neither                               0.629%
+      both                                  0.689%
+
+  Worse with the enabler in place than with neither, so this is refuted rather than unproven. The
+  band-limiting numbers explain why: at the framings that matter the detail is genuinely RESOLVABLE,
+  the footprint does not reach the fade band, and averaging over the sub-pixel positions is simply the
+  correct filtering. Centre evaluation throws that average away and gets a stable but snapping signal
+  for it. Not worth a third attempt.
+
 - **Render into a sub-rectangle instead of reallocating.** Dynamic resolution currently rebuilds every
   render-resolution target each time it changes rung. The alternative is to allocate once at the
   largest size and render into the top-left sub-rect, moving the viewport and scissor rather than the
