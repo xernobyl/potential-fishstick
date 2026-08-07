@@ -1648,11 +1648,17 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
  * levels or more, and only counts past a threshold show that.
  */
 export async function finalStability(renderer, gpu, knobs, opts = {}) {
-  const { film, probe } = knobs;
+  const { film, probe, camera: cam } = knobs;
   const settle = opts.settle ?? 45;
   const pairs = opts.pairs ?? 3;
   const time = opts.time ?? 7.0;
   const grain = opts.grain ?? false;      // OFF by default: real grain is meant to move
+  // APERTURE OFF by default, as every older probe here does - and the first version of this one
+  // forgot, which produced a wrong conclusion worth recording. `PROBE.zeroJitter` only zeroes
+  // jitter.xy, the PIXEL jitter; jitter.zw is the lens offset for depth of field, and it resamples
+  // the lens every frame. So "jitter off" left a per-frame random source running and the frozen
+  // scene looked irreducibly noisy. With both off it is bit-exact: mean 0.000, peak 1 of 255.
+  const aperture = opts.aperture ?? false;
   const input = benchInput(opts.cmd);
   await ensureSize(renderer);
 
@@ -1667,8 +1673,10 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
 
-  const saved = { grain: film.grain, held: renderer.held, zeroJitter: probe.zeroJitter };
+  const saved = { grain: film.grain, held: renderer.held, zeroJitter: probe.zeroJitter,
+                  aperture: cam.aperture };
   if (!grain) film.grain = 0;
+  if (!aperture) cam.aperture = 0;
   renderer.held = true;
   if (opts.zeroJitter !== undefined) probe.zeroJitter = opts.zeroJitter ? 1 : 0;
 
@@ -1726,6 +1734,7 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
     film.grain = saved.grain;
     renderer.held = saved.held;
     probe.zeroJitter = saved.zeroJitter;
+    cam.aperture = saved.aperture;
     renderer.resetHistory();
   }
 }

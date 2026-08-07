@@ -93,6 +93,9 @@ async function boot() {
     } else if (k === 't') {
       e.preventDefault();
       setFrozen(!frozen);
+    } else if (k === 'u') {
+      e.preventDefault();
+      setTaau(!TUNING.QUALITY.taau);
     } else if (k === 'g') {
       e.preventDefault();
       if (gui) { gui.destroy(); gui = null; return; }
@@ -221,7 +224,7 @@ async function boot() {
     running = false;
     try {
       const r = await finalStability(renderer, gpu, {
-        film: TUNING.FILM, probe: TUNING.PROBE,
+        film: TUNING.FILM, probe: TUNING.PROBE, camera: TUNING.CAMERA,
       }, opts);
       const row = (k, v) => console.log(`  ${k.padEnd(12)} mean ${v.mean.toFixed(3)}  peak `
         + `${v.peak.toFixed(0).padStart(3)}   >4 ${v.over4.toFixed(3)}%  >16 ${v.over16.toFixed(3)}%`
@@ -294,6 +297,8 @@ async function boot() {
     renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shake, still, shot,
     /** Freeze/unfreeze the clock and input; `t` does the same. Returns the new state. */
     freeze: (on) => setFrozen(on === undefined ? !frozen : !!on),
+    /** Temporal upsampling on/off, dropping to 1:1 when off; `u` does the same. */
+    taau: (on) => setTaau(on === undefined ? !TUNING.QUALITY.taau : !!on),
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;
@@ -353,6 +358,8 @@ async function boot() {
   let frozen = false;
   let frozenTime = 0;
   let frozenInput = null;
+  /** Render scale to restore when upsampling is switched back on. */
+  let taauScale = null;
   let lastHud = 0;
   let frames = 0;
   let fps = 0;
@@ -388,6 +395,37 @@ async function boot() {
     // than to whichever state is being judged.
     renderer.resetHistory();
     return frozen;
+  }
+
+  /**
+   * Turn temporal UPSAMPLING off and on.
+   *
+   * Off means rendering at 1:1 - the render scale goes to 1.0 and the accumulation buffer stops
+   * being larger than the input - so the image is native-resolution with plain TAA rather than
+   * reconstructed from a sparser one. Leaving the scale at 0.5 with upsampling off would render at
+   * half resolution and simply blit it up, which is not the comparison anyone means by "disable
+   * TAAU". The previous scale comes back when it is switched on again.
+   *
+   * This does NOT stop the temporal accumulation, and on a static scene it is not what makes the
+   * picture move: measured with beep.still(), the movers are the depth-of-field lens offset
+   * (mean 0.128 of 255) and then the pixel jitter (0.046). With CAMERA.aperture at 0 and the pixel
+   * jitter off, the frozen image is bit-exact - upsampling still enabled.
+   */
+  function setTaau(on) {
+    const Q = TUNING.QUALITY;
+    if (on === Q.taau) return Q.taau;
+    if (!on) {
+      taauScale = Q.renderScale;
+      Q.renderScale = 1.0;
+    } else if (taauScale !== null) {
+      Q.renderScale = taauScale;
+      taauScale = null;
+    }
+    Q.taau = on;
+    renderer.resize();
+    renderer.resetHistory();
+    console.log(`[taau] ${on ? 'on' : 'off'}, renderScale ${Q.renderScale}`);
+    return Q.taau;
   }
 
   function loop(now) {
