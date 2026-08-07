@@ -16,10 +16,12 @@
  * rather than an error, and the bandwidth difference is nothing at this scale.
  */
 
-import { interleave, MESH_STRIDE_FLOATS } from '../scene/meshgen.js';
+import { interleave, MESH_FIELDS, MESH_STRIDE_FLOATS } from '../scene/meshgen.js';
 
 const BYTES_PER_FLOAT = 4;
 const STRIDE = MESH_STRIDE_FLOATS * BYTES_PER_FLOAT;
+/** WebGPU's name for a run of N floats. */
+const FORMAT = ['', 'float32', 'float32x2', 'float32x3', 'float32x4'];
 
 /**
  * The vertex layout every generated mesh uses. Passed straight to a pipeline's `vertex.buffers`.
@@ -29,12 +31,14 @@ const STRIDE = MESH_STRIDE_FLOATS * BYTES_PER_FLOAT;
  */
 export const MESH_VERTEX_LAYOUT = {
   arrayStride: STRIDE,
-  attributes: [
-    { shaderLocation: 0, offset: 0, format: 'float32x3' },   // position, object-local
-    { shaderLocation: 1, offset: 12, format: 'float32x3' },  // normal, object-local
-    { shaderLocation: 2, offset: 24, format: 'float32x4' },  // extra: the shape's own data
-    { shaderLocation: 3, offset: 40, format: 'float32' },    // object id
-  ],
+  // DERIVED from the field table rather than written out: the offsets and the stride have to agree,
+  // and hand-numbering them is how they stop agreeing. Shader locations are the table's order, which
+  // is the order `MeshVertex` declares in mesh_vertex.wgsl.
+  attributes: MESH_FIELDS.map((f, i) => ({
+    shaderLocation: i,
+    offset: f.offset * BYTES_PER_FLOAT,
+    format: FORMAT[f.size],
+  })),
 };
 
 export class Mesh {

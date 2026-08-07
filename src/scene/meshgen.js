@@ -172,30 +172,48 @@ export function concatMeshes(parts) {
 }
 
 /**
- * Interleave into one buffer: position, normal, shape data, object id. 11 floats, 44 bytes.
+ * THE VERTEX FORMAT, declared once.
  *
- * One layout for every generated mesh, which is the point — a pipeline declares it once and any
- * shape can be drawn through it. `extra` is the escape hatch that makes that possible without a
- * per-shape layout: four floats whose meaning is the shape's business.
+ * Everything downstream is derived from this table: the interleaving below, the GPU vertex layout in
+ * `core/mesh.js`, and by correspondence the `MeshVertex` struct in `mesh_vertex.wgsl`. The offsets
+ * used to be written out by hand alongside a separately-declared stride, which is the same shape of
+ * hazard as a uniform block with hand-numbered slots - add a field and the stride moves while the
+ * offsets do not, and the result is not an error but a garbled mesh.
+ *
+ * `extra` is what keeps ONE format serving every generated shape: four floats whose meaning belongs
+ * to the generator. Adding a field here is a deliberate act that changes every mesh's memory; giving
+ * `extra` a new meaning is not.
  */
-export function interleave({ positions, normals, extra, ids, vertexCount }) {
-  const out = new Float32Array(vertexCount * MESH_STRIDE_FLOATS);
-  for (let v = 0; v < vertexCount; v++) {
-    const o = v * MESH_STRIDE_FLOATS;
-    out[o] = positions[v * 3];
-    out[o + 1] = positions[v * 3 + 1];
-    out[o + 2] = positions[v * 3 + 2];
-    out[o + 3] = normals[v * 3];
-    out[o + 4] = normals[v * 3 + 1];
-    out[o + 5] = normals[v * 3 + 2];
-    out[o + 6] = extra[v * 4];
-    out[o + 7] = extra[v * 4 + 1];
-    out[o + 8] = extra[v * 4 + 2];
-    out[o + 9] = extra[v * 4 + 3];
-    out[o + 10] = ids[v];
+export const MESH_FIELDS = (() => {
+  const fields = [
+    { name: 'position', key: 'positions', size: 3 },
+    { name: 'normal', key: 'normals', size: 3 },
+    { name: 'extra', key: 'extra', size: 4 },
+    { name: 'objectId', key: 'ids', size: 1 },
+  ];
+  let offset = 0;
+  for (const f of fields) { f.offset = offset; offset += f.size; }
+  return fields;
+})();
+
+/** Floats per interleaved vertex. Derived, so it cannot drift from the field table. */
+export const MESH_STRIDE_FLOATS = MESH_FIELDS.reduce((n, f) => n + f.size, 0);
+
+/**
+ * Interleave into one buffer, driven by the field table.
+ *
+ * A generic loop rather than an unrolled one: this runs once per mesh at build time, never per frame,
+ * so the only thing worth optimising for is that it cannot disagree with the layout.
+ */
+export function interleave(data) {
+  const out = new Float32Array(data.vertexCount * MESH_STRIDE_FLOATS);
+  for (const f of MESH_FIELDS) {
+    const src = data[f.key];
+    if (!src) throw new Error(`mesh data is missing ${f.key}`);
+    for (let v = 0; v < data.vertexCount; v++) {
+      const o = v * MESH_STRIDE_FLOATS + f.offset;
+      for (let k = 0; k < f.size; k++) out[o + k] = src[v * f.size + k];
+    }
   }
   return out;
 }
-
-/** Floats per interleaved vertex, shared by the generator and the pipeline's vertex layout. */
-export const MESH_STRIDE_FLOATS = 11;

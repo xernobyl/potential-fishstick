@@ -10,7 +10,8 @@
 // arithmetic got for free and a buffer could get wrong: unit normals, no degenerate triangles, a
 // closed sweep with no seam, and consistent winding.
 
-import { rectTube, revolveProfile, concatMeshes, interleave } from '../src/scene/meshgen.js';
+import { rectTube, revolveProfile, concatMeshes, interleave, MESH_FIELDS, MESH_STRIDE_FLOATS }
+  from '../src/scene/meshgen.js';
 
 const TAU = Math.PI * 2;
 let failed = 0;
@@ -161,7 +162,35 @@ check(secondTri.every((i) => i >= perRing && i < perRing * 2),
       'the second object\'s triangles reference the second object\'s vertices', `${secondTri}`);
 
 const inter = interleave(three);
-check(inter.length === three.vertexCount * 11, 'interleave packs 11 floats per vertex');
+check(inter.length === three.vertexCount * MESH_STRIDE_FLOATS,
+      `interleave packs ${MESH_STRIDE_FLOATS} floats per vertex`);
+
+// ---- the field table is the single source, so nothing may disagree with it ----
+//
+// The offsets and the stride used to be written out by hand in two files. They agreed, until they
+// would not have: adding a field moves the stride and leaves the offsets, which garbles the mesh
+// rather than erroring. These assertions are cheap and they are what makes the table authoritative.
+{
+  let running = 0;
+  let ok = true;
+  for (const f of MESH_FIELDS) { if (f.offset !== running) ok = false; running += f.size; }
+  check(ok, 'field offsets are cumulative with no gaps or overlaps');
+  check(running === MESH_STRIDE_FLOATS, 'the stride is the sum of the field sizes',
+        `${running} vs ${MESH_STRIDE_FLOATS}`);
+  // Every field must name a real array in the generator's output, or interleave silently writes zeros.
+  const one = rectTube({ segments: 8, radius: 1, halfW: 0.1, halfH: 0.05 });
+  const merged = concatMeshes([one]);
+  const missing = MESH_FIELDS.filter((f) => !merged[f.key]);
+  check(missing.length === 0, 'every field maps to an array the generator produces',
+        missing.map((f) => f.key).join());
+  // And the interleaved data must actually round-trip: read a vertex back through the offsets.
+  const packed = interleave(merged);
+  const v = 5;
+  const pos = MESH_FIELDS[0];
+  const same = [0, 1, 2].every((k) =>
+    packed[v * MESH_STRIDE_FLOATS + pos.offset + k] === merged.positions[v * 3 + k]);
+  check(same, 'a vertex read back through the table matches the source arrays');
+}
 check(inter[10] === 0 && inter[perRing * 11 + 10] === 1, 'the id survives interleaving');
 
 // ---- density is a knob, and the profile primitive generalises ----
