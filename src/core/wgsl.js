@@ -14,7 +14,24 @@
  * re-fetch, and `GPUShaderModule`s are cached too — creating them is not free.
  */
 
+// Relative to this module, never to the page. That is what lets the whole thing be served from
+// a subdirectory — GitHub Pages puts it under /<repo>/ — with no base path to configure.
 const SHADER_ROOT = new URL('../../shaders/', import.meta.url);
+
+/**
+ * Local development, by hostname.
+ *
+ * `no-cache` REVALIDATES rather than disabling the cache: the browser still stores the response
+ * and still takes a 304, it just never serves one without asking. Locally that is worth it. A
+ * static dev server that sends no Cache-Control leaves the browser applying heuristic freshness,
+ * and a stale shader does not fail like a stale file — it fails as a compile error against source
+ * that no longer exists on disk, naming identifiers you have already deleted.
+ *
+ * In production it is the wrong trade: a deployed shader cannot change underneath you, so all it
+ * buys is a conditional request per shader — two dozen round trips before the first frame, paid
+ * by every visitor on every load. So it is asked for only where the hazard exists.
+ */
+const DEV = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 
 /** raw text cache: path -> Promise<string> */
 const sources = new Map();
@@ -22,14 +39,7 @@ const sources = new Map();
 function loadSource(path) {
   let p = sources.get(path);
   if (!p) {
-    // `no-cache` REVALIDATES rather than disabling the cache: the browser still stores the
-    // response and still gets a 304 when nothing changed, it just never serves one without
-    // asking. That matters here more than it looks like it should. A static dev server that
-    // sends no Cache-Control leaves the browser applying heuristic freshness, and a stale
-    // shader does not fail like a stale file — it fails as a compile error against source that
-    // no longer exists on disk, naming identifiers you have already deleted. That is a genuinely
-    // confusing hour, and it costs one conditional request per shader, once, at start-up.
-    p = fetch(new URL(path, SHADER_ROOT), { cache: 'no-cache' })
+    p = fetch(new URL(path, SHADER_ROOT), DEV ? { cache: 'no-cache' } : undefined)
       .then((r) => {
         if (!r.ok) throw new Error(`shader not found: ${path} (${r.status})`);
         return r.text();

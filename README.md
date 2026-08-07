@@ -35,6 +35,29 @@ longer on disk. Any static server will do as long as it does that; `npx serve .`
 Firefox. If it is missing or the adapter cannot be acquired, the page says so
 explicitly rather than failing silently.
 
+### Hosting it
+
+It is a static site with no build step, so any static host works — GitHub Pages from the repository
+root needs no configuration. Two things make that true, and both are deliberate:
+
+- **Nothing is located by an absolute path.** The entry script is `./src/main.js`, the shader root
+  is `new URL('../../shaders/', import.meta.url)`, and lil-gui is imported relative to its
+  importer. So the whole thing runs unchanged from a subdirectory like `/<repo>/`, with no base
+  path to configure and nothing to rewrite at deploy time.
+- **The shader loader only revalidates in local development.** `no-cache` is there because a stale
+  `.wgsl` fails as a compile error against source that no longer exists on disk. A deployed shader
+  cannot change underneath you, so in production that would buy nothing and cost two dozen
+  conditional round trips before the first frame — see `DEV` in `src/core/wgsl.js`.
+
+WebGPU requires a secure context, which Pages satisfies. `.nojekyll` is present so the tree is
+served exactly as committed. `serve.py` and `dev/` get published too and are harmless; they are
+just never fetched.
+
+The one thing to know is that this is a genuine renderer, not a lightweight demo: the march is the
+whole frame budget, and `QUALITY.renderScale` at 0.5 with `maxWidth` at 2560 is tuned for an Apple
+silicon laptop. On weaker hardware it will be slow, and the honest fix is the render-scale slider
+behind `g` rather than anything automatic — see the dynamic-resolution idea below.
+
 ## Controls
 
 - **drag** — orbit the camera. Releasing keeps your angle; the slow dolly and roll
