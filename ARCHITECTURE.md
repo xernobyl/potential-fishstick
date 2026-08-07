@@ -8,14 +8,15 @@ lived in it, and it is the one part where a change that looks local is not.
 
 ## What this is
 
-A single-scene WebGPU renderer: a raymarched signed-distance planetoid on a spherical-Fibonacci
-lattice, lit as a scattering medium, with rasterised metal rings, an analytic ship and
-satellites, GPU particles, curl-noise auroras, a volumetric atmosphere, temporal
-antialiasing with upsampling, and an analytic film grade.
+A WebGPU renderer with two scenes. The main one is a raymarched signed-distance planetoid on a
+spherical-Fibonacci lattice, lit as a scattering medium, with rasterised metal rings, a ship and
+satellites contoured from their own distance fields, GPU particles, curl-noise auroras, a volumetric
+atmosphere, temporal antialiasing with upsampling, and an analytic film grade. The second is a model
+viewer — a turntable for inspecting those generated meshes, sharing the entire post chain.
 
-It is deliberately **not** an engine. There is no scene graph, no material system, no asset
-pipeline, and no build step. Everything is procedural and analytic, which is what buys the two
-properties the design leans on hardest:
+It is deliberately **not** an engine. There is no scene graph, no material system, no asset pipeline,
+and no build step — a "scene" here is six methods, not a hierarchy. Everything is procedural, which is
+what buys the two properties the design leans on hardest:
 
 - **Nothing is loaded**, so the whole thing is a static page and a shader cache.
 - **Everything can say where it was last frame**, because positions come from closed-form
@@ -77,7 +78,14 @@ Skipping it outright would leave the previous scene's samples in the buffer for 
 against. It also draws through the models' **own** shaders — a viewer with its own simplified shader
 shows you a model nothing else renders, and hides exactly the discrepancies you opened it to find.
 
-Two details are load-bearing rather than cosmetic. The model spins and the camera does not, because
+**A camera can be orbited or placed, and the two maintain different quantities.** `Camera.update`
+orbits: `distance` is the orbit RADIUS, and the subject — the body's near surface — is `focusPull`
+closer, so `focus` is a correction away from it. `Camera.lookAt` places: the caller already measured
+the distance to its subject, so `distance` and `focus` are the same number and no correction applies.
+Conflating them is not academic — it put the model viewer's focal plane at the clamp floor and its LOD
+two levels too coarse.
+
+Two more details are load-bearing rather than cosmetic. The model spins and the camera does not, because
 rotating the camera keeps the lighting fixed to the model and shows the same shading from every angle.
 And the studio sits 200 units from the world origin: the hull's material carries a core-light term
 falling off as 1/|p|², so a model at the origin would be lit by a planet the viewer deliberately does
@@ -88,17 +96,25 @@ in `dev/scenes.mjs` rather than left as a comment.
 
 ```mermaid
 flowchart TD
-    tilecull[tilecull: which tiles can reach the body] --> raymarch
-    raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag<br/>sky only in the model viewer] --> taa
-    solid[solid meshes: rings, ship hull, satellites<br/>rasterised opaque + exact motion vectors<br/>frustum + back-face culled, shared depth] --> taa
+    subgraph world["THE SCENE — swapped wholesale; planetoid shown"]
+      tilecull[tilecull: which tiles can reach the body] --> raymarch
+      raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag<br/>sky only in the model viewer]
+      solid[solid meshes: rings, ship hull, satellites<br/>rasterised opaque + exact motion vectors<br/>frustum + back-face culled, shared depth]
+      sim[ember sim: particle state + compacted draw args] --> embers
+      embers[ember draw: additive billboards]
+      contrail[contrail]
+      railgun[railgun]
+      aurora[aurora]
+    end
+    raymarch --> taa
+    solid --> taa
+    embers --> additive
+    contrail --> additive
+    railgun --> additive
+    aurora --> additive
     taa[TAA resolve: depth-sort solid vs body,<br/>reproject, variance-clip, accumulate]
     taa --> bloom
     taa --> composite
-    sim[ember sim: particle state + compacted draw args] --> embers
-    embers[ember draw: additive billboards] --> additive
-    contrail[contrail] --> additive
-    railgun[railgun] --> additive
-    aurora[aurora] --> additive
     additive[(shared additive target)] --> bloom
     additive --> composite
     bloom[bloom: prefilter then dual-filter pyramid] --> flare
@@ -106,6 +122,9 @@ flowchart TD
     flare[lens flare: ghosts + streaks] --> composite
     composite[composite: layers, limb glow, grade, grain] --> swap[(swapchain)]
 ```
+
+Everything inside the box belongs to the active scene; everything outside it is shared, and the model
+viewer reaches the swapchain through exactly the same resolve, bloom, flare and grade.
 
 The march used to own three of those: the body, then the satellites, then the ship, each narrowing
 the next one's `tmax` so the set resolved front-to-back with no sorting. **Two of the three have
@@ -306,6 +325,11 @@ wrong on every screen but the one they were tuned on; a pixel budget is a percep
 true everywhere. It uses the same conversion as `resolutionForScreen` in reverse, deliberately — two
 different conversions would let the finest level be finer than anything the selector would ask for.
 
+An object with **no** `worldSphere` has no known distance, so it draws the finest level. Substituting
+the camera's own `distance` looks reasonable and is not: that field is maintained by whichever code
+last placed the camera, so a scene that places its own inherited the previous scene's value — which is
+exactly how the model viewer ended up drawing LOD 2 of 4 while sitting 0.97 units from its subject.
+
 Resolution is **derived, not fixed**: `resolutionForScreen` takes the object's size, the distance it
 is usually seen from, the focal length and a screen-space error budget in pixels, and returns the
 grid resolution that meets it. So the mesh suits the window rather than the machine it was authored
@@ -326,9 +350,19 @@ correct in every orientation, where an AABB would need re-fitting every frame an
 afterwards. Planes come from the view-projection matrix by Gribb–Hartmann, and there are **five**, not
 six: the projection is reverse-Z infinite, so the far plane does not exist.
 
+Depth is `depth24plus`, written, compared **`greater`** — the projection is reverse-Z, so nearer is
+larger and the buffer clears to 0. `frontFace: 'ccw'` is spelled out beside the cull mode even though
+it is the default, because back-face culling only removes the right half of the geometry if the
+generators wind counter-clockwise seen from outside, and that is a property asserted in the headless
+suites rather than one guaranteed by the API.
+
 An object opts in by offering a `worldSphere`; the satellites do not, because their orbits are
 evaluated in WGSL and never reach the CPU, and a second copy of the orbital mechanics in JavaScript
 to reject 180 triangles would cost more than it saves.
+
+**That one sphere answers two questions**, and the coupling is deliberate: it is both what the frustum
+test uses and where the LOD selector measures the distance from. An object cannot be culled correctly
+and sized incorrectly, because there is one fact about where it is.
 
 **Verification.** The meshers are checked headlessly: closed, manifold, genus-0 by Euler
 characteristic, every vertex on the field, unit outward normals, and zero inverted windings, at every
@@ -433,8 +467,11 @@ Lessons learned the hard way, all encoded in the probes now:
 - **Freezing needs three things**: the clock, the input, *and* `dt` forced to zero — `dt` has a
   `1e-4` floor, so a repeated clock still creeps every simulation forward.
 
-`dev/run.mjs` is the GPU-free half: pure-JS checks of the lattice bounds, the bloom prefilter, the
-aurora walker and parameterisation continuity. It runs in CI-time, with no browser.
+`dev/run.mjs` is the GPU-free half: 141 assertions across ten suites, covering the lattice bounds, the
+bloom prefilter, the aurora walker and its parameterisation, the two meshers and their topology at
+every simplification level, the frustum planes, LOD selection, and the scene contract. It runs in
+CI-time, with no browser. Everything geometric lives here rather than in an image comparison, because
+a hole, a doubled triangle or an inverted winding all look fine in a screenshot.
 
 ## Invariants
 

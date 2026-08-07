@@ -9,9 +9,14 @@ metal hoops, a flyable ship trailing contrails and firing helical rail guns, orb
 GPU particle embers, nine curl-noise auroras, marched reflections, temporal upsampling from half
 resolution, and an analytic film response on the way out.
 
-Everything is procedural. No textures, no meshes, no assets — every shape is a distance field or a
-handful of instanced boxes. The one dependency is a vendored copy of `lil-gui` for the tuning panel,
-loaded on demand and outside the render path.
+Everything is procedural. **No textures and no asset files** — the body is a distance field marched
+per pixel, and the ship, rings and satellites are triangle meshes GENERATED at startup: the hull is
+its own SDF, adaptively dual-contoured into an LOD chain. Nothing is loaded, which is a stronger claim
+than having no meshes and a more useful one. The one dependency is a vendored copy of `lil-gui` for
+the tuning panel, loaded on demand and outside the render path.
+
+There is a second scene — a model viewer, for looking at those generated meshes on a turntable. Pick
+it from the dropdown under `g`.
 
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
 **space** to shoot.
@@ -302,9 +307,9 @@ BGRA pass through with no channel swizzle.
 node dev/run.mjs
 ```
 
-No GPU, no dependencies, under a second. Each check either reimplements the shader arithmetic it
-is validating or drives the real CPU-side simulation against a stub device. They exist because the
-properties that matter most here are ones you cannot see:
+No GPU, no dependencies, under a second — 141 assertions across ten suites. Each check either
+reimplements the shader arithmetic it is validating or drives the real CPU-side code directly. They
+exist because the properties that matter most here are ones you cannot see:
 
 - **`polarbound`** — the march's polar rejection bound really is an upper bound, over 3.1M
   candidates at the densities the field uses, including near-pole cases and deliberately non-unit
@@ -316,6 +321,20 @@ properties that matter most here are ones you cannot see:
   emitted path's joint angle stays far under the miter limit.
 - **`continuity`** — the ribbon's age and head both advance continuously across an emission,
   rather than stepping a whole sample as the ring buffer shifts.
+- **`meshgen`** — the generated ring mesh is the same surface as the arithmetic it replaced, and
+  `box()` is wound outward with the exact surface area. A reversed box is INVISIBLE under back-face
+  culling rather than visibly wrong, which is the failure a screenshot review passes.
+- **`dualcontour`** — the SDF mesher produces closed, manifold, genus-0, correctly-wound surfaces,
+  with every vertex on the field and unit outward normals.
+- **`octree`** — the same at every simplification level, plus the assertion that pins down the five
+  transcribed traversal tables at once: simplifying with a threshold of ZERO reproduces the uniform
+  contourer exactly on a curved surface, to the last decimal of every vertex.
+- **`lod`** — selection is monotone in distance and the level it picks keeps its geometric error
+  under the pixel budget, so a switch cannot be visible.
+- **`frustum`** — the extracted planes are unit-normalised, there are five of them (reverse-Z
+  infinite has no far plane), and their half-extents match the aspect ratio.
+- **`scenes`** — every scene implements the contract the renderer calls it through, so a new one
+  fails here rather than at the first frame after a switch.
 
 ### Does temporal upsampling actually resolve detail?
 
@@ -1028,6 +1047,25 @@ the full reasoning; these are the ones worth knowing up front:
   because a measurement that refutes your hypothesis is worth keeping — the perceptual change has
   no measurable baseline behind it, so it stays a taste call on the Film sliders rather than
   something to be chased with numbers.
+- **Two quantities with the same units are still two quantities.** A camera's `distance` and its
+  `focus` are both world-space lengths, which is exactly why they got conflated. On the orbiting path
+  `distance` is the ORBIT RADIUS and the subject is `focusPull` nearer, so the pull is a correction
+  between two different things; on the placing path the caller already measured the distance to its
+  subject and no correction applies. One field served both, and the day a second scene started placing
+  its camera instead of orbiting it, that scene inherited the other's radius — focal plane at the clamp
+  floor, LOD two levels too coarse, and nothing anywhere reporting an error.
+
+  The tell was available before the bug: `focusDistance()` subtracted a constant from `distance`, and
+  a quantity you have to correct before use is not the quantity you wanted. Splitting them is two
+  fields and a line in each path.
+
+- **A fallback that invents a missing input will be reached, and it will be wrong.** LOD selection
+  needs a distance, which normally comes from the object's bounding sphere. When an object had none,
+  the code substituted the camera's own `distance` — plausible, cheap, and the mechanism by which the
+  bug above became visible. The honest answer for "no sphere" is not a guessed distance but a
+  different decision entirely: draw the finest level, because that is what "I do not know how far away
+  this is" actually implies.
+
 - **Scaling a world is mostly a hunt for the numbers that are secretly lengths.** Doubling the
   planet was four tuning values and a day's worth of consequences, and the consequences were all
   the same shape: a constant that reads as dimensionless but is not.
