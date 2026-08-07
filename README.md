@@ -337,22 +337,36 @@ the method, not of a knob that can be turned off.
   ship and satellites now do too; the body is what is left. Gate any attempt on `beep.shake()`'s
   `animated` condition, never on `drift`, which is contaminated by legitimate motion.
 
-  There is a cheap first-order method for it, and it needs no per-sphere bookkeeping. For an implicit
-  surface the normal velocity is `-(dd/dt)/|grad d|`, and at a hit `d(p, t) = 0`, so
-  `dd/dt ~ -d(p, t-dt)/dt`. With `|grad d| ~ 1` for a signed distance field that collapses to:
+  **First-order surface tracking was BUILT and MEASURED, and it made things slightly worse.** Written
+  up here so nobody spends the afternoon twice. For an implicit surface the normal velocity is
+  `-(dd/dt)/|grad d|`, and at a hit `d(p, t) = 0`, so `dd/dt ~ -d(p, t-dt)/dt`. Taking
+  `|grad d| ~ 1` for a signed distance field, that collapses to a one-line motion vector:
 
       p_prev ~ p - N * mapBodyAt(p, prevBeatPhase)
 
-  One extra field evaluation per pixel — against the 40-160 the march already does, so ~1-2% — plus
-  the normal, which shading has computed anyway. Tangential drift is lost, but on a smooth surface it
-  is unobservable, and normal motion is the part TAA needs.
+  It cost exactly one extra field evaluation (the normal is free — `shadeBody` already computes it
+  and can hand it back), and the plumbing was small: thread a phase through `layerDist`, add
+  `mapImplAt`/`mapBodyAt` twins with the bare names as wrappers so the ~13 call sites stay untouched,
+  and put the previous phase in a uniform slot that fell spare with the lens.
 
-  The one prerequisite is evaluating the field at a *previous* beat phase. Time enters the geometry at
-  exactly one line (`sdf.wgsl`, the `heartbeat(beatPhase() - ph * PULSE_LAG)` in `layerDist`), but
-  `mapImpl`/`mapBody` have ~13 call sites, so thread the phase through `layerDist` and add
-  `mapImplAt` / `mapBodyAt` twins with the existing names as wrappers — WGSL has no overloading and
-  no default arguments, so the wrapper pair is what keeps the call sites untouched. The previous
-  phase can go in `camUp.w` or `jitter.zw`, both of which fell spare when the lens was removed.
+  A/B/A/B on the `animated` condition, one build, one resolution, switched live:
+
+      without the body motion vector   0.612%   0.625%
+      with it                          0.637%   0.655%
+
+  Consistently worse by ~4%, both pairs, no overlap. Two reasons, and the march's own comment names
+  the first: near the surface the DETAIL noise adds about 0.3 to `|grad d|`, so the `|grad d| ~ 1`
+  premise is off by ~30% exactly where it is being used — and the hit is not `d = 0` either, only
+  `d < MARCH_HIT_EPS * t`. Second, taking the motion-vector path costs the body the reprojection
+  path's jitter correction and its slope-scaled depth gate, which are tuned; the motion path uses a
+  different gate input.
+
+  The next variant worth trying, and it is nearly free: divide by the TRUE gradient length instead of
+  assuming 1. `calcNormal` computes the gradient and throws its magnitude away when it normalises, so
+  handing that back costs nothing, and `p_prev ~ p - N * d_prev / |grad d|` removes the 30% error
+  where it is largest. If that still does not beat plain reprojection, the honest conclusion is that
+  the pulse's per-frame displacement is simply below this field's noise floor, and the 2.5x gap is
+  not reachable this way.
 
 - **Depth of field, as a deterministic gather.** Fully designed in `CAMERA` in `tuning.js`, not built:
   circle of confusion from the thin-lens relation, read off the depth already in the accumulation
