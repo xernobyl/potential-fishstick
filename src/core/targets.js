@@ -173,8 +173,14 @@ export class Targets {
     // distance so the composite can resolve it against the marched body. Named for
     // what it is rather than for its current occupant: this is the second feature to
     // want exactly this, so another one should add a draw, not another target.
+    // COPY_SRC for the same reason the accumulation and the bloom pyramid have it: the instruments
+    // read it back. Specifically `beep.shake({mask:{texture:'solid'}})`, which scopes its metric to
+    // the pixels THIS pass wrote — alpha is the view distance and 0 means nothing here, so the
+    // sentinel is the mask. Without the flag the copy is a validation error, the encoder becomes a
+    // no-op, and the readback silently returns zeros: a mask that selects nothing, which looks like a
+    // scene with no rings in it rather than like a missing usage flag.
     this.solid = this.own(tex(d, 'solid', w, h,
-      U.RENDER_ATTACHMENT | U.TEXTURE_BINDING));
+      U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC));
     this.solidDepth = this.own(tex(d, 'solid-depth', w, h,
       U.RENDER_ATTACHMENT, 'depth24plus'));
     // Per-pixel motion, for every surface that can say where it was last frame.
@@ -196,7 +202,9 @@ export class Targets {
     // a core WebGPU storage format. Cleared to a sentinel so "no stored motion" is
     // distinguishable from "did not move".
     this.motion = this.own(tex(d, 'motion', w, h,
-      U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.STORAGE_BINDING));
+      // COPY_SRC as well, so motion vectors can be read back and checked numerically rather than
+      // only looked at through the buffer viewer.
+      U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.STORAGE_BINDING | U.COPY_SRC));
 
     // Bloom pyramid. Level 0 is half the RENDER scene, and each level halves again.
     //

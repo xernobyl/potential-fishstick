@@ -1456,6 +1456,26 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
   try {
     const t = renderer.targets;
     const sampler = new FrameSampler(gpu.device, t.accumWidth, t.accumHeight, gridW, gridH);
+    // SCOPE BY WHICH PASS WROTE THE PIXEL, not by how far away it is.
+    //
+    // `tagBand` scopes by distance, and for the rings that fails outright: the body's surface is lumpy
+    // enough to reach nearer than `camDist - R`, so any band wide enough to include a ring in front of
+    // it also includes most of the body - measured, 98% of the frame. Distance cannot separate things
+    // that are at the same distance.
+    //
+    // A pass's own output can. `targets.solid` holds the rasterised geometry and its alpha is the view
+    // distance with 0 documented as "nothing here", so `solid.a > 0` is exactly "a ring wrote this
+    // pixel" - no threshold to tune and no overlap to reason about. The same trick generalises to any
+    // pass with a sentinel: name the texture, give a minimum alpha.
+    const maskSpec = opts.mask ?? null;
+    const maskTex = maskSpec ? { solid: 'solid', ember: 'ember', motion: 'motion' }[maskSpec.texture] : null;
+    if (maskSpec && !maskTex) throw new Error(`unknown mask texture ${maskSpec.texture}`);
+    // Its own resolution: `solid` is render-res while the accumulation is display-res under temporal
+    // upsampling, and FrameSampler resolves both onto the shared grid.
+    const maskW = maskTex ? (maskTex === 'ember' ? t.addWidth : t.width) : 0;
+    const maskH = maskTex ? (maskTex === 'ember' ? t.addHeight : t.height) : 0;
+    const maskSampler = maskTex
+      ? new FrameSampler(gpu.device, maskW, maskH, gridW, gridH) : null;
     try {
       for (const c of conditions) {
         // `chase` needs a ship that has been flown, or the camera stays on its ambient path and
@@ -1489,11 +1509,12 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
         let m2 = null, m1 = null;
         const n = sampler.w * sampler.h;
         const band = opts.tagBand ?? null;
+        const useMask = band || maskSpec;
         // Counted per frame, not sticky. Sticky selected 88% of the frame with large satellites
         // sweeping across it over 20 frames, which is not a mask - it is the whole image with extra
         // steps. A pixel qualifies only if the object was there for MOST of the run, so the
         // measurement is about pixels the object actually occupies rather than ones it passed over.
-        const bandHits = band ? new Uint16Array(n) : null;
+        const bandHits = useMask ? new Uint16Array(n) : null;
         const bandNeed = opts.bandFraction ?? 0.7;
         const d2sum = new Float64Array(n);     // per-pixel sum of |second difference|
         const dsum = new Float64Array(n);      // per-pixel sum of |first difference|, for context
@@ -1517,6 +1538,14 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
               const a = rgba[i * 4 + 3];
               if (a >= band[0] && a <= band[1]) bandHits[i]++;
             }
+          } else if (maskSpec) {
+            const mEnc = gpu.device.createCommandEncoder({ label: 'shake-mask' });
+            maskSampler.record(mEnc, renderer.targets[maskTex], maskW, maskH);
+            gpu.device.queue.submit([mEnc.finish()]);
+            await gpu.device.queue.onSubmittedWorkDone();
+            const m = decodeHalf(await maskSampler.read());
+            const minA = maskSpec.minAlpha ?? 1e-4;
+            for (let i = 0; i < n; i++) if (m[i * 4 + 3] > minA) bandHits[i]++;
           }
           for (let i = 0; i < n; i++) lsum[i] += L[i];
           if (m1) for (let i = 0; i < n; i++) dsum[i] += Math.abs(L[i] - m1[i]);
@@ -1543,7 +1572,7 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
         let keptFlick = flick;
         let keptRel = rel;
         let coverage = 1;
-        if (band) {
+        if (useMask) {
           keptFlick = []; keptRel = [];
           const need = Math.max(1, Math.floor(frames * bandNeed));
           for (let i = 0; i < n; i++) {
@@ -1552,7 +1581,10 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
           coverage = keptFlick.length / n;
           // An empty mask would otherwise report a confident 0% - the worst possible failure for a
           // measurement, because it looks like a fix that worked perfectly.
-          if (keptFlick.length === 0) throw new Error(`tagBand [${band}] selected no pixels`);
+          if (keptFlick.length === 0) {
+            throw new Error(band ? `tagBand [${band}] selected no pixels`
+              : `mask ${maskSpec.texture} selected no pixels`);
+          }
         }
         out.push({
           name: c.name,
@@ -1565,7 +1597,7 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
           coverage,
         });
       }
-    } finally { sampler.destroy?.(); }
+    } finally { sampler.destroy?.(); maskSampler?.destroy?.(); }
   } finally {
     film.grain = saved.grain;
     quality.dynamicRes = saved.dyn;
