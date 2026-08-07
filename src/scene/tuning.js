@@ -413,7 +413,7 @@ export const CONTRAIL = {
  * about the FLOW that generates the path or the EMISSION that colours it.
  */
 export const AURORA = {
-  ribbons: 5,
+  ribbons: 9,
   /** Samples per ribbon. Long, because these are curtains stretched across the sky rather than
    *  a wake behind something — and because the ribbon is seeded whole, length costs geometry
    *  but no warm-up time. 160 quads x 5 ribbons is still nothing. */
@@ -545,24 +545,46 @@ export const AURORA = {
   falloff: 1.9,
   gain: 0.7,
   /**
-   * The palette, as real emission lines rather than an arbitrary spread of hues. This is why it
-   * reads as aurora and not as a rainbow:
-   *   557.7 nm  atomic oxygen, green — by far the dominant auroral line
-   *   630.0 nm  atomic oxygen, red — high altitude, thin and deep
-   *   427.8 nm  ionised nitrogen, blue-violet
-   *   plus the teal and magenta that appear where those bands overlap.
+   * The palette. Nine hues, and no longer the auroral emission spectrum.
+   *
+   * It used to be the real lines — 557.7 nm oxygen green, 630 nm oxygen red, 427.8 nm ionised
+   * nitrogen — and that was the right call while the point was for these to read as auroras. The
+   * point now is that there are nine of them and they should be distinguishable, so the constraint
+   * is spacing rather than physics.
+   *
+   * Generated rather than picked, because picking by eye gets the brightness wrong. Luma is 0.71
+   * green and 0.07 blue, so a saturated blue at the same nominal value is a tenth as bright as a
+   * saturated green — a hand-chosen rainbow has shouting greens and invisible violets. These are
+   * evenly spaced in hue and PARTIALLY equalised in luma: full equalisation would need a blue nine
+   * times brighter than the green, which is neither achievable nor pleasant, so the correction is
+   * raised to 0.55 and the spread lands at 0.38..0.71 instead of 0.13..0.89.
+   *
+   * Values above 1 are deliberate. This layer is additive HDR and goes through a tone curve that
+   * desaturates highlights, so a saturated input is what survives to look saturated.
+   *
+   * Nine entries for nine ribbons, so `ii % N` gives every ribbon its own hue with none repeated.
    */
   palette: [
-    [0.20, 1.00, 0.45],
-    [1.00, 0.28, 0.34],
-    [0.36, 0.46, 1.00],
-    [0.24, 0.92, 0.96],
-    [0.92, 0.36, 0.88],
+    [1.30, 0.29, 0.16],
+    [0.87, 0.70, 0.10],
+    [0.50, 0.84, 0.10],
+    [0.11, 0.90, 0.20],
+    [0.10, 0.87, 0.71],
+    [0.13, 0.66, 1.09],
+    [0.41, 0.22, 1.83],
+    [1.15, 0.17, 1.41],
+    [1.39, 0.17, 0.83],
   ],
-  /** Colour at the dim edges of the curtain. Auroras shift hue across their width because
-   *  different species emit at different altitudes; the lower border going magenta is the
-   *  familiar one. */
-  fringe: [0.55, 0.20, 0.62],
+  /**
+   * How far the curtain's dim edges shift in hue, 0..1.
+   *
+   * An AMOUNT now, not a colour. Real auroras shift hue across their width because different
+   * species emit at different altitudes, and a fixed fringe colour reproduced that — but with a
+   * nine-hue palette it would also tint every ribbon the same and erase the variety the palette
+   * exists for. The shift is derived from each ribbon's own tint instead: a channel rotation IS a
+   * 120-degree hue rotation, so it is always a different hue and never a muddy one.
+   */
+  fringe: 0.55,
   /** Depth of the ray striation, 0..1. Real auroras are bundles of field-aligned rays and that
    *  vertical structure is most of what identifies them — but it modulates, it does not shred,
    *  so this stays well below 1. */
@@ -1310,7 +1332,7 @@ export function wgslDefines() {
     AURORA_MITER_MIN: AURORA.miterMin,
     AURORA_NEAR0: AURORA.nearFade[0],
     AURORA_NEAR1: AURORA.nearFade[1],
-    AURORA_FRINGE: `vec3f(${AURORA.fringe.map(f).join(', ')})`,
+    AURORA_FRINGE: AURORA.fringe,
     AURORA_PALETTE_N: int(AURORA.palette.length),
     AURORA_PALETTE: `array<vec3f, ${AURORA.palette.length}>(`
       + AURORA.palette.map((c) => `vec3f(${c.map(f).join(', ')})`).join(', ') + ')',

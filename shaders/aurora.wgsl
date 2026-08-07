@@ -221,9 +221,12 @@ fn fs(in : VOut) -> @location(0) vec4f {
 
   let a = in.fade * profile * rays * vis * near * graze;
 
-  // Toward the fringe colour at the dim edges. Real auroras shift hue across the curtain —
-  // green through the body, magenta along the lower border — because different species emit at
-  // different altitudes, and borrowing that keeps a single ribbon from looking flat.
-  let col = mix(AURORA_FRINGE, in.tint, profile);
+  // Hue shift toward the dim edges. Real auroras do this because different species emit at
+  // different altitudes, and it keeps a single ribbon from looking flat — but the shift is derived
+  // from the ribbon's OWN tint rather than being a fixed colour, because with nine hues in the
+  // palette one shared fringe would tint every curtain the same and erase the variety. A channel
+  // rotation is a 120-degree hue rotation: always a different hue, never a muddy one.
+  let fringe = mix(in.tint, in.tint.brg, AURORA_FRINGE);
+  let col = mix(fringe, in.tint, profile);
   return vec4f(col * a * frame.aurora.x, a);
 }

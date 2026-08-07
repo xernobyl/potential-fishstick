@@ -6,7 +6,7 @@ A translucent planetoid, raymarched. The body is a signed-distance field built f
 spheres on a spherical-Fibonacci lattice, lit as a scattering medium rather than a surface, wrapped
 in a volumetric atmosphere that the rings cast real shadows through. Around it: three precessing
 metal hoops, a flyable ship trailing contrails and firing helical rail guns, orbiting satellites,
-GPU particle embers, curl-noise auroras, marched reflections, temporal upsampling from half
+GPU particle embers, nine curl-noise auroras, marched reflections, temporal upsampling from half
 resolution, and an analytic film response on the way out.
 
 Everything is procedural. No textures, no meshes, no assets — every shape is a distance field or a
