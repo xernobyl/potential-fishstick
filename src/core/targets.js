@@ -35,6 +35,7 @@ export class Targets {
     this.width = 0;
     this.height = 0;
     this._owned = [];
+    this._ownedOut = new Map();
 
     // Samplers never change, so build them once. Clamping matters: the bloom and
     // flare passes reach outside the frame, and repeating would wrap a bright
@@ -71,10 +72,18 @@ export class Targets {
     // upscales this layer, so there is a real difference to be had at renderScale 0.5 with
     // `taau` false, and the flag was quietly declining to take it.
     const wantAddW = QUALITY.additiveDisplayRes ? displayW : w;
-    if (w === this.width && h === this.height && wantAccumW === this.accumWidth
-        && wantAddW === this.addWidth) return false;
+    const renderSame = w === this.width && h === this.height;
+    const outSame = wantAccumW === this.accumWidth && wantAddW === this.addWidth
+                 && displayW === this.displayWidth && displayH === this.displayHeight;
+    if (renderSame && outSame) return false;
 
+    // ONLY WHAT CHANGED. A render-scale change leaves the output group — the accumulation buffers
+    // above all — untouched, so the accumulated image survives it. That is the whole point: see
+    // the note on `own` versus `ownOut`. The return value says whether the HISTORY was lost, so
+    // the caller knows whether it has to reset the accumulator, and a scale change no longer
+    // reports that it does.
     this.destroyOwned();
+    if (!outSame) this.destroyOwnedOut();
     this.width = w;
     this.height = h;
     this.displayWidth = displayW;
@@ -102,9 +111,9 @@ export class Targets {
     const aw = this.accumWidth;
     const ah = this.accumHeight;
     this.accum = [
-      this.own(tex(d, 'accum-0', aw, ah,
+      this.ownOut('accum-0', () => tex(d, 'accum-0', aw, ah,
         U.STORAGE_BINDING | U.TEXTURE_BINDING | U.COPY_SRC)),
-      this.own(tex(d, 'accum-1', aw, ah,
+      this.ownOut('accum-1', () => tex(d, 'accum-1', aw, ah,
         U.STORAGE_BINDING | U.TEXTURE_BINDING | U.COPY_SRC)),
     ];
     this.accumIndex = 0;
@@ -130,8 +139,8 @@ export class Targets {
     // right value — no accumulated weight means the first frame after allocation falls back to
     // its own reconstruction, which is what `resetHistory` arranges anyway.
     this.accumWeight = [
-      this.own(tex(d, 'accum-w-0', aw, ah, U.STORAGE_BINDING | U.TEXTURE_BINDING, 'r32float')),
-      this.own(tex(d, 'accum-w-1', aw, ah, U.STORAGE_BINDING | U.TEXTURE_BINDING, 'r32float')),
+      this.ownOut('accum-w-0', () => tex(d, 'accum-w-0', aw, ah, U.STORAGE_BINDING | U.TEXTURE_BINDING, 'r32float')),
+      this.ownOut('accum-w-1', () => tex(d, 'accum-w-1', aw, ah, U.STORAGE_BINDING | U.TEXTURE_BINDING, 'r32float')),
     ];
 
     // Particles land in their own additive target: they are dynamic, so folding
@@ -148,7 +157,7 @@ export class Targets {
     // filter never sees, so it is the one whose stability has to be MEASURED rather than assumed.
     this.addWidth = QUALITY.additiveDisplayRes ? displayW : w;
     this.addHeight = QUALITY.additiveDisplayRes ? displayH : h;
-    this.ember = this.own(tex(d, 'ember', this.addWidth, this.addHeight,
+    this.ember = this.ownOut('ember', () => tex(d, 'ember', this.addWidth, this.addHeight,
       U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC));
 
     // Rasterised OPAQUE geometry (the rings), with alpha carrying linear view
@@ -197,14 +206,19 @@ export class Targets {
     // Guaranteeing one level is the honest fix: a renderer that has a bloom stage
     // at all should not have a size at which that stage silently ceases to exist.
     this.bloom = [];
-    let bw = Math.max(4, w >> 1);
-    let bh = Math.max(4, h >> 1);
+    // From the DISPLAY size, not the render size, and that is a fix rather than a preference.
+    // The upsample offsets are in source texels, so a pyramid sized off the render target made the
+    // glow's radius IN DISPLAY PIXELS a function of `renderScale` — halve the scale and the glow
+    // doubled in width. Under a controller that adapts continuously the bloom would visibly
+    // breathe. A screen-space effect should not know what the render scale is.
+    let bw = Math.max(4, displayW >> 1);
+    let bh = Math.max(4, displayH >> 1);
     for (let i = 0; i < QUALITY.bloomLevels; i++) {
       this.bloom.push({
         // COPY_SRC so the pyramid can be read back and measured. Free on every
         // implementation that matters, and the alternative is reasoning about the
         // glow's alignment instead of measuring it.
-        texture: this.own(tex(d, `bloom-${i}`, bw, bh,
+        texture: this.ownOut(`bloom-${i}`, () => tex(d, `bloom-${i}`, bw, bh,
           U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC)),
         width: bw,
         height: bh,
@@ -220,9 +234,10 @@ export class Targets {
 
     // Flares: quarter res. They are the blurriest thing on screen by
     // construction, so there is no edge here worth resolving.
-    this.flareWidth = Math.max(4, w >> 2);
-    this.flareHeight = Math.max(4, h >> 2);
-    this.flare = this.own(tex(d, 'flare', this.flareWidth, this.flareHeight,
+    // Display-based, for the same reason as the pyramid above.
+    this.flareWidth = Math.max(4, displayW >> 2);
+    this.flareHeight = Math.max(4, displayH >> 2);
+    this.flare = this.ownOut('flare', () => tex(d, 'flare', this.flareWidth, this.flareHeight,
       U.RENDER_ATTACHMENT | U.TEXTURE_BINDING));
 
     // One u32 per raymarch tile.
@@ -236,7 +251,9 @@ export class Targets {
     });
 
     this.generation++;
-    return true;
+    // TRUE means the history is gone and the caller must reset the accumulator. A render-scale
+    // change alone does not lose it.
+    return !outSame;
   }
 
   /** The accumulation target being written this frame, and last frame's. */
@@ -246,19 +263,53 @@ export class Targets {
   get accumWeightRead() { return this.accumWeight[1 - this.accumIndex]; }
   swapAccum() { this.accumIndex = 1 - this.accumIndex; }
 
+  /**
+   * Ownership, in TWO GROUPS, and the split is the whole reason dynamic resolution works.
+   *
+   * `own` is render-resolution: everything whose size follows `renderScale`. `ownOut` is
+   * output-resolution: the accumulation buffers, their weights, the additive layer, the bloom
+   * pyramid and the flares — everything sized from the display.
+   *
+   * A render-scale change must reallocate the first group and LEAVE THE SECOND ALONE. That is the
+   * property temporal upsampling exists to give: the history lives at output resolution, so
+   * changing the input sample density does not invalidate it. Destroying everything on any resize
+   * — which is what this did — threw the accumulated image away on every scale change, which is
+   * exactly the pop that makes naive dynamic resolution look bad.
+   */
   own(t) {
     this._owned.push(t);
+    return t;
+  }
+
+  /**
+   * Keyed and IDEMPOTENT, unlike `own`. A render-scale change re-runs the whole of `resize`, so the
+   * output allocations are reached again even though they must not be redone — returning the
+   * existing texture is what makes that safe, and it keeps the allocation code in one readable
+   * sequence instead of split across two conditional blocks. The factory is a thunk so nothing is
+   * created just to be thrown away.
+   */
+  ownOut(key, make) {
+    const have = this._ownedOut.get(key);
+    if (have) return have;
+    const t = make();
+    this._ownedOut.set(key, t);
     return t;
   }
 
   destroyOwned() {
     for (const t of this._owned) t.destroy();
     this._owned.length = 0;
+  }
+
+  destroyOwnedOut() {
+    for (const t of this._ownedOut.values()) t.destroy();
+    this._ownedOut.clear();
     this.bloom = [];
   }
 
   destroy() {
     this.destroyOwned();
+    this.destroyOwnedOut();
     this.tileFlags?.destroy();
   }
 }

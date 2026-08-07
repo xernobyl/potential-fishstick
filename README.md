@@ -598,6 +598,32 @@ the full reasoning; these are the ones worth knowing up front:
   one, with the ember pass's own spread WITHIN a configuration wider than the gap between
   configurations. This frame is bound by the march, not by additive fill. On much weaker hardware
   that stops being true, and it is one toggle in the panel.
+- **Dynamic resolution works because of temporal upsampling, not alongside it.** Without TAAU the
+  accumulation buffer IS the render target, so a scale change resamples the history or throws it
+  away — a pop to a noisy image every time the controller moves. With it the history is at output
+  resolution and only the input sample density changes.
+  Getting that property actually required splitting the allocations, because `Targets.resize`
+  destroyed EVERYTHING on any size change, history included. There are two ownership groups now:
+  `own` for render-resolution targets and `ownOut` for output-resolution ones, with `ownOut` keyed
+  and idempotent so re-running `resize` returns the existing texture instead of leaking a new one.
+  The return value changed meaning too — it now says whether the HISTORY was lost, so a scale
+  change no longer tells the caller to reset the accumulator. Verified by watching the
+  accumulation texture's width stay constant while the render width walked 763 -> 534 -> 1526.
+  Two things had to move with it. The bloom pyramid and the flares were sized off the RENDER
+  resolution, which made the glow's radius in display pixels a function of `renderScale` — halve
+  the scale and the glow doubled in width, so under a controller it would visibly breathe. They are
+  display-sized now, and `GLOW.radius` doubled to keep the same look through a pyramid that is
+  twice as fine. And the TAA weight cap is a count of accumulated SAMPLES, so it scales with
+  density: without that, a pixel that banked confidence at high resolution keeps leaning on stale
+  history after the scale drops, which is ghosting.
+  The controller itself is deliberately dull — GPU time not wall time (wall includes present
+  pacing, so a vsync-limited frame reads as exactly on budget however much headroom there is), a
+  median over a window rather than a single frame, a short ladder rather than a continuous scale
+  since every change costs a reallocation, and asymmetric thresholds so it drops fast and climbs
+  slowly. Measured: with an unreachable target it walks to the bottom rung and HOLDS rather than
+  oscillating; with an easy one it climbs a rung per cooldown and settles at the top.
+  The honest limit is the tail that does not scale — the resolve, the additive layer, the glow, the
+  composite, about 10 ms of a 35 ms frame. Below roughly that the controller has no road left.
 - **Three passes were one pass with three names.** The contrail, the auroras and the rail guns each
   had their own ~100-line class, and the aurora and contrail files were byte-identical modulo
   identifiers and TWO lines — the shader name and where the instance count came from. That is not a

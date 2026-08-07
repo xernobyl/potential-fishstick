@@ -169,7 +169,9 @@ export class FrameUniforms {
     a[O.accumRes] = s.accumWidth; a[O.accumRes + 1] = s.accumHeight;
     a[O.accumRes + 2] = 1 / s.accumWidth; a[O.accumRes + 3] = 1 / s.accumHeight;
 
-    a[O.taa3] = tw.weightMax; a[O.taa3 + 1] = tw.weightMaxBg;
+    // Sample density relative to what the caps were tuned at — see TEMPORAL.weightRefScale.
+    const dens = (s.renderScale / tw.weightRefScale) ** 2;
+    a[O.taa3] = tw.weightMax * dens; a[O.taa3 + 1] = tw.weightMaxBg * dens;
     a[O.taa3 + 2] = tw.clipGammaUpsample;
 
     const gr = s.grade;

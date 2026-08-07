@@ -97,6 +97,33 @@ export const QUALITY = {
    * being true, and this is one toggle in the panel.
    */
   additiveDisplayRes: true,
+  /**
+   * DYNAMIC RESOLUTION: hold a GPU-time target by moving `renderScale`.
+   *
+   * Off by default, because it trades a fixed known quality for a variable one and that should be
+   * a choice. It is only worth having at all because of temporal upsampling — see dynres.js — and
+   * it is unusually effective here because the frame is march-bound and the march is per-pixel.
+   */
+  dynamicRes: false,
+  /** GPU milliseconds to aim for. GPU, not wall: wall includes present pacing, so a vsync-limited
+   *  frame reads as exactly on budget however much headroom there is, and nothing would ever
+   *  climb. 14 ms is about a 70 fps budget with room for the parts that do not scale. */
+  dynamicTargetMs: 14,
+  /** The rungs. Few and decisive rather than continuous: every change costs a reallocation of the
+   *  render-resolution targets and a discontinuity in sample density, so fine tracking buys
+   *  nothing and jitters the image. */
+  dynamicLadder: [1.0, 0.85, 0.7, 0.6, 0.5, 0.42, 0.35],
+  /** Frames of GPU time to median over. Frame times here are spiky — a detonation or a ring
+   *  sweeping into view moves the march by milliseconds — and a single sample oscillates. */
+  dynamicWindow: 15,
+  /** Frames to hold still after a change, so a reallocation cannot happen every frame. */
+  dynamicCooldown: 30,
+  /** Asymmetric thresholds, as fractions of the target. Drop as soon as it is over; climb only
+   *  with real headroom. Being briefly too slow is worse than being briefly too soft, and
+   *  climbing into a spike then falling straight back out is what makes this feel worse than a
+   *  fixed low setting. */
+  dynamicDropAt: 1.05,
+  dynamicRaiseAt: 0.82,
 };
 
 export const BODY = {
@@ -295,7 +322,7 @@ export const SOLID = {
  */
 export const SHIP = {
   /** Shell radius. Outside the rings (max 2.39), inside the satellites (min 2.46). */
-  orbit: 2.42,
+  orbit: 4.84,
 
   /** Turn authority about the local normal, rad/s^2, and the damping that caps the
    *  rate. Torque-driven rather than rate-driven, so the ship winds into a turn and
@@ -851,6 +878,12 @@ export const TEMPORAL = {
    * 6 is chosen to MATCH the 1:1 path's exponential behaviour rather than to be a new look:
    * blend 0.15 is a retention of 0.85, i.e. an equivalent weight of 0.85/0.15 = 5.7.
    */
+  /** The render scale these caps were tuned at. The weight is a count of accumulated SAMPLES, and
+   *  a lower scale delivers fewer per output pixel per frame — so under dynamic resolution the cap
+   *  has to follow the density, or a pixel that banked confidence at high resolution keeps leaning
+   *  on stale history once the scale drops, which is ghosting. Applied as (scale/ref)^2 in the
+   *  uniform writer. */
+  weightRefScale: 0.5,
   weightMax: 6.0,
   /** The same cap for background pixels, matched to `blendBackground` 0.06 => 1/0.06 - 1. */
   weightMaxBg: 16.0,
@@ -900,7 +933,10 @@ export const GLOW = {
   /** Per-level weights, coarse..fine, applied during the upsample chain.
    *  Weighting the coarse levels up is what gives the wide, soft halo. */
   levelWeight: 1.0,
-  radius: 1.0,                  // texel-space filter radius multiplier
+  // Doubled when the pyramid moved from render- to display-resolution sizing: the offsets are in
+  // SOURCE texels, so a level-0 that is twice as fine spans half as much of the screen. Same look,
+  // and now it no longer changes when `renderScale` does.
+  radius: 2.0,                  // texel-space filter radius multiplier
   /** Border fade width, in uv, applied at the prefilter. Wide enough that the
    *  coarse pyramid levels have a dark border to replicate instead of a bright
    *  one; narrow enough not to visibly clip glow near the frame edge. */

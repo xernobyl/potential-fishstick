@@ -123,6 +123,12 @@ export function buildGui(renderer, live = {}) {
   // the trade, and on a contended machine the cost side of it does not resolve.
   taa.add(QUALITY, 'additiveDisplayRes').name('additive @ display res')
     .onChange(() => renderer.resize());
+  // The controller reads `renderScale` back every window, so dragging that slider while this is on
+  // is a suggestion rather than a setting. `reset` stops it reacting to samples from before.
+  taa.add(QUALITY, 'dynamicRes').name('dynamic resolution')
+    .onChange(() => renderer.dynres.reset());
+  taa.add(QUALITY, 'dynamicTargetMs', 4, 40, 0.5).name('target gpu ms')
+    .onChange(() => renderer.dynres.reset());
 
   // ---- monitors ----
   //

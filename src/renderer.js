@@ -47,6 +47,7 @@ import { Contrail } from './scene/contrail.js';
 import { AdditivePass } from './passes/additive.js';
 import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
+import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL,
          TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { RingsPass } from './passes/rings.js';
@@ -105,6 +106,7 @@ export class Renderer {
     this.aurora = new Aurora(gpu.device);
 
     this.frameIndex = 0;
+    this.dynres = new DynamicRes();
     this.accumFrames = 0;
     this.prevTime = 0;
 
@@ -126,7 +128,7 @@ export class Renderer {
       beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
       historyValid: false, dragging: false, exposure: 0,
       sunA: null, sunB: null, ship: null,
-      taa: TEMPORAL, march: MARCH, probe: PROBE,
+      taa: TEMPORAL, march: MARCH, probe: PROBE, renderScale: 0,
       grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
       volume: VOLUME,
     };
@@ -215,6 +217,15 @@ export class Renderer {
 
     const dt = Math.min(0.1, Math.max(1e-4, time - this.prevTime));
 
+    // DYNAMIC RESOLUTION, decided here and applied by the next frame's `resize`. Deliberately not
+    // applied mid-frame: reallocating render targets between passes is the hitch this feature
+    // exists to avoid, and a one-frame delay costs nothing. GPU time when the timestamps are
+    // available, wall time only as a fallback — see dynres.js for why that distinction matters.
+    if (QUALITY.dynamicRes) {
+      const next = this.dynres.update(this.profiler.total(), dt);
+      if (next !== null) { QUALITY.renderScale = next; }
+    }
+
     // Projection first: it depends only on the viewport, and the camera folds it
     // into the view matrix it is about to build.
     this.ship.update(dt, input.cmd);
@@ -273,6 +284,7 @@ export class Renderer {
     st.taa = TEMPORAL;      // read live, so console tweaks take effect immediately
     st.march = MARCH;
     st.probe = PROBE;
+    st.renderScale = QUALITY.renderScale;
     st.grade = FILM;
     st.glow = GLOW;
     st.flareStrength = FLARE.strength;

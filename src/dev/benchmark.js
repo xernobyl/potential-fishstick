@@ -689,7 +689,9 @@ export async function detailSnr(renderer, gpu, quality, opts = {}) {
   await ensureSize(renderer);
   const displayW = renderer.targets.displayWidth;
 
-  const was = { taau: quality.taau, renderScale: quality.renderScale };
+  // `dynamicRes` off for the duration: it would move the very scale being held fixed here.
+  const was = { taau: quality.taau, renderScale: quality.renderScale, dyn: quality.dynamicRes };
+  quality.dynamicRes = false;
   // The reference is measured FIRST and LAST is restored; the control repeats the reference's
   // configuration so its only difference from the reference is which jitter samples it saw.
   const configs = [
@@ -731,6 +733,7 @@ export async function detailSnr(renderer, gpu, quality, opts = {}) {
   } finally {
     quality.taau = was.taau;
     quality.renderScale = was.renderScale;
+    quality.dynamicRes = was.dyn;
     renderer.resize();
     renderer.resetHistory();
   }
@@ -823,6 +826,8 @@ export async function additiveAliasing(renderer, gpu, quality, opts = {}) {
   await ensureSize(renderer);
 
   const was = quality.additiveDisplayRes;
+  const wasDyn = quality.dynamicRes;
+  quality.dynamicRes = false;
   const runs = [];
   try {
     for (const displayRes of [true, false]) {
@@ -860,6 +865,7 @@ export async function additiveAliasing(renderer, gpu, quality, opts = {}) {
     }
   } finally {
     quality.additiveDisplayRes = was;
+    quality.dynamicRes = wasDyn;
     renderer.resize();
     renderer.resetHistory();
   }
@@ -1014,10 +1020,11 @@ export async function subPixelStability(renderer, gpu, knobs, opts = {}) {
   const saved = {
     aperture: cam.aperture, grain: film.grain, zeroJitter: probe.zeroJitter,
     offX: cam.frameOffset[0], offY: cam.frameOffset[1],
-    taau: quality.taau, additive: quality.additiveDisplayRes,
+    taau: quality.taau, additive: quality.additiveDisplayRes, dyn: quality.dynamicRes,
   };
   cam.aperture = 0;
   film.grain = 0;
+  quality.dynamicRes = false;
   // Deliberately NOT zeroJitter — see above. Left as the caller had it, and forced OFF so a
   // stale probe setting cannot silently remove the antialiasing under measurement.
   probe.zeroJitter = false;
@@ -1114,6 +1121,7 @@ export async function subPixelStability(renderer, gpu, knobs, opts = {}) {
     cam.frameOffset[1] = saved.offY;
     quality.taau = saved.taau;
     quality.additiveDisplayRes = saved.additive;
+    quality.dynamicRes = saved.dyn;
     renderer.resize();
     renderer.resetHistory();
   }
