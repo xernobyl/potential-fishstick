@@ -393,33 +393,44 @@ the method, not of a knob that can be turned off.
   Which also settles the candidate count: 9 is required rather than a preference. A wide analytic
   tail needs the true nearest star, and a truncated search bites wedges out of it.
 
-- **Depth of field, as a deterministic gather.** Fully designed in `CAMERA` in `tuning.js`, not built:
-  circle of confusion from the thin-lens relation, read off the depth already in the accumulation
-  buffer's alpha; a fixed golden-angle disk of 16-32 taps scaled by it; a per-tap reach test so a
-  sharp foreground cannot bleed onto a blurred background. It needs its own target and pass, because
-  a gather has to read a texture while the composite builds its colour in a local.
+- **Depth of field, switchable, with both pipelines available.** Not built. The design and the survey
+  behind it, so it can be built without re-deciding anything.
 
-- **CLOSED: shading the detail at the pixel centre.** Tiago's suggestion, built and measured, and it
-  does not pay here. The technique is real — jitter the geometry, evaluate the material at the
-  unjittered centre — and it maps onto a procedural renderer cleanly: `pShade` is the same hit
-  distance along the unjittered ray, which is exact rather than a ray-differential approximation and
-  costs one ray construction, no extra field evaluation. Applied to the two highest-frequency material
-  terms only: `fleck` at 34 per unit, and the sugar smoothstep, whose hard edges alias hardest.
+  **The switch.** Three states on one key, because the two implementations answer different questions
+  and both are worth having: `off`, `stochastic`, `gather`. The stochastic one is the lens offset that
+  used to live in `cameraRayUV` (see its note, and `git log` for the removal) — one sample per frame on
+  the aperture disk, amortised over the temporal history. It cannot converge through a variance clip
+  and it never applied to the rasterised rings, so it is not the shipping choice; but on a STATIONARY
+  scene it converges to a ground-truth bokeh, which makes it the reference to grade the gather
+  against. Keep it for that, label it as a reference, and let the gather be the default.
 
-      condition                detail at sample     at centre
-      animated (trustworthy)   0.630%  0.629%       0.686%  0.691%     9% WORSE
-      drift (motion-mixed)     2.11%   2.19%        2.05%   2.08%      4% better
+  **What the industry actually uses, and in what order it got there.** The separable hexagonal blur is
+  the EA/DICE technique (Barré-Brisebois, around 2011, shipped in FIFA and Skate): a hexagon
+  decomposes into three skewed box blurs, so a defined aperture shape costs a few separable passes
+  instead of a wide 2D gather. It was the right trade on that hardware. It is also hexagon-only, and
+  it artefacts at large radii.
 
-  It loses on the metric that isolates the defect and wins slightly on the one contaminated by
-  legitimate motion, so the honest reading is that it loses. The mechanism is the trade that was
-  flagged going in: centre evaluation removes the sub-pixel averaging, so the detail SNAPS rather than
-  blending as the surface moves under it — aliasing traded for stability, and on an animated surface
-  the aliasing costs more than the stability buys.
+  Its direct successor is **circular separable convolution** (Garcia, SIGGRAPH 2017, out of Frostbite):
+  a circular kernel is approximated as a sum of complex-valued separable filters, so you get a TRUE
+  circular bokeh at separable cost. That is the honest answer to "is there something newer that
+  performs better for similar results" — same cost structure as the hexagonal trick, no hexagon.
 
-  Worth revisiting only with the aliasing paid for separately: band-limit the detail analytically by
-  the pixel footprint (the derivative of the noise is available in closed form for value noise) rather
-  than relying on the jitter to average it. That is a different change with a different cost, and it
-  would make the centre evaluation free of its downside.
+  The workhorse elsewhere is **tile-based scatter-as-gather** (Jimenez, *Next Generation Post
+  Processing in Call of Duty: Advanced Warfare*, SIGGRAPH 2014): a tile max-CoC pass bounds the gather
+  radius per tile, the gather runs at half resolution, near and far fields are separated so a sharp
+  foreground cannot bleed into a blurred background, then it is upsampled. Unreal's **diaphragm DOF**
+  (4.21 onward) is the same family with proper near-field occlusion and a configurable blade count.
+  For the high end, path-traced titles have gone back to **stochastic lens sampling** — exactly what
+  was removed here — but paired with a denoiser built for it rather than with a variance-clipping TAA.
+  That contrast is the whole lesson: the technique was not wrong, its partner was.
+
+  **For this renderer**, in order: a single-pass gather at display resolution with a golden-angle disk
+  and a per-tap reach test (a neighbour contributes only if its own CoC covers this pixel), CoC from
+  the thin-lens relation read off the depth already in the accumulation buffer's alpha. Upgrade to
+  circular separable convolution only if large radii turn out to matter, and add tile max-CoC only if
+  the flat gather shows up in the profile — this scene is march-bound, not post-bound, so it very well
+  might not. Apply it AFTER the resolve, like every other layer that cannot be reprojected, which also
+  means it lands after temporal upsampling rather than fighting it.
 
 - **Render into a sub-rectangle instead of reallocating.** Dynamic resolution currently rebuilds every
   render-resolution target each time it changes rung. The alternative is to allocate once at the
