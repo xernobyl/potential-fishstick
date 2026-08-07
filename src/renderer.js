@@ -48,7 +48,7 @@ import { AdditivePass } from './passes/additive.js';
 import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
-import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
+import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
          TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { RingsPass } from './passes/rings.js';
 import { ScenePass } from './passes/scene.js';

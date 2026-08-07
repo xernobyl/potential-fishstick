@@ -303,13 +303,21 @@ taau  (0.5x -> 1x)     57-62%       0.37     34.7
 lowres (0.5x upscale)  45%          0.37     32.4
 ```
 
-So upsampling retains around 60% of native detail against 45% for a plain upscale — a real
-+13 to +17 points — at no measurable noise penalty and about +2 dB of PSNR. It does not reach
-native, which is exactly what should be expected of it.
+So upsampling retains **51% of native detail against 40% for a plain upscale** — +11 points — for
++2.8 points of extra noise and 0.73 dB of PSNR. It does not reach native, which is exactly what
+should be expected of it.
 
-The control not reaching 1.0 is not a bug in the method: the residual does not converge away,
-because the aperture offset moves the ray ORIGIN every frame. More settle frames make it slightly
-worse, not better, which is consistent with a steady state rather than a convergence.
+These figures were re-measured after the thin lens was removed, and they moved: the earlier run
+read 60% against 45% at no measurable noise penalty and about +2 dB. Same method, different
+renderer — the lens used to add per-frame randomness to every configuration including the control,
+which flattered the comparison.
+
+The control still does not reach 1.0, and the explanation that used to sit here was **wrong**. It
+blamed the aperture offset moving the ray origin every frame. The aperture is gone now and the
+control still reads 0.865 with a 0.49 noise floor, so that was not the cause — or not the only one.
+What is left is the pixel jitter, which is the antialiasing and cannot be removed without removing
+the thing being measured, plus the shading's own per-frame variation. The residual is a property of
+the method, not of a knob that can be turned off.
 
 ## Ideas not yet done
 
@@ -728,7 +736,9 @@ the full reasoning; these are the ones worth knowing up front:
   with nothing about the lag changing.
   The proof is the aperture case. Setting `CAMERA.aperture` to 0 removes per-frame randomness and
   can only improve the image — and it produces the WORST ratio of the lot, 11.33x, with lag
-  unchanged at 7.31%. It is dividing by the noise it just removed.
+  unchanged at 7.31%. It is dividing by the noise it just removed. (`CAMERA.aperture` no longer
+  exists — the thin lens was removed for unrelated reasons, see the note in `tuning.js` — so this
+  particular experiment is history rather than something to re-run.)
   So nothing regressed: the 3.6x historical figure and the 4.9x that replaced it are the same lag
   against different noise floors. The report now leads with ABSOLUTE lag and spells out that the
   ratio is a visibility test — is the lag that exists visible above the sampling noise — and not
