@@ -141,14 +141,26 @@ export function satellitePanelTree() {
   // invisible at the size these render and is the difference between a surface and a suggestion.
   const sheet = translate([0, mid, 0], box([t * 2.6, L * 0.97, W * 0.97]));
 
-  // A frame around the rim, standing slightly proud of the cells.
-  const railLong = translate([0, mid, W * 0.965], box([t * 3.2, L, W * 0.045]));
-  const railOuter = translate([0, mid + L * 0.965, 0], box([t * 3.2, L * 0.045, W]));
-  const railInner = translate([0, mid - L * 0.965, 0], box([t * 3.2, L * 0.045, W]));
+  // The frame: rails around the rim, a spine down the middle, cross ribs across it.
+  //
+  // EVERY PROUD STEP IS A FEATURE AND HAS TO CLEAR THREE CELLS. This is the constraint that took three
+  // attempts, because it is not about how WIDE a rail is — it is about how far it stands out from the
+  // surface it sits on. The rails were 1.1 cells wide, which I widened; the real problem was that they
+  // stood 0.0076 proud of the sheet, a 1.3-cell step, and every one of the 34 boundary edges at
+  // resolution 88 was on that one plane. Under a cell it is smoothed away and the mesh is clean; over
+  // about two it resolves properly and the mesh is clean; in between it is neither and tears.
+  //
+  // So the frame is proud in X ONLY, and by a real amount — 2.4x the sheet's own half-thickness, which
+  // is also what a rail actually looks like next to a laminate. In Z the rails END where the sheet ends
+  // rather than overhanging it, so there is no second step to get wrong.
+  const proud = t * 6.2;                 // frame half-thickness; the sheet's is t * 2.6
+  const railLong = translate([0, mid, W * 0.855], box([proud, L, W * 0.115]));
+  const railOuter = translate([0, mid + L * 0.9, 0], box([proud, L * 0.07, W * 0.97]));
+  const railInner = translate([0, mid - L * 0.9, 0], box([proud, L * 0.07, W * 0.97]));
 
   // A spine down the middle and cross ribs, which is what an array's back actually looks like.
-  const spine = translate([0, mid, 0], box([t * 3.6, L, W * 0.07]));
-  const crossRibs = translate([0, mid, 0], repeat(1, L * 0.62, 3, box([t * 3.0, L * 0.055, W * 0.9])));
+  const spine = translate([0, mid, 0], box([proud, L, W * 0.13]));
+  const crossRibs = translate([0, mid, 0], repeat(1, L * 0.62, 3, box([proud, L * 0.07, W * 0.9])));
 
   // The arm from inside the bus out to the panel's inner edge. It starts slightly negative so it
   // overlaps the body rather than abutting it — parts that merely touch come out as separate
