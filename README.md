@@ -82,8 +82,16 @@ creation is a slider that does nothing, which is worse than no slider, so anythi
 category was either moved onto the uniform first or is not exposed.
 
 Two of them are not simply values and say so in code: `GLOW.radius` and `levelWeight` live in
-per-level parameter buffers written on resize, so they trigger an explicit rebuild; `taau` and
-`renderScale` reallocate the accumulation buffer and go through `renderer.resize()`.
+per-level parameter buffers written on resize, so they trigger an explicit rebuild; `taau`,
+`renderScale` and `additiveDisplayRes` reallocate targets and go through `renderer.resize()`.
+
+Three folders are not sliders. **Monitor** shows which grid each stage is actually running at,
+which is the state you otherwise have to reconstruct from three tuning values. **Measure** runs
+the instruments below on demand and leaves each headline in one field — the full report still goes
+to the console, because a single number is a summary and the reports exist to stop it being read
+alone. **Presets** saves and loads named looks to `localStorage`, and captures the ART STATE only:
+snapshotting every folder meant a preset stored the panel's own UI, and since the preset picker
+was itself a saved control, loading one re-entered its own handler and never completed.
 
 The one dependency this project has is `lil-gui` (MIT), vendored as a single file under
 `vendor/` rather than fetched from a CDN — there is no build step and no package manager here,
@@ -113,7 +121,7 @@ self-checks: GPU passes run serially, so if the per-pass times sum to more than 
 frame, or if two passes report one shared interval, the breakdown says so instead of
 publishing an impossible number.
 
-There are eight instruments, and seven of them exist because timing alone cannot answer the
+There are nine instruments, and eight of them exist because timing alone cannot answer the
 question being asked of it:
 
 - **`beep.bench({stability:true})`** — is the image STEADY? Frozen clock, diff consecutive
@@ -137,6 +145,14 @@ question being asked of it:
   truth and projects each candidate's high-frequency band onto the reference's, splitting the
   magnitude a sharpness metric reports into `signal` (true detail) and `noise` (everything else).
   Slow — it converges four configurations, one at full resolution. See below for what it found.
+- **`beep.subpixel()`** — does the image FLICKER when the camera moves less than a pixel? Slides
+  the camera across one pixel and asks whether translation-invariant quantities stay invariant.
+  The only instrument that sees crawl, because crawl only happens when a feature slides across the
+  sampling grid. Two traps it avoids: it compares invariants rather than shifting-and-diffing,
+  since resampling by a fractional offset blurs by an amount that depends on the fraction and is
+  then indistinguishable from the aliasing; and it makes the TAA jitter REPEATABLE rather than
+  disabling it, because the jitter is the antialiasing and switching it off measures the renderer
+  with its AA removed. The first version disabled it and got the opposite answer.
 - **`beep.additive()`** — does drawing the un-filtered additive layer small change what you see?
   Converges it at display and render resolution and compares their high-frequency bands, with the
   frame cost of each beside it.
@@ -229,16 +245,9 @@ worse, not better, which is consistent with a steady state rather than a converg
 
 ## Ideas not yet done
 
-- **A sub-pixel-shift stability test.** The one measurement still missing, and the one that would
-  settle whether the additive layer's resolution is the source of any visible crawl. Render the
-  same instant at several fractional-pixel camera offsets and measure how much the image changes:
-  a well-filtered image varies smoothly, an aliased one flickers. Everything it needs already
-  exists in `benchmark.js`.
-- **Live monitors in the tuning panel.** The panel (press `g`) drives values; it does not yet
-  DISPLAY any. Tweakpane does live graphs, which would suit the residual / lag / sharpness
-  readouts that currently only exist as console output.
-- **Presets in the panel.** lil-gui can save and load its own state; a couple of named looks
-  would beat writing tuning values back into the file by hand.
+- **Graphs, rather than numbers, in the panel.** The Monitor folder shows current values and the
+  Measure folder runs each instrument on demand, but neither plots anything over time. A frame-time
+  or residual sparkline would show a regression that a single number hides.
 
 ## Where things are
 
@@ -540,18 +549,24 @@ the full reasoning; these are the ones worth knowing up front:
   resolve, because reprojection assumes static geometry and any of them would ghost. The cost is
   that they get no temporal antialiasing and, by default, they rasterise at render resolution and
   are bilinearly upscaled.
-  `QUALITY.additiveDisplayRes` now exists to change that, and `beep.additive()` measures both
-  sides. The QUALITY delta is large and settled: at render resolution the layer gets **51% of its
-  own high-frequency band wrong**, carries only **60% of its high-frequency energy**, and is off
-  by **17% of its own mean brightness**. The COST side does not resolve on a contended machine —
-  interleaved A/B/A/B put two same-config repeats 7.7 ms apart, wider than the between-config gap,
-  so anything from ~0 to ~9 ms is consistent with the data. Default stays off until that can be
-  measured on a quiet machine.
-  One thing that measurement does NOT establish, and it is the tempting misreading: a lower
-  resolution makes the layer BLURRIER, and blur suppresses crawl rather than causing it. So the
-  40% of missing high-frequency energy is not evidence that this is the jitter source — if
-  anything it argues the opposite. Settling that needs a sub-pixel-shift stability test, which is
-  the one instrument still missing.
+  `QUALITY.additiveDisplayRes` fixes it and is now ON. That took three measurements, and the
+  first two were not enough on their own — worth following, because the second one pointed the
+  wrong way.
+  `beep.additive()` measured the difference the resolution makes: at render resolution the layer
+  gets **51% of its own high-frequency band wrong**, carries only **60% of its high-frequency
+  energy**, and is off by **17% of its own mean brightness**. Large — but it does not say which is
+  BETTER, and the tempting reading is wrong: lower resolution is also blurrier, and blur suppresses
+  crawl rather than causing it.
+  `beep.subpixel()` settled it and disagreed with that caution. Sliding the camera across one
+  pixel, the render-resolution layer is **2.2x worse** on the largest jump between adjacent
+  sub-pixel offsets (0.171% against 0.076%) and **2.5x worse** on mean-brightness wobble. It steps;
+  the display-resolution one drifts. The marched image, for comparison, has the highest band
+  wobble of the three (0.80%) but the LOWEST adjacent step (0.107%) — smooth-but-soft, which is
+  what a temporal filter should look like.
+  Cost: none measurable. Six interleaved throughput runs put wall time at 31.7–32.8 ms in every
+  one, with the ember pass's own spread WITHIN a configuration wider than the gap between
+  configurations. This frame is bound by the march, not by additive fill. On much weaker hardware
+  that stops being true, and it is one toggle in the panel.
 - **The march rejects a lattice candidate before it knows where the candidate IS.** The single
   biggest perf win in the project: **raymarch 30.7 -> 22.9 ms, a 25% cut**, with the image
   unchanged.

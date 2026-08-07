@@ -19,17 +19,33 @@
 import GUI from '../../vendor/lil-gui.esm.js';
 import { FILM, GLOW, FLARE, CAMERA, AURORA, TEMPORAL, QUALITY } from '../scene/tuning.js';
 
+const STORE = 'beep.presets';
+
+/** Saved presets, as name -> lil-gui state. Absent or unreadable storage is not an error. */
+function loadStore() {
+  try { return JSON.parse(localStorage.getItem(STORE) ?? '{}') ?? {}; } catch { return {}; }
+}
+function saveStore(all) {
+  try { localStorage.setItem(STORE, JSON.stringify(all)); return true; } catch { return false; }
+}
+
 /**
  * @param {import('../renderer.js').Renderer} renderer
+ * @param {object} [live]  per-frame readings the host loop owns — currently `{ fps }`. Passed in
+ *                         because the loop knows the frame rate and the renderer does not.
  * @returns {GUI}
  */
-export function buildGui(renderer) {
+export function buildGui(renderer, live = {}) {
   const gui = new GUI({ title: 'beep beep beep', width: 300 });
 
   // ---- grade ----
   // First, because it is the one set of controls you reach for while LOOKING at the image
   // rather than while reasoning about it.
   const film = gui.addFolder('Film');
+  // Folders a PRESET covers, keyed by a stable string of our own rather than by lil-gui's
+  // private `_title`: the key ends up in saved JSON, so it must not move if a folder is
+  // renamed or reordered.
+  const artFolders = [['film', film]];
   film.add(FILM, 'gain', 0.05, 3.0, 0.01).name('gain (pre-grade)');
   film.add(FILM, 'exposure', 0.1, 6.0, 0.01).name('exposure (curve)');
   film.add(FILM, 'white', 2.0, 24.0, 0.1).name('white point');
@@ -42,6 +58,7 @@ export function buildGui(renderer) {
 
   // ---- glow ----
   const glow = gui.addFolder('Glow').close();
+  artFolders.push(['glow', glow]);
   glow.add(GLOW, 'threshold', 0.0, 6.0, 0.01);
   glow.add(GLOW, 'strength', 0.0, 0.8, 0.005);
   // Both of these are baked into the per-level parameter buffers, which are only written on
@@ -54,6 +71,7 @@ export function buildGui(renderer) {
 
   // ---- camera ----
   const cam = gui.addFolder('Camera').close();
+  artFolders.push(['camera', cam]);
   cam.add(CAMERA, 'diagonalFov', 40, 140, 0.5).name('fov (diagonal)');
   cam.add(CAMERA, 'distance', 2.0, 12.0, 0.05);
   cam.add(CAMERA, 'zoom', 0.0, 3.0, 0.01).name('dolly amplitude');
@@ -66,6 +84,7 @@ export function buildGui(renderer) {
   // ribbons already in the buffer were integrated under the OLD ones, so a big change takes a
   // ribbon lifetime to fully show. `reseed` skips that wait.
   const aur = gui.addFolder('Auroras').close();
+  artFolders.push(['aurora', aur]);
   aur.add(AURORA, 'speed', 0.05, 1.0, 0.01);
   aur.add(AURORA, 'maxTurn', 0.1, 4.0, 0.05).name('max turn (rad/s)');
   aur.add(AURORA, 'curlScale', 0.05, 1.2, 0.01).name('curl scale');
@@ -77,6 +96,7 @@ export function buildGui(renderer) {
 
   // ---- temporal ----
   const taa = gui.addFolder('Temporal').close();
+  artFolders.push(['temporal', taa]);
   taa.add(TEMPORAL, 'blend', 0.02, 1.0, 0.01);
   taa.add(TEMPORAL, 'clipGamma', 0.5, 4.0, 0.05).name('clip gamma');
   taa.add(TEMPORAL, 'clipGammaUpsample', 0.5, 4.0, 0.05).name('clip gamma (TAAU)');
@@ -92,6 +112,157 @@ export function buildGui(renderer) {
   // the trade, and on a contended machine the cost side of it does not resolve.
   taa.add(QUALITY, 'additiveDisplayRes').name('additive @ display res')
     .onChange(() => renderer.resize());
+
+  // ---- monitors ----
+  //
+  // Read-only: disabled so they cannot be dragged, since a slider that writes to a derived value
+  // is a trap. They are refreshed on a timer — see the note on `refresh` for why not `.listen()`.
+  //
+  // Deliberately NOT the per-pass timings: the corner HUD already shows those, and duplicating
+  // them here would mean two places to keep honest. What this adds is the state you otherwise
+  // have to reconstruct from three tuning values — which grid each stage is actually running at.
+  const mon = { fps: 0, resolution: '', accumulation: '', additive: '', converged: 0, gpu: 0 };
+  const monitor = gui.addFolder('Monitor');
+  const monCtrls = [];
+  const readonly = (key, name) => monCtrls.push(monitor.add(mon, key).name(name).disable());
+  readonly('fps', 'fps');
+  readonly('gpu', 'gpu total (ms)');
+  readonly('resolution', 'render');
+  readonly('accumulation', 'accumulate');
+  readonly('additive', 'additive');
+  readonly('converged', 'frames accumulated');
+
+  // `updateDisplay` explicitly rather than lil-gui's `.listen()`. Two reasons, and the second
+  // is the one that matters: a controller snapshots its value when it is created, so mutating
+  // the bound object afterwards shows nothing until something re-reads it; and `.listen()`
+  // re-reads on requestAnimationFrame, which ties the panel's cadence to a clock that stops in a
+  // background tab and is throttled in an inactive one. Driving it from the same interval that
+  // computes the values keeps the two in step and depends on nothing else.
+  const refresh = () => {
+    const t = renderer.targets;
+    mon.fps = Math.round(live.fps ?? 0);
+    mon.gpu = +renderer.profiler.total().toFixed(2);
+    // The panel can be opened before the first resize has allocated anything, and a monitor that
+    // says `undefinedxundefined` for half a second reads as a bug in the thing being monitored.
+    const size = (w, h) => (w && h ? `${w}x${h}` : 'not allocated');
+    mon.resolution = size(t.width, t.height);
+    mon.accumulation = size(t.accumWidth, t.accumHeight);
+    mon.additive = size(t.addWidth, t.addHeight);
+    mon.converged = renderer.accumFrames;
+    for (const c of monCtrls) c.updateDisplay();
+  };
+  refresh();
+  // Twice a second: these are for reading, and a value that changes every frame is unreadable.
+  const timer = setInterval(refresh, 500);
+
+  // ---- measurements ----
+  //
+  // The instruments are console-only otherwise, which means knowing they exist and what to type.
+  // Each button runs one and leaves its headline here; the full report still goes to the console,
+  // because a single number is a summary and the reports exist to stop it being read alone.
+  const result = { last: 'idle' };
+  const measure = gui.addFolder('Measure').close();
+  const resultCtrl = measure.add(result, 'last').name('result').disable();
+  const run = (label, fn, headline) => measure.add({
+    [label]: async () => {
+      result.last = `${label}...`;
+      resultCtrl.updateDisplay();
+      try {
+        result.last = headline(await fn());
+      } catch (e) {
+        result.last = `failed: ${e.message}`;
+        console.error(e);
+      }
+      resultCtrl.updateDisplay();
+    },
+  }, label);
+  const pct = (v) => `${(v * 100).toFixed(3)}%`;
+  run('stability', () => window.beep.bench({ stability: true, frames: 90 }),
+      (r) => `residual ${pct(r.stability.medianRelative)}`);
+  run('lag', () => window.beep.lag(), (r) => `${r.lagOverNoise.toFixed(2)}x noise`);
+  run('sub-pixel', () => window.beep.subpixel(),
+      (r) => r.rows.map((x) => `${x.target} ${x.worstStep}%`).join('  '));
+  run('detail', () => window.beep.detail(),
+      (r) => `taau retains ${(r.configs.find((c) => c.name === 'taau').retained * 100).toFixed(0)}%`);
+  run('field evals', () => window.beep.evals(), (r) => `${r.meanEvalsPerPixel.toFixed(2)} /px`);
+
+  // ---- presets ----
+  //
+  // A preset captures the ART STATE and nothing else. That distinction is the whole design, and
+  // getting it wrong was a real bug: `gui.save()` walks EVERY folder, so the first version stored
+  // Monitor, Measure and Presets along with the grade — and since the preset picker is itself a
+  // saved controller, loading a preset re-entered the picker's own onChange and the load never
+  // completed. Snapshotting the tuning folders explicitly makes that impossible, and it is also
+  // just correct: "which preset was selected" is not part of a look.
+  //
+  // `load` goes through setValue, so the onChange hooks above still fire — a preset that changes
+  // `renderScale` really does reallocate the targets.
+  const snapshot = () => {
+    const folders = {};
+    for (const [key, f] of artFolders) folders[key] = f.save();
+    return { folders };
+  };
+  const restore = (snap) => {
+    for (const [key, f] of artFolders) {
+      const data = snap?.folders?.[key];
+      if (data) f.load(data);
+    }
+  };
+
+  // Captured before anything has been touched, so "defaults" means what the file says rather
+  // than whatever happened to be live when the panel was first opened.
+  const defaults = snapshot();
+  const presets = gui.addFolder('Presets').close();
+  const state = { name: 'my look', saved: '' };
+  let savedCtrl = null;
+  const listNames = () => {
+    state.saved = Object.keys(loadStore()).join(', ') || '(none)';
+    savedCtrl?.updateDisplay();
+  };
+
+  presets.add(state, 'name');
+  presets.add({
+    save: () => {
+      const n = state.name.trim();
+      if (!n) { return; }
+      const all = loadStore();
+      all[n] = snapshot();
+      if (!saveStore(all)) { console.warn('presets: localStorage unavailable, not saved'); return; }
+      listNames();
+    },
+  }, 'save').name('save as name');
+  presets.add({
+    load: () => {
+      const snap = loadStore()[state.name.trim()];
+      if (!snap) { console.warn(`presets: no preset named "${state.name}"`); return; }
+      restore(snap);
+    },
+  }, 'load').name('load name');
+  presets.add({
+    remove: () => {
+      const all = loadStore();
+      delete all[state.name.trim()];
+      saveStore(all);
+      listNames();
+    },
+  }, 'remove').name('delete name');
+  presets.add({ reset: () => restore(defaults) }, 'reset').name('reset to file defaults');
+  presets.add({
+    copy: () => {
+      const json = JSON.stringify(snapshot(), null, 2);
+      navigator.clipboard?.writeText(json).catch(() => {});
+      console.log(json);
+    },
+  }, 'copy').name('copy JSON to clipboard');
+  // A plain read-only list rather than a dropdown: a dropdown's options have to be rebuilt every
+  // time the set changes, which in lil-gui means destroying and re-adding the controller — and
+  // that reorders the folder. Typing a name is one more keystroke and nothing to go wrong.
+  savedCtrl = presets.add(state, 'saved').name('saved presets').disable();
+  listNames();
+
+  // The interval outlives the panel unless something stops it, and `g` destroys the panel.
+  const destroy = gui.destroy.bind(gui);
+  gui.destroy = () => { clearInterval(timer); destroy(); };
 
   return gui;
 }

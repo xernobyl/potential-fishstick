@@ -76,13 +76,27 @@ export const QUALITY = {
   /**
    * Draw the ADDITIVE layer at display resolution rather than render resolution.
    *
-   * Off by default on measurement, not on principle. The layer gets no temporal antialiasing —
-   * it is drawn after the resolve, because reprojection would ghost every mote — so at render
-   * resolution its aliasing is upscaled with it. Turning this on removes that, and costs about
-   * 4x the fill of the ember pass, which is the most expensive thing in the layer by a wide
-   * margin. See `beep.additive()` for the measurement that decides it.
+   * ON, and on evidence rather than on principle — it took three measurements, and the first two
+   * were not enough on their own.
+   *
+   * The layer gets no temporal antialiasing: it is drawn after the resolve, because reprojection
+   * assumes static geometry and would ghost every mote. So at render resolution its aliasing gets
+   * upscaled along with it. `beep.additive()` measured the difference that makes — 51% of the
+   * layer's own high-frequency band wrong, 60% of its energy, 17% of its mean brightness. Large,
+   * but it does not say which is BETTER: lower resolution is also blurrier, and blur suppresses
+   * crawl rather than causing it.
+   *
+   * `beep.subpixel()` settled it, and disagreed with that caution: sliding the camera across one
+   * pixel, the render-resolution layer is 2.2x worse on the largest jump between adjacent
+   * sub-pixel offsets (0.171% against 0.076%) and 2.5x worse on mean-brightness wobble. It steps;
+   * the display-resolution one drifts. So it is a genuine crawl source.
+   *
+   * Cost: none measurable. Six interleaved throughput runs put wall time at 31.7-32.8 ms in every
+   * one, with the ember pass's own spread WITHIN a configuration wider than the gap between them —
+   * this frame is bound by the march, not by additive fill. On much weaker hardware that will stop
+   * being true, and this is one toggle in the panel.
    */
-  additiveDisplayRes: false,
+  additiveDisplayRes: true,
 };
 
 export const BODY = {

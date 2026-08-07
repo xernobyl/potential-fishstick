@@ -9,7 +9,7 @@ import { Gpu } from './core/device.js';
 import { Renderer, LENS_DISK } from './renderer.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
-import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing } from './dev/benchmark.js';
+import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability } from './dev/benchmark.js';
 
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
@@ -62,7 +62,7 @@ async function boot() {
       // Imported on demand: lil-gui is 59 KB of debug surface and has no business in the
       // startup path of a renderer whose whole subject is frame time.
       import('./dev/gui.js')
-        .then((m) => { gui = m.buildGui(renderer); })
+        .then((m) => { gui = m.buildGui(renderer, live); })
         .catch((err) => console.error('tuning panel failed to load', err));
     }
   });
@@ -132,6 +132,24 @@ async function boot() {
     }
   }
 
+  /**
+   * Does the image flicker when the camera moves less than one pixel? The crawl measurement.
+   * Neutralises every per-frame random source first — see the note on the instrument.
+   */
+  async function subpixel(opts) {
+    const wasRunning = running;
+    running = false;
+    try {
+      const r = await subPixelStability(renderer, gpu, {
+        quality: TUNING.QUALITY, camera: TUNING.CAMERA, film: TUNING.FILM, probe: TUNING.PROBE,
+      }, opts);
+      console.log(reportSubpixel(r));
+      return r;
+    } finally {
+      if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
+    }
+  }
+
   /** Does drawing the additive layer at render resolution change what you see, and at what cost? */
   async function additive(opts) {
     const wasRunning = running;
@@ -162,7 +180,7 @@ async function boot() {
   // A handle for poking at the scene from the console. Tuning values are read
   // per frame, so most of them can be changed live.
   window.beep = {
-    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive,
+    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel,
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;
@@ -220,6 +238,9 @@ async function boot() {
   let lastHud = 0;
   let frames = 0;
   let fps = 0;
+  // Shared with the tuning panel, which displays it. One object rather than a getter so the
+  // panel can `.listen()` to it without knowing anything about this loop.
+  const live = { fps: 0 };
 
   function loop(now) {
     if (!running) return;
@@ -235,6 +256,7 @@ async function boot() {
     frames++;
     if (now - lastHud > 500) {
       fps = (frames * 1000) / (now - lastHud);
+      live.fps = fps;
       frames = 0;
       lastHud = now;
       updateHud(renderer, gpu, fps);
@@ -244,6 +266,28 @@ async function boot() {
   }
 
   requestAnimationFrame(loop);
+}
+
+/** Console report for the sub-pixel stability sweep. */
+function reportSubpixel(r) {
+  const lines = [
+    `${r.steps} offsets across ${r.span} display px   ${r.settle} frames each   grid ${r.grid}`,
+    '',
+    'config                target   size          mean CV   band CV   worst step',
+  ];
+  for (const x of r.rows) {
+    lines.push(`${x.config.padEnd(21)} ${x.target.padEnd(8)} ${x.size.padEnd(13)} `
+      + `${(x.meanCV + '%').padStart(7)}   ${(x.bandCV + '%').padStart(7)}`
+      + `   ${(x.worstStep + '%').padStart(10)}`);
+  }
+  lines.push('',
+    '  mean CV     how much the mean brightness wobbles as the image slides across the grid.',
+    '              A translation cannot change it, so anything here is aliasing.',
+    '  band CV     the same for high-frequency energy — sensitive to thin features beating',
+    '              against the sampling grid, which is what crawl looks like.',
+    '  worst step  the largest jump between ADJACENT sub-pixel offsets, as a share of the mean.',
+    '              The perceptual one: a smooth drift across a pixel is invisible, a step is not.');
+  return lines.join('\n');
 }
 
 /** Console report for the detail/noise decomposition. */

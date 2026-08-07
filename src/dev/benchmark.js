@@ -891,6 +891,181 @@ export async function additiveAliasing(renderer, gpu, quality, opts = {}) {
 }
 
 /**
+ * SUB-PIXEL STABILITY: does the image flicker when the camera moves less than one pixel?
+ *
+ * The measurement every "is it crawling?" question actually wants, and the one the other
+ * instruments cannot give. `stability` freezes the camera, so it sees sampling noise but no
+ * aliasing. `detail` compares against a ground truth, so it sees blur and grain but says nothing
+ * about behaviour under motion. Crawl is neither: it is what happens when a feature slides across
+ * the sampling grid, and it only appears if you slide it.
+ *
+ * So: shift the camera across ONE pixel in `steps` fractions, render each deterministically, and
+ * ask how much the image changes. Under a pure translation a properly filtered image is
+ * essentially invariant — its mean and its high-frequency energy do not care where the grid sits.
+ * An aliased one beats against the grid, and both quantities wobble. That wobble, as a coefficient
+ * of variation, IS the crawl.
+ *
+ * Two things make this honest, and both are the point:
+ *
+ * NO RESAMPLING. The obvious method — shift, then shift back and diff — cannot work, because
+ * resampling by a fractional offset blurs by an amount that depends on the fraction, and that
+ * dependence is indistinguishable from the aliasing being measured. Comparing translation-INVARIANT
+ * scalars instead needs no compensation at all.
+ *
+ * NO NOISE. Every per-frame random source has to go, or it swamps the signal outright:
+ *   - `CAMERA.aperture` offsets the ray ORIGIN every frame from a disk sequence indexed by frame
+ *     number. It is the reason the residual never converges away.
+ *   - `FILM.grain` is per-pixel noise. It happens to be applied in the composite, which this
+ *     bypasses by reading the target directly, but it is zeroed anyway so the intent is on the
+ *     record rather than resting on which pass reads what.
+ *
+ * The TAA jitter is the exception, and getting it wrong is the trap. It is ITSELF a sub-pixel
+ * shift, so it looks like exactly the noise to switch off — but it is also the ANTIALIASING, and
+ * disabling it measures the renderer with its AA turned off, which reports the marched image as
+ * wildly unstable and means nothing. It is made REPEATABLE instead: `frameIndex` is pinned before
+ * each offset's render, so every offset sees the identical jitter subsequence and the only thing
+ * that differs between them is the camera shift asked for.
+ * The clock is frozen too, which stops the animation without stopping the particle and ribbon
+ * simulations — those advance on the clamped minimum dt, about 0.1 ms per frame, so over a whole
+ * run they drift by a few milliseconds' worth of motion. Not zero, but three orders of magnitude
+ * below a pixel.
+ *
+ * @param {object} knobs  { quality, camera, film, probe } — the live tuning blocks, mutated and
+ *                        restored here. Passed in rather than imported, as the others are.
+ */
+export async function subPixelStability(renderer, gpu, knobs, opts = {}) {
+  const { quality, camera: cam, film, probe } = knobs;
+  const steps = opts.steps ?? 8;
+  // Enough for the accumulation to actually converge; a handful of frames measures a
+  // half-built history instead of the image.
+  const settle = opts.settle ?? 40;
+  const time = opts.time ?? 6.0;
+  const sigma = opts.sigma ?? 1.5;
+  const gridW = opts.gridW ?? 256;
+  const gridH = opts.gridH ?? 144;
+  const span = opts.span ?? 1.0;            // how far to slide, in DISPLAY pixels
+  const input = benchInput(opts.cmd);
+  await ensureSize(renderer);
+
+  // The accumulation buffer is measured only once: the additive layer's resolution cannot affect
+  // it, which the first version of this confirmed by reporting identical figures for both — a
+  // useful check, and then a waste of half the runtime.
+  const configs = opts.configs ?? [
+    { name: 'additive @ render res', taau: true, additive: false, targets: ['ember', 'accum'] },
+    { name: 'additive @ display res', taau: true, additive: true, targets: ['ember'] },
+  ];
+
+  const saved = {
+    aperture: cam.aperture, grain: film.grain, zeroJitter: probe.zeroJitter,
+    offX: cam.frameOffset[0], offY: cam.frameOffset[1],
+    taau: quality.taau, additive: quality.additiveDisplayRes,
+  };
+  cam.aperture = 0;
+  film.grain = 0;
+  // Deliberately NOT zeroJitter — see above. Left as the caller had it, and forced OFF so a
+  // stale probe setting cannot silently remove the antialiasing under measurement.
+  probe.zeroJitter = false;
+  const fiBase = renderer.frameIndex;
+
+  const out = [];
+  try {
+    for (const cfg of configs) {
+      quality.taau = cfg.taau;
+      quality.additiveDisplayRes = cfg.additive;
+      renderer.resize();
+      const t = renderer.targets;
+      // One display pixel is 2/diagonal in the shared screen space, and a screen-space shift of
+      // `d` is produced by a frameOffset of `-d` (see the projection: the forward axis lands at
+      // screen -frameOffset). Expressed in DISPLAY pixels so the number means the same thing to
+      // every configuration regardless of what it renders at.
+      const diagPx = Math.hypot(t.displayWidth, t.displayHeight);
+      const perPixel = 2 / diagPx;
+
+      for (const which of (cfg.targets ?? ['ember'])) {
+        const texW = which === 'ember' ? t.addWidth : t.accumWidth;
+        const texH = which === 'ember' ? t.addHeight : t.accumHeight;
+        const k = texW / t.displayWidth;
+        const pw = Math.max(32, Math.round(gridW * k / 32) * 32);
+        const ph = Math.max(2, Math.round(gridH * k));
+        const sampler = new FrameSampler(gpu.device, texW, texH, pw, ph);
+        const means = [];
+        const bands = [];
+        try {
+          for (let i = 0; i < steps; i++) {
+            const d = (i / steps) * span;
+            cam.frameOffset[0] = saved.offX - d * perPixel;
+            // `setViewport` runs every frame and now keys its early-out on frameOffset, so the
+            // projection rebuilds on its own; nothing here has to reach past the camera.
+            //
+            // Pinning the frame counter is what makes the jitter repeatable rather than absent:
+            // it indexes the jitter sequence, so every offset now walks the identical one.
+            renderer.frameIndex = fiBase;
+            renderer.resetHistory();
+            for (let f = 0; f < settle; f++) renderer.frame(time, input);
+            const enc = gpu.device.createCommandEncoder({ label: 'subpixel-copy' });
+            const tex = which === 'ember' ? renderer.targets.ember : renderer.targets.accumRead;
+            sampler.record(enc, tex, texW, texH);
+            gpu.device.queue.submit([enc.finish()]);
+            await gpu.device.queue.onSubmittedWorkDone();
+            const f32 = decodeHalf(await sampler.read());
+            const common = (sampler.w === gridW && sampler.h === gridH)
+              ? f32 : resampleRGBA(f32, sampler.w, sampler.h, gridW, gridH);
+            const { L, H } = highPass(common, gridW, gridH, sigma);
+            // Interior only: content enters and leaves at the patch border as the image slides,
+            // and that is a boundary effect, not aliasing.
+            const m = Math.max(2, Math.ceil(sigma * 3)) + 2;
+            let sl = 0, sh = 0, n = 0;
+            for (let y = m; y < gridH - m; y++) {
+              for (let x = m; x < gridW - m; x++) {
+                const j = y * gridW + x;
+                sl += L[j]; sh += H[j] * H[j]; n++;
+              }
+            }
+            means.push(sl / n);
+            bands.push(Math.sqrt(sh / n));
+          }
+        } finally {
+          sampler.destroy();
+        }
+        const cv = (a) => {
+          const mu = a.reduce((x, y) => x + y, 0) / a.length;
+          if (Math.abs(mu) < 1e-12) return 0;
+          const v = a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length;
+          return Math.sqrt(v) / mu;
+        };
+        // The largest jump between ADJACENT sub-pixel positions. Perceptually this is the one
+        // that matters: a smooth drift across a pixel is invisible, a step is a flicker.
+        let worst = 0;
+        for (let i = 1; i < means.length; i++) {
+          worst = Math.max(worst, Math.abs(means[i] - means[i - 1]));
+        }
+        const muM = means.reduce((x, y) => x + y, 0) / means.length;
+        out.push({
+          config: cfg.name,
+          target: which,
+          size: `${texW}x${texH}`,
+          meanCV: +(cv(means) * 100).toFixed(3),
+          bandCV: +(cv(bands) * 100).toFixed(3),
+          worstStep: +(muM > 1e-12 ? (worst / muM) * 100 : 0).toFixed(3),
+        });
+      }
+    }
+  } finally {
+    cam.aperture = saved.aperture;
+    film.grain = saved.grain;
+    probe.zeroJitter = saved.zeroJitter;
+    cam.frameOffset[0] = saved.offX;
+    cam.frameOffset[1] = saved.offY;
+    quality.taau = saved.taau;
+    quality.additiveDisplayRes = saved.additive;
+    renderer.resize();
+    renderer.resetHistory();
+  }
+
+  return { steps, span, settle, grid: `${gridW}x${gridH}`, sigma, rows: out };
+}
+
+/**
  * TEMPORAL LAG: how far the accumulated image trails the instant it claims to show.
  *
  * This is the measurement the harness was missing, and its absence is exactly why the

@@ -72,6 +72,8 @@ export class Camera {
      */
     this.screen = new Float32Array(4);
     this._aspect = 0;
+    this._offX = NaN;
+    this._offY = NaN;
     this._proj = m4.create();
     this._invProj = m4.create();
     this._view = m4.create();
@@ -92,13 +94,19 @@ export class Camera {
     this.screen[3] = sy;
 
     const aspect = width / Math.max(1, height);
-    // The field of view is part of the early-out key, not just the aspect. It is a tuning
-    // value the debug panel can move, and gating only on aspect meant a FOV change did
-    // nothing until the window was resized — a silent no-op control.
+    // EVERY input to the projection is part of the early-out key, not just the aspect. These are
+    // tuning values something can move at runtime — the debug panel does, and the sub-pixel
+    // stability probe shifts `frameOffset` deliberately — and gating only on aspect meant such a
+    // change did nothing until the window happened to be resized. A silent no-op control.
     const focal = 1 / Math.tan((CAMERA.diagonalFov * Math.PI) / 360);
-    if (aspect === this._aspect && focal === this.focal) return;
+    const offX = CAMERA.frameOffset[0];
+    const offY = CAMERA.frameOffset[1];
+    if (aspect === this._aspect && focal === this.focal
+        && offX === this._offX && offY === this._offY) return;
     this._aspect = aspect;
     this.focal = focal;
+    this._offX = offX;
+    this._offY = offY;
     m4.projection(this._proj, this.focal, CAMERA.frameOffset, sx, sy);
     m4.projectionInverse(this._invProj, this.focal, CAMERA.frameOffset, sx, sy);
   }

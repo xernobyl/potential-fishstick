@@ -30,8 +30,13 @@ const SHADER_ROOT = new URL('../../shaders/', import.meta.url);
  * In production it is the wrong trade: a deployed shader cannot change underneath you, so all it
  * buys is a conditional request per shader — two dozen round trips before the first frame, paid
  * by every visitor on every load. So it is asked for only where the hazard exists.
+ *
+ * Guarded on `location` existing at all, because this module ends up in the import graph of the
+ * headless checks in dev/ — which run under Node, where there is no `location`, and where a bare
+ * reference to it at module scope makes the whole file unimportable. That is how this was found.
  */
-const DEV = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const DEV = typeof location !== 'undefined'
+  && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 
 /** raw text cache: path -> Promise<string> */
 const sources = new Map();
