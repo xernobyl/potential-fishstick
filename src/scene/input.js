@@ -88,7 +88,15 @@ export class Input {
         // only, so holding it does not strobe.
         if (k === 'c' && !this._cHeld) { this.chase = !this.chase; this._cHeld = true; }
         // Space is a TRIGGER now, not a button: holding it charges and releasing it fires.
-        if (k === ' ' && !this._spaceHeld) { this._spaceHeld = true; this._triggerSeen = false; }
+        if (k === ' ' && !this._spaceHeld) {
+          // A NEW PRESS SUPERSEDES AN UNCONSUMED TAP. Without this the latch survived into the next
+          // hold and fired its replay on that hold's release instead — measured, a fast tap followed
+          // by a hold produced one shot where two were due, and delayed the second by a frame.
+          // Two presses inside one frame are one shot; you cannot meaningfully fire twice in 16 ms.
+          this._pendingTap = false;
+          this._spaceHeld = true;
+          this._triggerSeen = false;
+        }
       } else {
         this.keys.delete(k);
         if (k === 'c') this._cHeld = false;
@@ -105,7 +113,15 @@ export class Input {
     window.addEventListener('keydown', (e) => key(e, true));
     window.addEventListener('keyup', (e) => key(e, false));
     // Losing focus mid-manoeuvre would otherwise leave a key stuck down forever.
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      // DROP THE TRIGGER TOO. `keys` never held it — it is its own latch — so alt-tabbing mid-charge
+      // left the weapon charging with no keyup ever coming to release it. Dropping it here reads as
+      // letting go, which is what leaving the window is.
+      this._spaceHeld = false;
+      this._pendingTap = false;
+      this._cHeld = false;
+    });
 
     canvas.addEventListener('mousedown', (e) => { start(e.clientX, e.clientY); e.preventDefault(); });
     window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));

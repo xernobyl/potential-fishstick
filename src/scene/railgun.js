@@ -27,6 +27,22 @@
 
 import { RAIL } from './tuning.js';
 
+/**
+ * A deterministic stand-in for `Math.random()`, seeded on a number you already have.
+ *
+ * Everything else in this renderer is a closed form in time — that is what lets a benchmark replay a
+ * scene and get the same pixels, and what the recorder relies on to render a file frame by frame off a
+ * synthetic clock. `Math.random()` in the fire path quietly broke that: the same run twice would give a
+ * shot a different colour, so an image comparison across two runs could differ for a reason that had
+ * nothing to do with the change being measured.
+ *
+ * The fire time is already unique per shot, so hashing it gives the same variety for free.
+ */
+function hash1(x) {
+  const s = Math.sin(x * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
 /** vec4(localMuzzle.xyz, fireTime) + vec4(dir.xyz, side) + vec4(power, hue, seed, spare) */
 const FLOATS_PER_SHOT = 12;
 
@@ -91,10 +107,10 @@ export class Railgun {
     this.cpu[o + 3] = time;
     this.cpu[o + 7] = this.side;
     this.cpu[o + 8] = power;
-    // The hue the charge previewed, or a fresh one for an ordinary shot.
-    this.cpu[o + 9] = power > 0 ? this.chargeHue : Math.random();
+    // The hue the charge previewed, or one derived from the fire time for an ordinary shot.
+    this.cpu[o + 9] = power > 0 ? this.chargeHue : hash1(time);
     // A per-shot seed, so two shots never scatter their sparks the same way.
-    this.cpu[o + 10] = Math.random() * 1000;
+    this.cpu[o + 10] = hash1(time * 1.7 + 9.1) * 1000;
     this.cpu[o + 11] = 0;
     this._dirty = true;
 
@@ -112,7 +128,7 @@ export class Railgun {
     if (trigger && !this._held) {
       // Trigger down: start charging, and pick the colour now so the glow can show it.
       this.charge = 0;
-      this.chargeHue = Math.random();
+      this.chargeHue = hash1(time * 2.3 + 4.7);
     } else if (trigger) {
       this.charge += dt;
     } else if (this._held) {

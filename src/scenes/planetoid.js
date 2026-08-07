@@ -249,11 +249,10 @@ export class PlanetoidScene extends Scene {
       if (slot !== this._fireSlot) { this._fireSlot = slot; fire = true; }
     }
     this.railgun.update(time, dt, this.ship, !!input.cmd.trigger, fire);
-    // The shake decays on this frame's dt and is applied by whichever path places the camera, so it
-    // has to step BEFORE the camera moves — see Camera.stepShake.
+    // Only the KICK is the scene's; decaying it is the renderer's, because a camera that keeps a
+    // decaying offset must decay it in every scene — see Renderer.frame.
     const kick = this.railgun.takeKick();
     if (kick > 0) camera.kick(kick * RAIL.shake);
-    camera.stepShake(dt, time);
     this.aurora.update(dt, time);
     camera.update(time, dt, input, this.ship);
   }

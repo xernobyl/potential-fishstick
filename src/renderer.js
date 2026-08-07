@@ -247,6 +247,11 @@ export class Renderer {
     // this update is about to move, so anything reading them here would be a frame behind — and a
     // frame-behind frustum culls what just came on screen. Null makes that a crash, not a flicker.
     rc.frustum = null;
+    // THE SHAKE DECAYS HERE, not in a scene, and that is the third bug of this exact shape. A camera
+    // carrying a decaying offset has to decay it wherever it is pointed: the model viewer never called
+    // this, so switching scenes mid-kick froze the offset and left the studio permanently tilted.
+    // Stepping before `update` also means whichever path the scene picks has this frame's value ready.
+    this.camera.stepShake(dt, time);
     this.scene.update(rc);
 
     // Sun screen positions, for the flare pass to anchor its streaks. 1e3 is the
