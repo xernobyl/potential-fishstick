@@ -44,7 +44,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     else { off = vec2f(f32(TILE) * 0.5, f32(TILE) * 0.5); }
 
     let px = vec2f(gid.xy) * f32(TILE) + off;
-    let ray = cameraRay(px, vec2f(0.0));
+    let ray = cameraRay(px);
     if (iSphere(ray.o, ray.d, r).y > 0.0) { visible = true; break; }
   }
 

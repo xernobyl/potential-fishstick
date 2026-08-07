@@ -6,13 +6,14 @@
  */
 
 import { Gpu } from './core/device.js';
-import { Renderer, LENS_DISK } from './renderer.js';
+import { Renderer } from './renderer.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
-import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, finalStability, grabFrame } from './dev/benchmark.js';
+import { benchmark, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, finalStability, grabFrame } from './dev/benchmark.js';
 
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
+const keysEl = document.getElementById('keys');
 const fatalEl = document.getElementById('fatal');
 
 function fatal(title, detail) {
@@ -105,12 +106,7 @@ async function boot() {
       setJitter(!jitterOn);
     } else if (k === 'g') {
       e.preventDefault();
-      if (gui) { gui.destroy(); gui = null; return; }
-      // Imported on demand: lil-gui is 59 KB of debug surface and has no business in the
-      // startup path of a renderer whose whole subject is frame time.
-      import('./dev/gui.js')
-        .then((m) => { gui = m.buildGui(renderer, live); })
-        .catch((err) => console.error('tuning panel failed to load', err));
+      setOverlay((overlay + 1) % 3);
     }
   });
 
@@ -320,7 +316,6 @@ async function boot() {
         if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
       }
     },
-    lens: () => lensResidual(LENS_DISK, TUNING.TEMPORAL.blend, TUNING.CAMERA.aperture),
     /** Two sequential frames of the accumulation buffer, and where they differ. */
     dump: async (opts) => {
       const wasRunning = running;
@@ -370,7 +365,8 @@ async function boot() {
   /** Render scale to restore when upsampling is switched back on. */
   let taauScale = null;
   let jitterOn = true;
-  let apertureSaved = null;
+  let overlay = 0;
+  let frozenKept = false;
   let lastHud = 0;
   let frames = 0;
   let fps = 0;
@@ -389,6 +385,8 @@ async function boot() {
   function setFrozen(on, keepHistory = false) {
     if (on === frozen) return frozen;
     frozen = on;
+    // Which of the two did it, so the controls list marks the right row rather than both.
+    frozenKept = frozen ? keepHistory : false;
     // Not just the clock: dt is forced to zero too, or the particle sims keep creeping on the
     // clamped minimum step and the scene is in slow motion rather than stopped.
     renderer.held = frozen;
@@ -444,33 +442,78 @@ async function boot() {
   }
 
   /**
-   * Every per-frame random source off, in one key.
+   * The pixel jitter off and on.
    *
-   * There are TWO, and they are easy to conflate because they arrive in the same uniform:
-   *   frame.jitter.xy  the PIXEL jitter - TAA's sub-pixel offset, which is what antialiases;
-   *   frame.jitter.zw  the LENS offset - depth of field, which resamples the aperture every frame
-   *                    and moves the whole image, background stars included.
-   * Neither belongs to temporal UPSAMPLING, so `u` does not touch either of them. Measured with
-   * beep.still(): the lens carries about three quarters of a frozen scene's movement and the pixel
-   * jitter the rest; with both off the frame is bit-exact, WITH upsampling still enabled.
+   * ONE per-frame random source now. There used to be two, arriving in the same uniform and easy to
+   * conflate: jitter.xy the sub-pixel offset that antialiases, jitter.zw the lens offset for depth of
+   * field. The lens one is gone - it could not converge through the variance clip and it never
+   * applied to rasterised geometry at all, so the rings were the only stable thing at a wide
+   * aperture. See cameraRayUV in common.wgsl.
    *
-   * Off means no antialiasing and no defocus, so this is a diagnostic, not a setting.
+   * Off means no antialiasing, so this is a diagnostic rather than a setting. With it off and the
+   * scene frozen, the frame is bit-exact - which is what makes it the baseline everything else is
+   * measured against.
    */
   function setJitter(on) {
     if (on === jitterOn) return jitterOn;
     jitterOn = on;
     TUNING.PROBE.zeroJitter = on ? 0 : 1;
-    if (!on) {
-      apertureSaved = TUNING.CAMERA.aperture;
-      TUNING.CAMERA.aperture = 0;
-    } else if (apertureSaved !== null) {
-      TUNING.CAMERA.aperture = apertureSaved;
-      apertureSaved = null;
-    }
     renderer.resetHistory();
-    console.log(`[jitter] ${on ? 'on' : 'off'} - pixel jitter ${on ? 'on' : 'off'}, `
-      + `aperture ${TUNING.CAMERA.aperture}`);
+    console.log(`[jitter] pixel jitter ${on ? 'on' : 'off'}`);
     return jitterOn;
+  }
+
+  /**
+   * The controls list, rebuilt each time it is shown so the toggle states are current rather than
+   * whatever they were when the element was created.
+   *
+   * One list, one source: every key the handler above deals with appears here and nowhere else,
+   * because a controls overlay that has drifted from the key handler is worse than no overlay.
+   */
+  function controlsText() {
+    const Q = TUNING.QUALITY;
+    const on = (v) => (v ? 'on' : 'off');
+    const rows = [
+      ['drag', 'orbit'],
+      ['arrows / wasd', 'fly'],
+      ['space', 'shoot'],
+      ['c', 'chase camera'],
+      ['', ''],
+      // Marked separately, not both on `frozen`: the two differ only in whether the accumulated
+      // image survives, and showing ACTIVE on both would hide which one is holding it.
+      ['t', `freeze - clock, input and dt${frozen && !frozenKept ? '   ACTIVE' : ''}`],
+      ['p', `pause - keeps the accumulated image${frozen && frozenKept ? '   ACTIVE' : ''}`],
+      ['u', `temporal upsampling: ${on(Q.taau)}`],
+      ['j', `pixel jitter: ${on(jitterOn)}`],
+      ['', ''],
+      ['r', 'record 15s of 1080p30 to mp4'],
+      ['f', 'fullscreen'],
+      ['g', 'controls / panel / off'],
+    ];
+    return rows.map(([k, v]) => (k ? `${k.padEnd(14)}${v}` : '')).join('\n');
+  }
+
+  /** 0 nothing, 1 the controls list, 2 the tuning panel. `g` steps through them. */
+  function setOverlay(next) {
+    overlay = next;
+    keysEl.style.display = overlay === 1 ? 'block' : 'none';
+    if (overlay === 1) keysEl.textContent = controlsText();
+    if (overlay === 2 && !gui) {
+      // Imported on demand: lil-gui is 59 KB of debug surface and has no business in the
+      // startup path of a renderer whose whole subject is frame time.
+      import('./dev/gui.js')
+        .then((m) => {
+          // Re-check: `g` pressed twice quickly steps past the panel while this import is in
+          // flight, and building it then would put a panel on screen in a state that says off.
+          if (overlay !== 2) return;
+          gui = m.buildGui(renderer, live);
+        })
+        .catch((err) => console.error('tuning panel failed to load', err));
+    } else if (overlay !== 2 && gui) {
+      gui.destroy();
+      gui = null;
+    }
+    return overlay;
   }
 
   function loop(now) {
@@ -497,6 +540,7 @@ async function boot() {
       frames = 0;
       lastHud = now;
       updateHud(renderer, gpu, fps);
+      if (overlay === 1) keysEl.textContent = controlsText();
     }
 
     requestAnimationFrame(loop);

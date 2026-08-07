@@ -122,7 +122,7 @@ fn fs(@builtin(position) fragPos : vec4f, @location(0) uv : vec2f) -> @location(
   // screen-space halo has no world position, so it could not be reprojected and left ghost wedges
   // drifting across the sky. It is a real scattering integral now, computed upstream where every
   // sample IS a world position — see volumetric.wgsl.
-  let centre = cameraRay(rpx, vec2f(0.0));
+  let centre = cameraRay(rpx);
   // `depth` already carries the scene distance (1e9 for sky), so a blast on the
   // far side of the body is occluded by it for free.
   col += blastGlow(centre.o, centre.d, depth);

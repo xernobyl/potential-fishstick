@@ -75,8 +75,6 @@ export function buildGui(renderer, live = {}) {
   cam.add(CAMERA, 'diagonalFov', 40, 140, 0.5).name('fov (diagonal)');
   cam.add(CAMERA, 'distance', 2.0, 12.0, 0.05);
   cam.add(CAMERA, 'zoom', 0.0, 3.0, 0.01).name('dolly amplitude');
-  cam.add(CAMERA, 'aperture', 0.0, 0.08, 0.001);
-  cam.add(CAMERA, 'focusPull', -2.0, 3.0, 0.01).name('focus pull');
   cam.add(CAMERA, 'roll', 0.0, 0.6, 0.01);
 
   // ---- auroras ----

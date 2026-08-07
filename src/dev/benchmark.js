@@ -1018,11 +1018,10 @@ export async function subPixelStability(renderer, gpu, knobs, opts = {}) {
   ];
 
   const saved = {
-    aperture: cam.aperture, grain: film.grain, zeroJitter: probe.zeroJitter,
+    grain: film.grain, zeroJitter: probe.zeroJitter,
     offX: cam.frameOffset[0], offY: cam.frameOffset[1],
     taau: quality.taau, additive: quality.additiveDisplayRes, dyn: quality.dynamicRes,
   };
-  cam.aperture = 0;
   film.grain = 0;
   quality.dynamicRes = false;
   // Deliberately NOT zeroJitter — see above. Left as the caller had it, and forced OFF so a
@@ -1114,7 +1113,6 @@ export async function subPixelStability(renderer, gpu, knobs, opts = {}) {
       }
     }
   } finally {
-    cam.aperture = saved.aperture;
     film.grain = saved.grain;
     probe.zeroJitter = saved.zeroJitter;
     cam.frameOffset[0] = saved.offX;
@@ -1256,47 +1254,6 @@ export async function lagMetric(renderer, gpu, opts = {}) {
   };
 }
 
-/**
- * Residual aperture parallax, analytically.
- *
- * This measures the actual mechanism behind the camera shake rather than a proxy
- * for it. The lens offset displaces the ray ORIGIN, so what the viewer perceives
- * as wobble is the drift of the accumulated MEAN of those offsets — if the running
- * mean sat exactly at the disk centre every frame, the bokeh would be smooth and
- * the image would not move at all.
- *
- * So: replay the exponential accumulation the TAA actually performs over the lens
- * sample sequence, and report how far its mean strays from centre. Closed form, no
- * GPU, no eyeballing, and directly comparable between sampler designs.
- *
- * Note what it does NOT cover: shader sampling noise (AO, SSS, transmission) also
- * shimmers, and that shows up in `benchmark({stability:true})` instead.
- *
- * @param {Float32Array} disk   xy pairs, unit disk
- * @param {number} blend        TAA weight of the new sample
- * @param {number} aperture     world-space lens radius
- */
-export function lensResidual(disk, blend, aperture) {
-  const n = disk.length / 2;
-  let mx = 0;
-  let my = 0;
-  let worst = 0;
-  // Several cycles, so the measurement reflects the steady state rather than the
-  // transient from starting at the centre.
-  const iterations = n * 12;
-  for (let i = 0; i < iterations; i++) {
-    const k = (i % n) * 2;
-    mx += (disk[k] - mx) * blend;
-    my += (disk[k + 1] - my) * blend;
-    if (i > n * 4) worst = Math.max(worst, Math.hypot(mx, my));
-  }
-  return {
-    cycle: n,
-    blend,
-    worstOffsetFractionOfAperture: worst,
-    worstOffsetWorldUnits: worst * aperture,
-  };
-}
 
 /**
  * Capture two SEQUENTIAL frames of the accumulation buffer and report where the
@@ -1480,9 +1437,7 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
   const gridH = opts.gridH ?? 180;
   await ensureSize(renderer);
 
-  const saved = { aperture: cam.aperture, grain: film.grain, dyn: quality.dynamicRes,
-                  zoom: cam.zoom, roll: cam.roll };
-  cam.aperture = 0;
+  const saved = { grain: film.grain, dyn: quality.dynamicRes, zoom: cam.zoom, roll: cam.roll };
   film.grain = 0;
   quality.dynamicRes = false;      // a rung change mid-run would be measured as shake
 
@@ -1612,7 +1567,6 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
       }
     } finally { sampler.destroy?.(); }
   } finally {
-    cam.aperture = saved.aperture;
     film.grain = saved.grain;
     quality.dynamicRes = saved.dyn;
     cam.zoom = saved.zoom;
@@ -1648,17 +1602,14 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
  * levels or more, and only counts past a threshold show that.
  */
 export async function finalStability(renderer, gpu, knobs, opts = {}) {
-  const { film, probe, camera: cam } = knobs;
+  const { film, probe } = knobs;
   const settle = opts.settle ?? 45;
-  const pairs = opts.pairs ?? 3;
   const time = opts.time ?? 7.0;
   const grain = opts.grain ?? false;      // OFF by default: real grain is meant to move
-  // APERTURE OFF by default, as every older probe here does - and the first version of this one
-  // forgot, which produced a wrong conclusion worth recording. `PROBE.zeroJitter` only zeroes
-  // jitter.xy, the PIXEL jitter; jitter.zw is the lens offset for depth of field, and it resamples
-  // the lens every frame. So "jitter off" left a per-frame random source running and the frozen
-  // scene looked irreducibly noisy. With both off it is bit-exact: mean 0.000, peak 1 of 255.
-  const aperture = opts.aperture ?? false;
+  // The `aperture` option this used to carry is gone with the lens itself. It existed because
+  // `PROBE.zeroJitter` only zeroes jitter.xy, the PIXEL jitter, while jitter.zw resampled the lens
+  // every frame - so "jitter off" left a random source running and the frozen scene looked
+  // irreducibly noisy. With the lens removed, zeroJitter alone now makes the frame bit-exact.
   const input = benchInput(opts.cmd);
   await ensureSize(renderer);
 
@@ -1673,10 +1624,8 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
 
-  const saved = { grain: film.grain, held: renderer.held, zeroJitter: probe.zeroJitter,
-                  aperture: cam.aperture };
+  const saved = { grain: film.grain, held: renderer.held, zeroJitter: probe.zeroJitter };
   if (!grain) film.grain = 0;
-  if (!aperture) cam.aperture = 0;
   renderer.held = true;
   if (opts.zeroJitter !== undefined) probe.zeroJitter = opts.zeroJitter ? 1 : 0;
 
@@ -1748,7 +1697,6 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
     film.grain = saved.grain;
     renderer.held = saved.held;
     probe.zeroJitter = saved.zeroJitter;
-    cam.aperture = saved.aperture;
     renderer.resetHistory();
   }
 }

@@ -760,32 +760,38 @@ export const CAMERA = {
    *  parallax the accumulation fails to average — i.e. of apparent camera shake.
    *  Kept modest on purpose; see LENS_DISK in renderer.js for the other half of
    *  that fix, which is the sample ORDER rather than its size. */
-  /**
-   * OFF, and this is the one setting that was making the picture crawl.
+  /*
+   * NO DEPTH OF FIELD, deliberately, and this is where it would go back.
    *
-   * A thin-lens aperture is sampled ONE point per frame and amortised over the temporal history, so
-   * every frame renders from a slightly different viewpoint. That is fine in principle - it converges
-   * to a defocus blur - except that the resolve's variance clip rebuilds its box from each frame's
-   * neighbourhood and pulls the history back toward the newest sample, so it never settles. Measured
-   * on a scene stopped dead (beep.still(), 16-frame span, share of pixels moving by more than 4 of
-   * 255 levels between adjacent frames):
+   * `aperture` and `focusPull` used to live here, driving a thin lens sampled ONE point per frame in
+   * ray generation and amortised over the temporal history. Two structural faults, not tuning:
    *
-   *   aperture 0.036, pixel jitter on   0.457%     <- shipped until now
-   *   aperture 0,     pixel jitter on   0.107%
-   *   aperture 0,     pixel jitter off  0.000%     bit-exact
+   *   IT COULD NOT CONVERGE. The resolve's variance clip rebuilds its box from each frame's
+   *   neighbourhood and pulls the history back toward the newest sample, so a per-frame lens offset
+   *   never settles. Measured on a scene stopped dead, share of pixels moving by more than 4 of 255
+   *   levels between adjacent frames: 0.457% with the lens against 0.107% for the pixel jitter
+   *   alone, and 0.000% - bit-exact - with both off. More history did nothing (weightMax 6 to 200,
+   *   blend 0.15 to 0.04), because the clip is the limiter and not the window.
    *
-   * So the lens carried about 77% of it, with the pixel jitter - which is the antialiasing and has
-   * to stay - accounting for the rest. None of the alternatives worked: more history (weightMax 6 ->
-   * 200, blend 0.15 -> 0.04) does nothing because the clip is the limiter, not the window; the lens
-   * cycle length is worth 5% (12 -> 6); and turning temporal upsampling off makes it WORSE, 0.702%,
-   * because native resolution is sharper with four times the independent samples.
+   *   IT MISSED HALF THE SCENE. A lens offset moves a RAY ORIGIN, which only exists in the compute
+   *   passes. The rings are rasterised through `jitterClip(frame.viewProj * ...)`, which carries the
+   *   pixel jitter and nothing else, so they had no defocus at all - at a wide aperture they were
+   *   the only stable thing on screen, which is what exposed the whole problem.
    *
-   * Set it back to 0.036 for the bokeh - it is a live slider in the panel under `g`, and the flares
-   * and glow do not depend on it. Keeping both the defocus and the stillness needs a real gather
-   * blur that takes several lens taps in ONE frame, instead of borrowing them from previous frames.
+   * THE RIGHT SHAPE, for whoever brings it back: a deterministic post-process GATHER, not stochastic
+   * sampling. Circle of confusion from the thin-lens relation, CoC ~ A*f*|z-zf| / (z*(zf-f)), read
+   * off the depth already sitting in the accumulation buffer's alpha; a FIXED low-discrepancy disk of
+   * taps (a golden-angle spiral, 16-32 of them) scaled by that radius; and a reach test per tap - a
+   * neighbour contributes only if its own CoC covers this pixel - so a sharp foreground cannot bleed
+   * onto a blurred background. Same input, same output, so it is stable by construction rather than
+   * dependent on accumulation, and it runs once over the composited image where the rings are
+   * already present. Jimenez's "Next Generation Post Processing" (SIGGRAPH 2014) and Unreal's
+   * diaphragm DOF are the references; both separate near and far fields, which is the next
+   * refinement rather than the starting point.
+   *
+   * It needs its own target and pass, because a gather has to read a texture and the composite
+   * builds its colour in a local. That is why this is a note and not a patch.
    */
-  aperture: 0.0,
-  focusPull: 1.5,              // focus this far in front of the body centre
   atmosphereR: 5.5,
 
   /**

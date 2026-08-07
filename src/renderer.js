@@ -65,32 +65,6 @@ function radicalInverse(bits) {
   return r;
 }
 
-/**
- * Aperture sample positions, as a fixed Vogel (golden-angle) disk.
- *
- * Precomputed as a CYCLE rather than drawn from an endless sequence, and this is
- * the fix for the camera shake. The lens offset displaces the ray ORIGIN, so any
- * drift in the running mean of these samples is a parallax shift of the entire
- * image — it reads as camera wobble, not as bokeh. Temporal accumulation only
- * averages the last ~1/blend frames, so what matters is not that the sequence
- * converges eventually but that every SHORT WINDOW of it is already balanced.
- *
- * A Vogel spiral gives exactly that: consecutive samples sit ~137.5 degrees apart
- * and step outward as sqrt, so any small run is spread both around and across the
- * disk, and the cycle closes instead of wandering off. The sqrt also keeps it
- * uniform by AREA, so the bokeh is an even disc rather than centre-heavy.
- */
-export const LENS_CYCLE = 12;
-export const LENS_DISK = (() => {
-  const a = new Float32Array(LENS_CYCLE * 2);
-  for (let i = 0; i < LENS_CYCLE; i++) {
-    const r = Math.sqrt((i + 0.5) / LENS_CYCLE);
-    const th = i * 2.399963229728653;          // golden angle
-    a[i * 2] = r * Math.cos(th);
-    a[i * 2 + 1] = r * Math.sin(th);
-  }
-  return a;
-})();
 
 export class Renderer {
   constructor(gpu) {
@@ -122,14 +96,13 @@ export class Renderer {
     // the camera jumps further between samples than the history expects.
     this._sunA = [0, 0];
     this._sunB = [0, 0];
-    this._lens = [0, 0];
     this._jitter = [0, 0];
     // Declared in full, every field the uniform writer reads. Two reasons: this literal is
     // the frame-state contract, so a reader should not have to scan `frame()` to learn what
     // it contains; and adding keys to an object after construction changes its shape, which
     // is exactly the per-frame deoptimisation the scratch objects above exist to avoid.
     this._state = {
-      camera: null, aperture: 0, focusDist: 0, time: 0, width: 0, height: 0,
+      camera: null, time: 0, width: 0, height: 0,
       accumWidth: 0, accumHeight: 0, addWidth: 0, addHeight: 0,
       beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
       historyValid: false, dragging: false, exposure: 0,
@@ -283,13 +256,8 @@ export class Renderer {
     this._jitter[0] = ((fi * 0.618033988) % 1) - 0.5;
     this._jitter[1] = radicalInverse(fi) - 0.5;
     if (PROBE.zeroJitter) { this._jitter[0] = 0; this._jitter[1] = 0; }
-    const li = (fi % LENS_CYCLE) * 2;
-    this._lens[0] = LENS_DISK[li];
-    this._lens[1] = LENS_DISK[li + 1];
 
     st.camera = this.camera;
-    st.aperture = CAMERA.aperture;
-    st.focusDist = this.camera.focusDistance();
     st.time = time;
     st.width = t.width;
     st.height = t.height;
@@ -302,7 +270,6 @@ export class Renderer {
     st.frameIndex = fi;
     st.dt = dt;
     st.jitter = this._jitter;
-    st.lens = this._lens;
     st.historyValid = this.accumFrames > 0;
     st.dragging = input.dragging;
     // Pre-grade linear gain. Its own control, not a second application of `exposure` — see

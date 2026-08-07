@@ -27,14 +27,14 @@ const O = {
   viewProj: 0,      // world -> clip, this frame
   invViewProj: 16,  // clip  -> world, this frame (ray generation)
   prevViewProj: 32, // world -> clip, previous frame (reprojection)
-  camRight: 48,     // xyz right,      w aperture
-  camUp: 52,        // xyz up,         w focusDist
+  camRight: 48,     // xyz right,      w spare (was the aperture)
+  camUp: 52,        // xyz up,         w spare (was the focus distance)
   camFwd: 56,       // xyz forward,    w focal length (half-diagonal units)
   camPos: 60,       // xyz position,   w time
   res: 64,          // xy size,        zw 1/size
   screen: 68,       // x 1/diagPx, y diagPx, zw sensor half-extents
   misc: 72,         // x beat, y life, z frameIndex, w dt
-  jitter: 76,       // xy pixel jitter, zw lens jitter
+  jitter: 76,       // xy pixel jitter, zw spare (was the lens offset)
   flags: 80,        // x historyValid, y dragging, z fireflyMax, w exposure
   sun: 84,          // xy sun-A screen pos, zw sun-B screen pos
   shipPos: 88,      // xyz world position, w throttle
@@ -102,10 +102,8 @@ export class FrameUniforms {
     // it in world space: the thin-lens offset (which shifts the ray ORIGIN, not
     // its projection) and the ember billboards' quad expansion.
     a[O.camRight] = cam.right[0]; a[O.camRight + 1] = cam.right[1]; a[O.camRight + 2] = cam.right[2];
-    a[O.camRight + 3] = s.aperture;
 
     a[O.camUp] = cam.up[0]; a[O.camUp + 1] = cam.up[1]; a[O.camUp + 2] = cam.up[2];
-    a[O.camUp + 3] = s.focusDist;
 
     a[O.camFwd] = cam.fwd[0]; a[O.camFwd + 1] = cam.fwd[1]; a[O.camFwd + 2] = cam.fwd[2];
     // The focal length, in the same half-diagonal units as the shared screen space — so
@@ -125,7 +123,6 @@ export class FrameUniforms {
     a[O.misc + 2] = s.frameIndex; a[O.misc + 3] = s.dt;
 
     a[O.jitter] = s.jitter[0]; a[O.jitter + 1] = s.jitter[1];
-    a[O.jitter + 2] = s.lens[0]; a[O.jitter + 3] = s.lens[1];
 
     a[O.flags] = s.historyValid ? 1 : 0;
     a[O.flags + 1] = s.dragging ? 1 : 0;

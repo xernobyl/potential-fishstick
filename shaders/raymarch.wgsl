@@ -53,7 +53,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   // The jitter is what buys anti-aliasing over time; the lens offset is what
   // turns one sample per frame into a real bokeh once accumulated.
   let px = vec2f(gid.xy) + 0.5 + frame.jitter.xy;
-  let ray = cameraRay(px, frame.jitter.zw);
+  let ray = cameraRay(px);
 
   var col = background(ray.d);
   var depthTag = TAG_BG;

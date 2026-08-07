@@ -96,20 +96,28 @@ A pixel centre is `integer + 0.5`. `screenUV(px)` maps a pixel to shared screen 
 `uvToPixel` is its exact inverse; both assume centres. Pass a bare integer corner and you get a
 half-pixel bias that is invisible in a still frame and reads as crawl in motion.
 
-### 2. Two jitters, one uniform
+### 2. One jitter, and the one that was removed
 
-`frame.jitter` carries **two unrelated things**, which is the single easiest confusion in the
-codebase:
+`frame.jitter.xy` is the sub-pixel offset on the ray. **It is the antialiasing**, it is an unbounded
+low-discrepancy sequence, and `PROBE.zeroJitter` (or `j`) is the only thing that turns it off. With
+it off and the scene stopped, the frame is bit-exact — which is the baseline every stability figure
+in this repo is measured against.
 
-| Field | What | Purpose | Killed by |
-|---|---|---|---|
-| `jitter.xy` | sub-pixel offset on the ray | **this is the antialiasing** | `PROBE.zeroJitter` |
-| `jitter.zw` | offset on the lens disk | depth of field | `CAMERA.aperture = 0` |
+`jitter.zw` used to carry a second, unrelated thing: an offset on the lens disk for depth of field.
+It is gone, and the reason is worth keeping because it is the same reason twice:
 
-`PROBE.zeroJitter` only zeroes `.xy`. Neither has anything to do with temporal *upsampling*, so
-disabling TAAU does not affect either — a distinction that cost real debugging time. The lens
-offset walks a fixed `LENS_CYCLE`-point golden-angle disk; the pixel jitter is an unbounded
-low-discrepancy sequence.
+- **It could not converge.** One lens sample per frame amortised over the history never settles,
+  because the variance clip pulls the history back toward each frame's newest sample. Measured on a
+  stopped scene: 0.457% of pixels moving by more than 4 of 255 levels with the lens, against 0.107%
+  for the pixel jitter alone.
+- **It missed half the scene.** A lens offset moves a *ray origin*, which only exists in the compute
+  passes. The rings are rasterised through `jitterClip(frame.viewProj * …)`, which carries the pixel
+  jitter and nothing else — so at a wide aperture the rings were the only stable thing on screen.
+  That asymmetry is what exposed it.
+
+Neither jitter ever had anything to do with temporal *upsampling*, so `u` does not affect them — a
+distinction that cost real debugging time. Bringing depth of field back means a deterministic
+post-process gather; the design is recorded in `CAMERA` in `tuning.js`.
 
 ### 3. Three ways to answer "where was this pixel last frame"
 
@@ -133,7 +141,10 @@ for the rings.
 ### 4. Depth tags
 
 The accumulation buffer's **alpha is the hit distance**, doubling as a classifier: which object a
-pixel is, and how far. TAA's gate compares it against the distance measured from the *previous*
+pixel is, and how far. Negative means background, and that is now the only negative — a second
+encoding used to bias a distance into the negatives to mark geometry "dynamic", which the resolve
+answered by reading history from the same screen pixel with no reprojection at all. Its last user
+was the satellites, and once they carried real motion vectors it had no writers and was removed. TAA's gate compares it against the distance measured from the *previous*
 camera (`prevCamPos` exists for exactly this), because a distance written by a camera that has
 since moved is not comparable to one from where the camera is now.
 
@@ -158,9 +169,9 @@ Two corollaries that explain otherwise-baffling tuning:
 - A **per-pixel** temporal dither makes neighbours disagree, inflates sigma, and admits stale
   history *everywhere*. A **global per-frame** offset shared by all nine taps moves the box with
   the sample and is free. `volumetric.wgsl`'s step offset is built exactly that way.
-- Depth of field cannot converge through this. One lens sample per frame amortised over the
-  history never settles, which is why `CAMERA.aperture` now defaults to 0. Keeping the defocus
-  requires a gather blur taking several taps in *one* frame.
+- Depth of field could not converge through this at all, which is why the thin lens was removed
+  rather than tuned. Any effect that needs several samples of one quantity must take them *within a
+  frame*, not borrow them from previous frames.
 
 ## Resolution and resources
 
@@ -267,13 +278,6 @@ Break one of these and the failure will look like something else entirely.
 6. Art numbers live in `tuning.js`. TAA knobs are **uniforms, not shader constants**, so they can be A/B tested at runtime — as constants they were baked at pipeline creation and console tweaks silently did nothing.
 7. Per-frame randomness is global-per-frame or spatial, never per-pixel-per-frame (see the clip box).
 8. Instruments own the loop and restore every knob they touch in a `finally`.
-
-## Known dead code
-
-`tagDynamic` / `isDynamic` in `common.wgsl` and the same-pixel-history branch they select in
-`taa.wgsl` now have **no writers** — satellites moved to positive tags with real motion vectors,
-which was the last user. That branch is unreachable and should be deleted; it is left standing only
-because removing it touches the resolve, which deserves its own change and its own measurement.
 
 ## Extending it
 

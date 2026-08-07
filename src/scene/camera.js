@@ -219,11 +219,6 @@ export class Camera {
     }
   }
 
-  /** World-space focus distance for the thin lens. */
-  focusDistance() {
-    return Math.max(this.distance - CAMERA.focusPull, 0.5);
-  }
-
   /**
    * Where a world DIRECTION lands in the shared screen space (half-diagonal 1,
    * y up), for anchoring the lens flares. Returns null when it is behind the

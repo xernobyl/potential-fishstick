@@ -66,7 +66,6 @@ fn sampleWeight(pos : vec2f) -> f32 {
 /// Fresh-sample weight for world-space DYNAMIC geometry (the satellites), which gets
 /// screen-space history only. High on purpose: enough to soften their edges, not enough to
 /// trail. Named because two write paths derive from it.
-const DYNAMIC_BLEND : f32 = 0.7;
 
 const CROSS = array<vec2i, 4>(
   vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1),
@@ -465,9 +464,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var histW = 0.0;
 
   let historyValid = frame.flags.x > 0.5;
-  let dynamic = isDynamic(s.a);
 
-  if (historyValid && !dynamic) {
+  if (historyValid) {
     // The exact ray this sample used, jitter and lens included, so a hit's world
     // point is the point that was actually shaded.
     // The ray through this OUTPUT pixel. Not the ray any single sample used — with
@@ -476,7 +474,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     // The jitter still goes in: it is the offset the samples were actually taken with, and
     // dropping it here would reproject from a point half a pixel from where it was shaded.
     let px = opc + frame.jitter.xy / toIn;
-    let ray = cameraRayAt(px, frame.jitter.zw, outRes);
+    let ray = cameraRayAt(px, outRes);
 
     // A hit reprojects as a POINT (w=1); the background is at infinity so it
     // reprojects as a DIRECTION (w=0), from the pinhole centre ray. Feeding the
@@ -531,7 +529,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       rp = reprojectPrevAt(hitP, 1.0, outRes);
       rp = vec3f(rp.xy - frame.jitter.xy / toIn, rp.z);
     } else {
-      let centre = cameraRayAt(opc, vec2f(0.0), outRes);
+      let centre = cameraRayAt(opc, outRes);
       rp = reprojectPrevAt(centre.d, 0.0, outRes);
     }
 
@@ -596,17 +594,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         // this reduces exactly to what it was.
         blend = select(frame.taa.x, ACCUM_BLEND_BG, s.a < 0.0) * confidence;
       }
-    }
-  } else if (historyValid && dynamic) {
-    let h = textureLoad(histTex, op, 0);
-    if (isDynamic(h.a)) {
-      hist = h.rgb;
-      // ONE mechanism per path, expressed once. `blend` drives the 1:1 write and `histW` the
-      // upsampling write, and they are derived from the same constant here so the dynamic class
-      // behaves identically either way — rather than being two numbers that have to be
-      // remembered together.
-      blend = DYNAMIC_BLEND;
-      histW = min(textureLoad(wPrevTex, op, 0).r, rawW * (1.0 / DYNAMIC_BLEND - 1.0));
     }
   }
 

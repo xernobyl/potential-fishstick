@@ -16,6 +16,8 @@
     letter-spacing:.03em; color:#b6aed6; text-shadow:0 1px 4px #000b;
   }
   #perf { right:16px; top:14px; text-align:right; white-space:pre; opacity:.75; }
+  /* Controls, bottom-left. Same treatment as the perf readout so the two read as one HUD. */
+  #keys { left:16px; bottom:14px; white-space:pre; opacity:.72; display:none; }
 
   #fatal {
     position:fixed; inset:0; z-index:9; display:none; place-content:center;
@@ -28,6 +30,7 @@
 <body>
   <div id="stage"><canvas id="gpu"></canvas></div>
   <pre class="hud" id="perf"></pre>
+  <pre class="hud" id="keys"></pre>
 
   <div id="fatal"></div>
 

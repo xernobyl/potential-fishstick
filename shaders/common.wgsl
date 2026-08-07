@@ -274,7 +274,7 @@ fn toAccumPx(px : vec2f) -> vec2i {
 
 struct Ray { o : vec3f, d : vec3f };
 
-fn cameraRayUV(uv : vec2f, lens : vec2f) -> Ray {
+fn cameraRayUV(uv : vec2f) -> Ray {
   // Unproject the point at INFINITY, which under this reverse-Z projection is NDC z = 0.
   //
   // The result comes back with w = 0 — a homogeneous DIRECTION, not a position — so the world
@@ -287,28 +287,40 @@ fn cameraRayUV(uv : vec2f, lens : vec2f) -> Ray {
   let dirH = frame.invViewProj * vec4f(ndc, 0.0, 1.0);
   let fwd = normalize(dirH.xyz);
 
-  var o = frame.camPos.xyz;
-  // Thin lens: one sample per frame on the aperture disk. Temporal accumulation
-  // is what turns that into a smooth bokeh, so real DOF is nearly free here.
-  // The offset moves the ray ORIGIN across the aperture, which is why the world
-  // -space basis is still wanted even though the projection is a matrix.
-  let focus = o + fwd * frame.camUp.w;
-  o += (frame.camRight.xyz * lens.x + frame.camUp.xyz * lens.y) * frame.camRight.w;
-  return Ray(o, normalize(focus - o));
+  // PINHOLE. There used to be a thin lens here: one sample per frame on the aperture disk, with
+  // temporal accumulation asked to turn it into a smooth bokeh. It was wrong in two ways at once and
+  // both are structural, so it is gone rather than tuned.
+  //
+  // It could not converge. The resolve's variance clip rebuilds its box from each frame's
+  // neighbourhood and pulls the history back toward the newest sample, so a per-frame lens offset
+  // never settles - measured on a stopped scene, it moved 0.457% of pixels by more than 4 of 255
+  // levels against 0.107% for the pixel jitter alone, and more history did not help (weightMax 6 to
+  // 200, blend 0.15 to 0.04, both no change).
+  //
+  // And it only ever applied HERE. Ray generation is a compute-pass idea; the rings are rasterised
+  // through `jitterClip(frame.viewProj * ...)`, which carries the pixel jitter and nothing else. So
+  // the rings had no defocus while everything marched did - they were the only stable thing on
+  // screen at a wide aperture, which is what gave this away.
+  //
+  // The right shape for it is a deterministic post-process GATHER: circle of confusion from the
+  // thin-lens relation, a fixed low-discrepancy disk of taps, applied once to the composited image
+  // where the rings are already present. Same input, same output, so it is stable by construction
+  // instead of depending on accumulation. See CAMERA in tuning.js.
+  return Ray(frame.camPos.xyz, fwd);
 }
 
 /// The primary ray, including the off-centre framing and the thin-lens aperture.
 /// Shading and reprojection must agree on this exactly, or the history is
 /// reprojected from a subtly wrong world position and smears — so both go
 /// through the same matrix rather than through two copies of the same algebra.
-fn cameraRay(px : vec2f, lens : vec2f) -> Ray {
-  return cameraRayUV(screenUV(px), lens);
+fn cameraRay(px : vec2f) -> Ray {
+  return cameraRayUV(screenUV(px));
 }
 
 /// The same ray, from a pixel in an arbitrary grid — the upsampling resolve reasons in
 /// OUTPUT pixels while the samples it gathers were taken in the render grid.
-fn cameraRayAt(px : vec2f, lens : vec2f, res : vec2f) -> Ray {
-  return cameraRayUV(screenUVAt(px, res), lens);
+fn cameraRayAt(px : vec2f, res : vec2f) -> Ray {
+  return cameraRayUV(screenUVAt(px, res));
 }
 
 
@@ -350,14 +362,17 @@ fn reprojectPrevAt(p : vec3f, w : f32, res : vec2f) -> vec3f {
 // for whatever currently has it: it was introduced for the orbiting rocks, which
 // are gone, and the satellites inherit it for precisely the same reason.
 
+// NEGATIVE MEANS BACKGROUND, and that is now the only negative there is. A second encoding used to
+// live down here - a distance biased into the negatives to mark geometry as "dynamic", which the
+// resolve answered by reading history from the same screen pixel with no reprojection at all. Its
+// last user was the satellites, and they now carry an exact motion vector instead (their orbits are
+// analytic, so the previous transform is just the same evaluation one frame back). With no writers
+// the encoding, its predicate and the resolve branch it selected were all unreachable, so they are
+// gone rather than left to be maintained.
 const TAG_BG : f32 = -1.0;
-const TAG_DYN_BIAS : f32 = 100.0;
 
-fn tagDynamic(t : f32) -> f32 { return -(t + TAG_DYN_BIAS); }
-fn isDynamic(w : f32) -> bool { return w < -50.0; }
-fn isBackground(w : f32) -> bool { return w < 0.0 && w > -50.0; }
+fn isBackground(w : f32) -> bool { return w < 0.0; }
 fn tagDepth(w : f32) -> f32 {
   if (w > 0.0) { return w; }
-  if (isDynamic(w)) { return -w - TAG_DYN_BIAS; }
   return 1e9;
 }

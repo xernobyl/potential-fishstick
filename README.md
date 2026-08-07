@@ -84,17 +84,29 @@ behind `g` rather than anything automatic — see the dynamic-resolution idea be
 
 ## Controls
 
+Press **`g`** to put this list on screen; `g` again for the tuning panel, again for neither.
+
 - **drag** — orbit the camera. Releasing keeps your angle; the slow dolly and roll
   continue underneath.
 - **arrows / A,D** — turn the ship. **up / W** thrusts, **down / S** reverses.
 - **space** — fire the rail guns. One shot per press, alternating wings; holding does
   nothing, so hammer it.
 - **C** — toggle between the chase camera and the free orbit camera.
+- **G** — cycle: the control list → the tuning panel → nothing. The panel is loaded on first use,
+  so it costs nothing until you want it.
+- **T** — freeze: holds the clock, the input *and* `dt`, so not one thing moves. Discards the
+  accumulated image, so what you see rebuilds from scratch under the new regime.
+- **P** — pause: the same hold, but it **keeps** the accumulated image. Use this to look at the
+  picture as it already was; use `T` when you want to watch how it converges.
+- **U** — temporal upsampling on/off. Off renders 1:1 instead of reconstructing from half
+  resolution. Worth knowing: this is *not* where jitter comes from, and turning it off makes a
+  frozen frame slightly less stable, because native resolution is sharper and carries four times
+  the independent samples.
+- **J** — the pixel jitter on/off. Off means no antialiasing; with it off and the scene frozen the
+  frame is bit-exact, which is the baseline every stability figure here is measured against.
 - **F** — fullscreen.
 - **R** — record 15 s of 1080p at a constant 30 fps to an MP4, then download it. The render is
   OFFLINE, so it takes about 50 s of wall time and the result is smooth regardless — see below.
-- **G** — the tuning panel: exposure and the whole film grade, glow, camera, auroras, and the
-  temporal knobs. Loaded on first press, so it costs nothing until you want it.
 
 Click the canvas first so it has keyboard focus.
 
