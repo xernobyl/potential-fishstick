@@ -199,6 +199,27 @@ question being asked of it:
   then indistinguishable from the aliasing; and it makes the TAA jitter REPEATABLE rather than
   disabling it, because the jitter is the antialiasing and switching it off measures the renderer
   with its AA removed. The first version disabled it and got the opposite answer.
+- **`beep.shake()`** — does the SETTLED image sit still while things move? Four conditions, and the
+  ratio between them is the whole point: `frozen` holds the clock so every reprojection is the
+  identity and whatever is left is the pipeline's own noise floor; `animated` advances the clock with
+  the camera PINNED, which is the only condition that isolates a real defect, since legitimate
+  reprojection error is zero by construction; `drift` and `chase` add camera motion. Trust
+  `animated`, distrust `drift` — the metric is a second difference in time, which cancels a linear
+  ramp but not the step an edge makes as it sweeps across a pixel, so `drift` carries real motion in
+  it. `tagBand` scopes the median to one object by depth tag, because a median over the whole frame
+  cannot see a change confined to something small; it throws rather than reporting a confident 0% on
+  an empty mask.
+- **`beep.still()`** — with the scene stopped DEAD, does the final displayed image still change? The
+  only probe that reads the SWAPCHAIN rather than the accumulation buffer, so the only one that can
+  see the grade, the bloom, the flares, the additive layers and the grain — for a complaint phrased
+  as "the picture shimmers", that is most of the pipeline the others are blind to. It holds the clock,
+  the input AND `dt`, the last because dt has a 1e-4 floor and without it every simulation still crept
+  0.1ms per frame. Reports a distribution rather than a mean, since the mean frame-to-frame delta is a
+  third of one 255-level step while the shimmer is a few dozen pixels swinging by 100. It found the
+  depth-of-field lens offset, which every accumulation-buffer probe had been silently zeroing.
+- **`beep.dump()`** — two consecutive frames of a frozen scene, differenced per pixel and classified
+  by depth tag and brightness band, with the peak located. Narrower than `still()` and older; useful
+  when you want the coordinates of the worst pixel rather than a distribution.
 - **`beep.additive()`** — does drawing the un-filtered additive layer small change what you see?
   Converges it at display and render resolution and compares their high-frequency bands, with the
   frame cost of each beside it.
