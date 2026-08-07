@@ -59,16 +59,32 @@ export class Contrail {
       this._primed = true;
     }
 
-    // WHERE A NOZZLE IS RIGHT NOW, in world space. The full local-to-world transform, not two thirds
-    // of it: the emit used to apply the lateral and the along-track offsets and silently drop the
-    // vertical one, so the trails started a little above the holes they come out of.
+    // WHERE A NOZZLE IS RIGHT NOW: the local offset turned by the ship's own ORIENTATION QUATERNION.
+    //
+    // Not rebuilt from forward/right/up, and that distinction was a real bug rather than a stylistic
+    // one. `ship.right()` is the BANKED lateral axis but `ship.up()` is the UNBANKED surface normal —
+    // the banked up exists only as a scratch on its way into the quaternion — so mixing them placed
+    // the nozzle in no frame at all. The error is proportional to bank, which is why the trails looked
+    // right flying straight and left from the side of the hull in a turn.
+    //
+    // `rot` is what the HULL is drawn with (see meshRigidFromQuat in mesh_vertex.wgsl), so using it
+    // here makes the attachment correct by construction. There is one orientation, and this is it.
     const nozzleAt = (side, out) => {
-      const f = ship.forward();
-      const r = ship.right();
-      const u = ship.up();
-      for (let k = 0; k < 3; k++) {
-        out[k] = ship.pos[k] + r[k] * side + u[k] * CONTRAIL.rise - f[k] * CONTRAIL.offset;
-      }
+      const q = ship.rot;
+      // Local nozzle, in the hull's own axes, already in world units.
+      const lx = side;
+      const ly = CONTRAIL.rise;
+      const lz = -CONTRAIL.offset;
+      // v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v) — the two-cross-product form, no matrix.
+      const cx = q[1] * lz - q[2] * ly;
+      const cy = q[2] * lx - q[0] * lz;
+      const cz = q[0] * ly - q[1] * lx;
+      const tx = cx + q[3] * lx;
+      const ty = cy + q[3] * ly;
+      const tz = cz + q[3] * lz;
+      out[0] = ship.pos[0] + lx + 2 * (q[1] * tz - q[2] * ty);
+      out[1] = ship.pos[1] + ly + 2 * (q[2] * tx - q[0] * tz);
+      out[2] = ship.pos[2] + lz + 2 * (q[0] * ty - q[1] * tx);
       return out;
     };
 

@@ -1271,7 +1271,7 @@ export const SATELLITES = {
   rate: 0.085,          // radians per second, scaled per satellite
   bus: 0.055,           // half-extent of the central cube
   boom: 0.03,           // gap from bus face to the start of a panel
-  panelLen: 0.14,       // half-length along the boom
+  panelLen: 0.20,       // half-length along the boom, over BOTH panels of a wing
   panelWide: 0.085,     // half-width — wide enough to read as a wing, not a rod
   panelThick: 0.005,    // half-thickness — thin enough to flash edge-on
   /** Cell silicon under cover glass: dark, and blue is nearly all of what little

@@ -101,8 +101,14 @@ fn fs(in : VOut) -> FOut {
   // leaves the blended skirt where it meets the spine as hull.
   // Matches the dome in ship_sdf.js: centre and radius, plus a gate at the sill so the frame ring and
   // the coaming stay painted hull rather than becoming glass.
+  // THE THRESHOLD HAS TO SIT OUTSIDE THE DOME, not on it. Centred on the sphere's own radius the
+  // smoothstep evaluated to 0.5 across the entire canopy — half glass, half hull, everywhere, which
+  // reads as no cockpit at all rather than as a soft edge.
+  //
+  // The height gate does the discriminating: the frame ring and the coaming both fall inside the
+  // sphere's radius, so distance alone would paint them as glass too.
   let toCanopy = al - vec3f(0.0, 0.062, 0.145);
-  let isGlass = smoothstep(0.098, 0.082, length(toCanopy)) * smoothstep(0.046, 0.066, al.y);
+  let isGlass = smoothstep(0.100, 0.088, length(toCanopy)) * smoothstep(0.072, 0.092, al.y);
 
   // A painted stripe out along each wing, because a readable silhouette wants a graphic. The wings now
   // run from |x| ~ 0.03 out to the gun pods at 0.55 and are thin in y, so the gate keeps it off the
