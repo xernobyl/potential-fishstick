@@ -1,0 +1,304 @@
+/**
+ * The frame graph.
+ *
+ * This file owns the ORDER of things and nothing else — each pass knows how to
+ * record itself but not when. That split is what makes the pipeline expandable:
+ * adding a pass means writing one class and one line here.
+ *
+ * Frame order, and why:
+ *
+ *   tilecull  -> which tiles can reach the body at all
+ *   raymarch  -> one jittered HDR sample + depth tag. The body, then the analytic
+ *                satellites, then the player SHIP — each narrowing the next one's
+ *                tmax, so the whole set resolves front-to-back with no sorting
+ *   rings     -> rasterised OPAQUE geometry into `solid` + an exact per-pixel motion
+ *                vector; hardware depth resolves it against itself
+ *   taa       -> resolve solid vs body by depth, then blend into history — by motion
+ *                vector where one exists, by camera reprojection otherwise
+ *   ember sim -> particle state + compacted draw args (independent; could run
+ *                earlier, but keeping it next to its draw is easier to follow)
+ *   ember draw-> additive billboards, soft-occluded by the scene depth
+ *   contrail  -> the ship's trail, into the SAME additive target
+ *   railgun   -> beam helices, likewise
+ *   aurora    -> curl-noise ribbons, likewise — the contrail's geometry, generated
+ *                paths instead of a recorded one
+ *   bloom     -> prefilter(scene+embers) then the down/up pyramid
+ *   flare     -> ghosts and streaks from the blurred pyramid
+ *   composite -> layers + limb glow + grade + grain, to the swapchain
+ *
+ * The rule that keeps the temporal side honest: anything camera-relative or
+ * world-space dynamic must NOT enter the accumulation buffer, because reprojection
+ * assumes static geometry. That is why embers, flares, the explosion fireballs, the
+ * limb glow and the explosion fireballs all live downstream of TAA.
+ *
+ * The RINGS are the exception that proves the rule rather than breaking it: they move
+ * on their own, but their motion is analytic, so they can hand TAA an exact motion
+ * vector instead of asking it to guess. Anything that can say where it was last frame
+ * is welcome in the accumulation buffer.
+ */
+
+import { Targets } from './core/targets.js';
+import { FrameUniforms } from './core/uniforms.js';
+import { Profiler } from './core/profiler.js';
+import { ShaderCache } from './core/wgsl.js';
+import { Camera } from './scene/camera.js';
+import { Ship } from './scene/ship.js';
+import { Contrail } from './scene/contrail.js';
+import { ContrailPass } from './passes/contrail.js';
+import { Railgun } from './scene/railgun.js';
+import { Aurora } from './scene/aurora.js';
+import { RailgunPass } from './passes/railgun.js';
+import { AuroraPass } from './passes/aurora.js';
+import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, RINGS, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
+import { RingsPass } from './passes/rings.js';
+import { ScenePass } from './passes/scene.js';
+import { TaaPass } from './passes/taa.js';
+import { BloomPass } from './passes/bloom.js';
+import { LensFlarePass } from './passes/lensflare.js';
+import { EmberPass } from './passes/embers.js';
+import { CompositePass } from './passes/composite.js';
+
+/** Hammersley-ish low-discrepancy jitter: converges far faster than white noise. */
+function radicalInverse(bits) {
+  let r = 0, f = 0.5, b = bits;
+  for (let i = 0; i < 16; i++) { r += (b & 1) * f; b >>= 1; f *= 0.5; }
+  return r;
+}
+
+/**
+ * Aperture sample positions, as a fixed Vogel (golden-angle) disk.
+ *
+ * Precomputed as a CYCLE rather than drawn from an endless sequence, and this is
+ * the fix for the camera shake. The lens offset displaces the ray ORIGIN, so any
+ * drift in the running mean of these samples is a parallax shift of the entire
+ * image — it reads as camera wobble, not as bokeh. Temporal accumulation only
+ * averages the last ~1/blend frames, so what matters is not that the sequence
+ * converges eventually but that every SHORT WINDOW of it is already balanced.
+ *
+ * A Vogel spiral gives exactly that: consecutive samples sit ~137.5 degrees apart
+ * and step outward as sqrt, so any small run is spread both around and across the
+ * disk, and the cycle closes instead of wandering off. The sqrt also keeps it
+ * uniform by AREA, so the bokeh is an even disc rather than centre-heavy.
+ */
+export const LENS_CYCLE = 12;
+export const LENS_DISK = (() => {
+  const a = new Float32Array(LENS_CYCLE * 2);
+  for (let i = 0; i < LENS_CYCLE; i++) {
+    const r = Math.sqrt((i + 0.5) / LENS_CYCLE);
+    const th = i * 2.399963229728653;          // golden angle
+    a[i * 2] = r * Math.cos(th);
+    a[i * 2 + 1] = r * Math.sin(th);
+  }
+  return a;
+})();
+
+export class Renderer {
+  constructor(gpu) {
+    this.gpu = gpu;
+    this.shaders = new ShaderCache(gpu.device);
+    this.targets = new Targets(gpu.device);
+    this.uniforms = new FrameUniforms(gpu.device);
+    this.profiler = new Profiler(gpu.device, { enabled: gpu.caps.timestamps });
+    this.camera = new Camera();
+    this.ship = new Ship();
+    this.contrail = new Contrail(gpu.device);
+    this.railgun = new Railgun(gpu.device);
+    this.aurora = new Aurora(gpu.device);
+
+    this.frameIndex = 0;
+    this.accumFrames = 0;
+    this.prevTime = 0;
+
+    // Scratch, reused every frame. A renderer that allocates per frame hands the
+    // collector a steady drip of short-lived objects, and a GC pause is a dropped
+    // frame — which on an accumulating renderer also means a visible hitch, since
+    // the camera jumps further between samples than the history expects.
+    this._sunA = [0, 0];
+    this._sunB = [0, 0];
+    this._lens = [0, 0];
+    this._jitter = [0, 0];
+    // Declared in full, every field the uniform writer reads. Two reasons: this literal is
+    // the frame-state contract, so a reader should not have to scan `frame()` to learn what
+    // it contains; and adding keys to an object after construction changes its shape, which
+    // is exactly the per-frame deoptimisation the scratch objects above exist to avoid.
+    this._state = {
+      camera: null, aperture: 0, focusDist: 0, time: 0, width: 0, height: 0,
+      accumWidth: 0, accumHeight: 0, addWidth: 0, addHeight: 0,
+      beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
+      historyValid: false, dragging: false, exposure: 0,
+      sunA: null, sunB: null, ship: null,
+      taa: TEMPORAL, march: MARCH, probe: PROBE,
+      grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
+    };
+
+    this.passes = {
+      scene: new ScenePass(gpu, this.targets, this.shaders),
+      taa: new TaaPass(gpu, this.targets, this.shaders),
+      embers: new EmberPass(gpu, this.targets, this.shaders),
+      bloom: new BloomPass(gpu, this.targets, this.shaders),
+      flare: new LensFlarePass(gpu, this.targets, this.shaders),
+      composite: new CompositePass(gpu, this.targets, this.shaders),
+      rings: new RingsPass(gpu, this.targets, this.shaders, RINGS),
+      contrail: new ContrailPass(gpu, this.targets, this.shaders, this.contrail),
+      railgun: new RailgunPass(gpu, this.targets, this.shaders, this.railgun),
+      aurora: new AuroraPass(gpu, this.targets, this.shaders, this.aurora),
+    };
+  }
+
+  async init() {
+    const d = this.gpu.device;
+    // One layout for group 0, shared by every pass, so the frame bind group is
+    // interchangeable across pipelines and never has to be rebuilt per pass.
+    this.frameBGL = FrameUniforms.bindGroupLayout(d);
+    this.frameBG = this.uniforms.bindGroup(this.frameBGL);
+
+    await Promise.all([
+      this.passes.scene.init(this.frameBGL),
+      this.passes.taa.init(this.frameBGL),
+      this.passes.embers.init(this.frameBGL),
+      this.passes.bloom.init(this.frameBGL),
+      this.passes.flare.init(this.frameBGL),
+      this.passes.composite.init(this.frameBGL, this.gpu.format),
+      this.passes.rings.init(this.frameBGL, wgslDefines()),
+      this.passes.contrail.init(this.frameBGL, wgslDefines()),
+      this.passes.railgun.init(this.frameBGL, wgslDefines()),
+      this.passes.aurora.init(this.frameBGL, wgslDefines()),
+    ]);
+  }
+
+  /** Invalidate the temporal history — after a resize, there is nothing valid. */
+  resetHistory() {
+    this.accumFrames = 0;
+  }
+
+  resize() {
+    // `syncSize` reports whether the CANVAS changed, which is not the same question as
+    // whether the TARGETS need rebuilding. Gating the second on the first meant any
+    // setting that changes target sizes without changing the window — `renderScale`, and
+    // now `QUALITY.taau` — was silently ignored until something else forced a resize.
+    // Targets owns its own idempotence, so just ask it every frame; the check is a couple
+    // of integer compares.
+    this.gpu.syncSize(QUALITY.maxWidth);
+    if (!this.gpu.width) return;
+    if (this.targets.resize(this.gpu.width, this.gpu.height)) this.resetHistory();
+  }
+
+  /**
+   * @param {number} time seconds
+   * @param {object} input pointer state
+   */
+  frame(time, input) {
+    this.resize();
+    const t = this.targets;
+    if (!t.width) return;
+
+    const dt = Math.min(0.1, Math.max(1e-4, time - this.prevTime));
+
+    // Projection first: it depends only on the viewport, and the camera folds it
+    // into the view matrix it is about to build.
+    this.ship.update(dt, input.cmd);
+    this.contrail.update(dt, this.ship);
+    this.railgun.update(time, this.ship, !!input.cmd.fire);
+    this.aurora.update(dt, time);
+    this.camera.setViewport(t.width, t.height);
+    this.camera.update(time, dt, input, this.ship);
+
+    // Sun screen positions, for the flare pass to anchor its streaks. 1e3 is the
+    // sentinel the shader reads as "behind the camera", written in place so the
+    // miss path allocates nothing either.
+    if (!this.camera.projectDirection(SUNS.a.dir, this._sunA)) {
+      this._sunA[0] = 1e3; this._sunA[1] = 1e3;
+    }
+    if (!this.camera.projectDirection(SUNS.b.dir, this._sunB)) {
+      this._sunB[0] = 1e3; this._sunB[1] = 1e3;
+    }
+
+    const fi = this.frameIndex;
+    const st = this._state;
+
+    // Pixel jitter drives the AA; the lens offset drives the bokeh. Both are
+    // low-discrepancy so a handful of frames already looks converged.
+    this._jitter[0] = ((fi * 0.618033988) % 1) - 0.5;
+    this._jitter[1] = radicalInverse(fi) - 0.5;
+    if (PROBE.zeroJitter) { this._jitter[0] = 0; this._jitter[1] = 0; }
+    const li = (fi % LENS_CYCLE) * 2;
+    this._lens[0] = LENS_DISK[li];
+    this._lens[1] = LENS_DISK[li + 1];
+
+    st.camera = this.camera;
+    st.aperture = CAMERA.aperture;
+    st.focusDist = this.camera.focusDistance();
+    st.time = time;
+    st.width = t.width;
+    st.height = t.height;
+    st.addWidth = t.addWidth;
+    st.addHeight = t.addHeight;
+    st.accumWidth = t.accumWidth;
+    st.accumHeight = t.accumHeight;
+    st.beat = time * (PULSE.bpm / 60);
+    st.life = time * PULSE.lifeRate;
+    st.frameIndex = fi;
+    st.dt = dt;
+    st.jitter = this._jitter;
+    st.lens = this._lens;
+    st.historyValid = this.accumFrames > 0;
+    st.dragging = input.dragging;
+    // Pre-grade linear gain. Its own control, not a second application of `exposure` — see
+    // the note on FILM.gain for why those were split.
+    st.exposure = FILM.gain;
+    st.sunA = this._sunA;
+    st.sunB = this._sunB;
+    st.ship = this.ship;
+    st.taa = TEMPORAL;      // read live, so console tweaks take effect immediately
+    st.march = MARCH;
+    st.probe = PROBE;
+    st.grade = FILM;
+    st.glow = GLOW;
+    st.flareStrength = FLARE.strength;
+    st.aurora = AURORA;
+    st.auroraPhase = this.aurora.emitPhase;
+    this.uniforms.write(st);
+
+    const encoder = this.gpu.device.createCommandEncoder({ label: 'frame' });
+    this.profiler.beginFrame();
+    const p = this.profiler;
+    const { scene, taa, embers, bloom, flare, composite } = this.passes;
+
+    scene.record(encoder, this.frameBG, p);
+    // Solids BEFORE taa: they carry exact motion vectors, so TAA can accumulate
+    // them, which is what anti-aliases their silhouettes and puts them in the bloom.
+    this.passes.rings.record(encoder, this.frameBG, p);
+    taa.record(encoder, this.frameBG, p);
+    embers.simulate(encoder, this.frameBG, p);
+    embers.record(encoder, this.frameBG, p);
+    // Into the same additive target, right after the particles.
+    this.passes.contrail.record(encoder, this.frameBG, p);
+    this.passes.railgun.record(encoder, this.frameBG, p);
+    this.passes.aurora.record(encoder, this.frameBG, p);
+    bloom.record(encoder, this.frameBG, p);
+    flare.record(encoder, this.frameBG, p);
+
+    const surface = this.gpu.context.getCurrentTexture().createView();
+    composite.record(encoder, this.frameBG, surface,
+      bloom.resultView, flare.resultView, p);
+
+    p.resolve(encoder);
+    this.gpu.device.queue.submit([encoder.finish()]);
+    p.readback();                          // fire and forget
+
+    t.swapAccum();
+    this.frameIndex++;
+    this.accumFrames++;
+    this.prevTime = time;
+  }
+
+  destroy() {
+    this.contrail.destroy();
+    this.railgun.destroy();
+    this.aurora.destroy();
+    this.passes.embers.destroy?.();
+    this.targets.destroy();
+    this.profiler.destroy();
+  }
+}
+

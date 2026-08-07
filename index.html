@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beep beep beep — gummy planetoid (WebGPU)</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; height:100%; background:#05060c; overflow:hidden; }
+  #stage { position:fixed; inset:0; }
+  canvas { display:block; width:100%; height:100%; }
+
+  .hud {
+    position:fixed; z-index:3; pointer-events:none;
+    font:11px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    letter-spacing:.03em; color:#b6aed6; text-shadow:0 1px 4px #000b;
+  }
+  #perf { right:16px; top:14px; text-align:right; white-space:pre; opacity:.75; }
+
+  #fatal {
+    position:fixed; inset:0; z-index:9; display:none; place-content:center;
+    padding:8vw; background:#0a0710; color:#ffb4b4;
+    font:13px/1.7 ui-monospace,Menlo,monospace; white-space:pre-wrap;
+  }
+  #fatal b { color:#fff; display:block; margin-bottom:.8em; font-size:15px; }
+</style>
+</head>
+<body>
+  <div id="stage"><canvas id="gpu"></canvas></div>
+  <pre class="hud" id="perf"></pre>
+
+  <div id="fatal"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
