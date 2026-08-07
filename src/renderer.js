@@ -109,6 +109,8 @@ export class Renderer {
     this.dynres = new DynamicRes();
     this._warnedNoTimestamps = false;
     this._fireSlot = -1;
+    /** Set by the freeze control: dt becomes exactly 0, so no simulation advances. */
+    this.held = false;
     // The controller is FED, not polling: one genuine sample per resolved frame — see dynres.js.
     this.profiler.onFrame = (ms) => { if (QUALITY.dynamicRes) this.dynres.sample(ms); };
     this.accumFrames = 0;
@@ -219,7 +221,15 @@ export class Renderer {
     const t = this.targets;
     if (!t.width) return;
 
-    const dt = Math.min(0.1, Math.max(1e-4, time - this.prevTime));
+    // HELD means dt is exactly zero, so nothing integrates at all.
+    //
+    // The floor of 1e-4 below is what stops a repeated clock from being a true freeze: every sim
+    // still advanced 0.1ms per frame, so the embers, contrails and ribbons crept sub-pixel forever.
+    // Being additive and drawn after the resolve they get no antialiasing, so that creep showed up
+    // as isolated pixels swinging by ~100 of 255 levels between consecutive frames of a scene that
+    // was supposed to be still - which made the frozen baseline a slow-motion scene rather than a
+    // stopped one. Nothing divides by dt except one guarded line in ship.js, so zero is safe.
+    const dt = this.held ? 0 : Math.min(0.1, Math.max(1e-4, time - this.prevTime));
 
     // DYNAMIC RESOLUTION, decided here and applied by the next frame's `resize`. Deliberately not
     // applied mid-frame: reallocating render targets between passes is the hitch this feature

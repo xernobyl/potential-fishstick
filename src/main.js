@@ -9,7 +9,7 @@ import { Gpu } from './core/device.js';
 import { Renderer, LENS_DISK } from './renderer.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
-import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, grabFrame } from './dev/benchmark.js';
+import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, finalStability, grabFrame } from './dev/benchmark.js';
 
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
@@ -90,6 +90,9 @@ async function boot() {
           if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
         }
       });
+    } else if (k === 't') {
+      e.preventDefault();
+      setFrozen(!frozen);
     } else if (k === 'g') {
       e.preventDefault();
       if (gui) { gui.destroy(); gui = null; return; }
@@ -208,6 +211,32 @@ async function boot() {
     }
   }
 
+  /**
+   * With the scene stopped DEAD - clock fixed, dt zero, so not one thing moves - does the final
+   * displayed image still change? The only probe that reads the swapchain rather than the
+   * accumulation buffer, so the only one that can see the grade, the additive layers and the grain.
+   */
+  async function still(opts) {
+    const wasRunning = running;
+    running = false;
+    try {
+      const r = await finalStability(renderer, gpu, {
+        film: TUNING.FILM, probe: TUNING.PROBE,
+      }, opts);
+      const row = (k, v) => console.log(`  ${k.padEnd(12)} mean ${v.mean.toFixed(3)}  peak `
+        + `${v.peak.toFixed(0).padStart(3)}   >4 ${v.over4.toFixed(3)}%  >16 ${v.over16.toFixed(3)}%`
+        + `  >48 ${v.over48.toFixed(4)}%`);
+      console.log(`[still] ${r.size[0]}x${r.size[1]}, scene stopped dead`);
+      row('adjacent', r.adjacent);
+      row('adjacent2', r.adjacent2);
+      row('sameParity', r.sameParity);
+      row('sameParity2', r.sameParity2);
+      return r;
+    } finally {
+      if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
+    }
+  }
+
   /** Does drawing the additive layer at render resolution change what you see, and at what cost? */
   async function additive(opts) {
     const wasRunning = running;
@@ -262,7 +291,9 @@ async function boot() {
   // A handle for poking at the scene from the console. Tuning values are read
   // per frame, so most of them can be changed live.
   window.beep = {
-    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shake, shot,
+    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shake, still, shot,
+    /** Freeze/unfreeze the clock and input; `t` does the same. Returns the new state. */
+    freeze: (on) => setFrozen(on === undefined ? !frozen : !!on),
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;
@@ -316,7 +347,12 @@ async function boot() {
     }
   });
 
-  const start = performance.now();
+  // NOT const: freezing rebases it on resume, so the scene continues from where it stopped instead
+  // of jumping forward by however long it was held.
+  let start = performance.now();
+  let frozen = false;
+  let frozenTime = 0;
+  let frozenInput = null;
   let lastHud = 0;
   let frames = 0;
   let fps = 0;
@@ -324,12 +360,48 @@ async function boot() {
   // panel can `.listen()` to it without knowing anything about this loop.
   const live = { fps: 0 };
 
+  /**
+   * Hold or release the clock and the input.
+   *
+   * There for the question "does it still shimmer when NOTHING is moving?", which no amount of
+   * staring at a moving scene can answer: with the world in motion, real motion and pipeline
+   * shimmer look the same. `beep.shake()` measures the same state as its `frozen` condition; this is
+   * the version you can look at.
+   */
+  function setFrozen(on) {
+    if (on === frozen) return;
+    frozen = on;
+    // Not just the clock: dt is forced to zero too, or the particle sims keep creeping on the
+    // clamped minimum step and the scene is in slow motion rather than stopped.
+    renderer.held = frozen;
+    if (frozen) {
+      frozenTime = (performance.now() - start) / 1000;
+      // A DEEP snapshot: `input.state()` returns one shared object that it refreshes in place, so
+      // keeping the reference would keep tracking the live pointer - the opposite of frozen.
+      const live = input.state(canvas);
+      frozenInput = { ...live, cmd: { ...live.cmd } };
+    } else {
+      start = performance.now() - frozenTime * 1000;
+    }
+    // The accumulation is discarded either way: it was built under a different motion regime, and
+    // letting it carry over would show a settling transient that belongs to the transition rather
+    // than to whichever state is being judged.
+    renderer.resetHistory();
+    return frozen;
+  }
+
   function loop(now) {
     if (!running) return;
-    const time = (now - start) / 1000;
+    // FROZEN holds the clock AND the input. The clock alone stops the world - the camera drift, the
+    // rings, the pulse, the orbits and the ship all derive from it, and dt falls to zero - but the
+    // arcball reads the pointer directly, so without holding the input too, a mouse anywhere near
+    // the canvas would still move the camera. Nothing in the scene moves in this state, which makes
+    // it the state to look at when asking whether the PIPELINE is stable: everything left is the
+    // temporal jitter and the per-frame dither.
+    const time = frozen ? frozenTime : (now - start) / 1000;
 
     try {
-      renderer.frame(time, input.state(canvas));
+      renderer.frame(time, frozen ? frozenInput : input.state(canvas));
     } catch (e) {
       fatal('Render failed.', e.message);
       return;

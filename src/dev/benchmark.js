@@ -1621,3 +1621,111 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
   }
   return out;
 }
+
+/**
+ * Stability of the FINAL DISPLAYED IMAGE, with the scene stopped dead.
+ *
+ * Every other probe here reads the accumulation buffer, which is upstream of the composite - so
+ * none of them can see the grade, the bloom, the flares, the additive layers or the grain, and for a
+ * complaint phrased as "the picture shimmers" that is most of the pipeline missing. This reads the
+ * swapchain, the way record.js does, so what it measures is what a viewer sees.
+ *
+ * IT STOPS EVERYTHING, which no earlier probe did either:
+ *   - the clock is fixed, so the camera, rings, pulse, orbits and ship do not move;
+ *   - `renderer.held` forces dt to exactly 0, so the particle and ribbon sims do not integrate.
+ *     Without that, dt's 1e-4 floor advanced them 0.1ms per frame forever - a slow-motion scene
+ *     rather than a stopped one.
+ * What is left varying is the temporal jitter and the per-frame dither, which is precisely the
+ * question: with nothing moving, is the PIPELINE still?
+ *
+ * MUST OWN THE LOOP. Measured from the console while the app's own loop was running, the numbers
+ * came out 17x worse, because frames from the live clock landed between the two captures. The
+ * `beep.still()` wrapper stops the loop first, exactly as the other instruments do; this function
+ * assumes that has happened.
+ *
+ * Reports a DISTRIBUTION, not a mean. The mean frame-to-frame delta here is a third of one 255-level
+ * step, which sounds like nothing and is - the shimmer is a small number of pixels swinging by 100
+ * levels or more, and only counts past a threshold show that.
+ */
+export async function finalStability(renderer, gpu, knobs, opts = {}) {
+  const { film, probe } = knobs;
+  const settle = opts.settle ?? 45;
+  const pairs = opts.pairs ?? 3;
+  const time = opts.time ?? 7.0;
+  const grain = opts.grain ?? false;      // OFF by default: real grain is meant to move
+  const input = benchInput(opts.cmd);
+  await ensureSize(renderer);
+
+  const canvas = gpu.canvas;
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w < 64 || h < 64) throw new Error(`canvas has no usable size (${w}x${h})`);
+  const bpr = Math.ceil(w * 4 / 256) * 256;
+  const buf = gpu.device.createBuffer({
+    label: 'still-readback',
+    size: bpr * h,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  const saved = { grain: film.grain, held: renderer.held, zeroJitter: probe.zeroJitter };
+  if (!grain) film.grain = 0;
+  renderer.held = true;
+  if (opts.zeroJitter !== undefined) probe.zeroJitter = opts.zeroJitter ? 1 : 0;
+
+  const grab = async () => {
+    renderer.frame(time, input);
+    const enc = gpu.device.createCommandEncoder({ label: 'still-copy' });
+    enc.copyTextureToBuffer({ texture: gpu.context.getCurrentTexture() },
+                            { buffer: buf, bytesPerRow: bpr }, { width: w, height: h });
+    gpu.device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const bytes = new Uint8Array(buf.getMappedRange().slice(0));
+    buf.unmap();
+    return bytes;
+  };
+
+  try {
+    renderer.resetHistory();
+    for (let i = 0; i < settle; i++) renderer.frame(time, input);
+
+    // FOUR consecutive frames, compared BOTH ways. With every per-frame input disabled and the scene
+    // stopped, anything left has to be structural, and the ping-pong is the structure: the
+    // accumulation, the embers and the bloom all alternate buffers by frame parity. A difference
+    // between ADJACENT frames that disappears between SAME-PARITY frames is a period-2 alternation -
+    // two images being shown in turn - which reads as constant shimmer at half the frame rate and
+    // cannot be explained by any noise source, because there is no noise left.
+    const f = [await grab(), await grab(), await grab(), await grab()];
+    const compare = (a, b) => {
+      let over4 = 0, over16 = 0, over48 = 0, peak = 0, sum = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * bpr + x * 4;
+          const la = (a[i] + a[i + 1] + a[i + 2]) / 3;
+          const lb = (b[i] + b[i + 1] + b[i + 2]) / 3;
+          const d = Math.abs(la - lb);
+          sum += d;
+          if (d > peak) peak = d;
+          if (d > 4) over4++;
+          if (d > 16) over16++;
+          if (d > 48) over48++;
+        }
+      }
+      const px = w * h;
+      return { mean: sum / px, peak, over4: (over4 / px) * 100,
+               over16: (over16 / px) * 100, over48: (over48 / px) * 100 };
+    };
+    return {
+      size: [w, h],
+      adjacent: compare(f[0], f[1]),
+      adjacent2: compare(f[1], f[2]),
+      sameParity: compare(f[0], f[2]),
+      sameParity2: compare(f[1], f[3]),
+    };
+  } finally {
+    buf.destroy();
+    film.grain = saved.grain;
+    renderer.held = saved.held;
+    probe.zeroJitter = saved.zeroJitter;
+    renderer.resetHistory();
+  }
+}
