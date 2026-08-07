@@ -108,7 +108,7 @@ export class Renderer {
     // it contains; and adding keys to an object after construction changes its shape, which
     // is exactly the per-frame deoptimisation the scratch objects above exist to avoid.
     this._state = {
-      camera: null, time: 0, viewMode: 0, width: 0, height: 0,
+      camera: null, time: 0, viewMode: 0, focusDist: 0, width: 0, height: 0,
       accumWidth: 0, accumHeight: 0, addWidth: 0, addHeight: 0,
       beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
       historyValid: false, dragging: false, exposure: 0,
@@ -277,6 +277,8 @@ export class Renderer {
     if (PROBE.zeroJitter) { this._jitter[0] = 0; this._jitter[1] = 0; }
 
     st.camera = this.camera;
+
+    st.focusDist = this.camera.focusDistance();
 
     st.viewMode = this.debugView >= 0 ? VIEWS[this.debugView].mode : 0;
     st.time = time;

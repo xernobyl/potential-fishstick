@@ -20,6 +20,12 @@ import { whiteBalanceGains } from '../scene/tuning.js';
  *    frame, so a single write of the whole block beats several small ones.
  */
 
+// REPURPOSING A SLOT MEANS GREPPING ITS READERS FIRST. Removing depth of field freed `camRight.w`
+// (the aperture) and `camUp.w` (the focus distance), and both were quietly still in use: tilecull
+// inflated its cull margin by the aperture, and the composite's spherochromatism keyed off the focus
+// distance. Neither failed loudly - one silently changed the culling whenever the buffer viewer was
+// open, the other degenerated to a constant colour rim on every highlight. A slot is not free just
+// because the feature that named it is gone.
 export const FRAME_FLOATS = 164;                // 3 mat4x4 + 29 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
@@ -28,8 +34,8 @@ const O = {
   viewProj: 0,      // world -> clip, this frame
   invViewProj: 16,  // clip  -> world, this frame (ray generation)
   prevViewProj: 32, // world -> clip, previous frame (reprojection)
-  camRight: 48,     // xyz right,      w buffer-viewer display mode
-  camUp: 52,        // xyz up,         w spare
+  camRight: 48,     // xyz right,      w spare (explicitly zeroed)
+  camUp: 52,        // xyz up,         w focus distance (composite's spherochromatism)
   camFwd: 56,       // xyz forward,    w focal length (half-diagonal units)
   camPos: 60,       // xyz position,   w time
   res: 64,          // xy size,        zw 1/size
@@ -82,7 +88,7 @@ const O = {
   // collide loudly, it silently overwrites the atmosphere's sigma with a red gain. The WGSL struct
   // below is what caught it, because a member has to exist in the struct at that offset and the
   // order there is the layout. Anything added here goes at the END and grows FRAME_FLOATS.
-  balance: 160,     // xyz linear per-channel gains, w spare
+  balance: 160,     // xyz linear per-channel gains, w buffer-viewer display mode
 };
 
 export class FrameUniforms {
@@ -113,9 +119,12 @@ export class FrameUniforms {
     // it in world space: the thin-lens offset (which shifts the ray ORIGIN, not
     // its projection) and the ember billboards' quad expansion.
     a[O.camRight] = cam.right[0]; a[O.camRight + 1] = cam.right[1]; a[O.camRight + 2] = cam.right[2];
-    a[O.camRight + 3] = s.viewMode;
+    // Explicitly zeroed rather than left alone: a spare slot still holding whatever a removed
+    // feature put there is how that feature keeps half-working.
+    a[O.camRight + 3] = 0.0;
 
     a[O.camUp] = cam.up[0]; a[O.camUp + 1] = cam.up[1]; a[O.camUp + 2] = cam.up[2];
+    a[O.camUp + 3] = s.focusDist;
 
     a[O.camFwd] = cam.fwd[0]; a[O.camFwd + 1] = cam.fwd[1]; a[O.camFwd + 2] = cam.fwd[2];
     // The focal length, in the same half-diagonal units as the shared screen space — so
@@ -197,6 +206,7 @@ export class FrameUniforms {
       this._wb = whiteBalanceGains(gr.temperature, gr.sceneTemperature);
     }
     a[O.balance] = this._wb[0]; a[O.balance + 1] = this._wb[1]; a[O.balance + 2] = this._wb[2];
+    a[O.balance + 3] = s.viewMode;
 
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;

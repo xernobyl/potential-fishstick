@@ -6,8 +6,9 @@
 // channels packed beside it, and the accumulation's alpha is a distance tag. Showing any of them
 // with the same mapping would make three of the four unreadable.
 //
-// The mode arrives in `camRight.w`, a uniform slot that fell spare when the thin lens was removed,
-// so this needs no buffer of its own.
+// The mode arrives in `balance.w`. It used to ride in `camRight.w`, which was NOT free: tilecull still
+// read that slot as the aperture it once was, so opening the buffer viewer changed the tile culling.
+// An inspector that alters what it inspects is worse than no inspector.
 //
 // UV rather than pixel indexing throughout: these buffers are at three different resolutions
 // (render, display, and the additive layer's own), and uv is the one addressing that does not care.
@@ -27,7 +28,7 @@ const MODE_ALPHA  : i32 = 3;   // alpha alone, as grey
 @fragment
 fn fs(@location(0) uv : vec2f) -> @location(0) vec4f {
   let s = textureSampleLevel(srcTex, srcSamp, uv, 0.0);
-  let mode = i32(frame.camRight.w + 0.5);
+  let mode = i32(frame.balance.w + 0.5);
   var c = vec3f(0.0);
 
   if (mode == MODE_MOTION) {

@@ -752,6 +752,20 @@ export const SUNS = {
 };
 
 export const CAMERA = {
+  /**
+   * How far IN FRONT of the subject the lens focuses, in world units.
+   *
+   * There is no depth of field any more - see the note below - and this is not a leftover. The
+   * composite's spherochromatism needs a focal plane to know which side of focus a highlight is on:
+   * the colour rim flips magenta-in-front to green-behind, and that flip is the whole effect. With
+   * no focus distance the term degenerates to a constant green rim everywhere, which is precisely
+   * the lateral-chromatic-aberration look its own comment calls a defect.
+   *
+   * Removing the thin lens took this with it, and nothing noticed for several commits because the
+   * failure is a plausible-looking image rather than an error.
+   */
+  focusPull: 1.5,
+
   distance: 9.4,
   /**
    * Field of view across the screen DIAGONAL, in degrees.

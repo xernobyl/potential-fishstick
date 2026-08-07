@@ -219,6 +219,12 @@ export class Camera {
     }
   }
 
+  /** World-space focus distance. Consumed by the composite's spherochromatism, not by any lens:
+   *  the colour rim it draws flips sign across the focal plane, so it needs to know where that is. */
+  focusDistance() {
+    return Math.max(this.distance - CAMERA.focusPull, 0.5);
+  }
+
   /**
    * Where a world DIRECTION lands in the shared screen space (half-diagonal 1,
    * y up), for anchoring the lens flares. Returns null when it is behind the

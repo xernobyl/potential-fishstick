@@ -26,9 +26,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (gid.x >= tiles.x || gid.y >= tiles.y) { return; }
 
   let bound = bodyBound();
-  // Inflate a little: the aperture shifts the ray origin, and a tile's own
-  // angular extent means a corner ray can graze what a centre ray misses.
-  let margin = bound * 0.06 + frame.camRight.w * 2.0;
+  // Inflate a little: a tile's own angular extent means a corner ray can graze what a centre ray
+  // misses. There used to be an aperture term here as well, and it outlived the aperture - see the
+  // note in uniforms.js on repurposing slots.
+  let margin = bound * 0.06;
   let r = bound + margin;
 
   var visible = false;
