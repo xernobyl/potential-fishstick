@@ -99,8 +99,11 @@ export class SolidMeshPass {
    * looks wrong shaded. A dedicated flat-colour wire shader would have hidden that, which is the
    * opposite of what a debug view is for.
    *
-   * Depth writes OFF and the test relaxed to `greater-equal`: the lines sit exactly on the surface they
-   * came from, so the strict `greater` of the solid pass would z-fight them away almost everywhere.
+   * Depth writes OFF, and since no wireframe pass writes depth either, the buffer stays at its clear
+   * value and every line passes the `greater-equal` test. The view is therefore X-RAY: you see the far
+   * side of a hoop through the near side. That is deliberate and it is most of the value — a wireframe
+   * you cannot see through tells you about the silhouette, which the shaded view already showed; one
+   * you can see through tells you about the tessellation, which nothing else does.
    */
   async #wirePipelineFor(frameBGL, defines) {
     if (this.wirePipeline) return this.wirePipeline;

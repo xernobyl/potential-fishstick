@@ -10,10 +10,8 @@
 // arithmetic got for free and a buffer could get wrong: unit normals, no degenerate triangles, a
 // closed sweep with no seam, and consistent winding.
 
-import { rectTube, revolveProfile, concatMeshes, interleave, MESH_FIELDS, MESH_STRIDE_FLOATS }
+import { rectTube, revolveProfile, box, concatMeshes, interleave, MESH_FIELDS, MESH_STRIDE_FLOATS }
   from '../src/scene/meshgen.js';
-import { extractFrustum, sphereVisible } from '../src/core/frustum.js';
-import * as m4 from '../src/scene/mat4.js';
 
 const TAU = Math.PI * 2;
 let failed = 0;
@@ -223,5 +221,39 @@ const tri = revolveProfile({
 });
 check(tri.positions.length / 3 === 3 * (8 + 1) * 2, 'revolveProfile takes an arbitrary profile',
       `${tri.positions.length / 3} vertices for a 3-edge profile`);
+
+// ---- box: flat faces, outward winding ----
+//
+// The winding is the whole test. Back-face culling makes a reversed box INVISIBLE rather than wrong,
+// which is the failure mode that survives a screenshot review — and the ring generator shipped exactly
+// that bug once, on all 2304 of its triangles, hidden by `cullMode: 'none'`.
+{
+  const b = box([2, 3, 4]);
+  check(b.positions.length / 3 === 24, 'a box has 24 vertices, not 8 — three normals meet at a corner',
+        `${b.positions.length / 3} vertices`);
+
+  let mismatched = 0;
+  let area = 0;
+  for (let t = 0; t < b.indices.length / 3; t++) {
+    const [i0, i1, i2] = [0, 1, 2].map((k) => b.indices[t * 3 + k]);
+    const at = (j) => [0, 1, 2].map((k) => b.positions[j * 3 + k]);
+    const [p0, p1, p2] = [at(i0), at(i1), at(i2)];
+    const e1 = p1.map((x, k) => x - p0[k]);
+    const e2 = p2.map((x, k) => x - p0[k]);
+    // Geometric normal from the winding: it must agree with the vertex normal, or the triangle faces in.
+    const g = [e1[1] * e2[2] - e1[2] * e2[1],
+               e1[2] * e2[0] - e1[0] * e2[2],
+               e1[0] * e2[1] - e1[1] * e2[0]];
+    const len = Math.hypot(...g);
+    area += len / 2;
+    const nv = [0, 1, 2].map((k) => b.normals[i0 * 3 + k]);
+    if (g.reduce((acc, x, k) => acc + (x / len) * nv[k], 0) < 0.999) mismatched++;
+  }
+  check(mismatched === 0, 'every box triangle is wound outward, matching its own vertex normal',
+        `${mismatched} facing the wrong way`);
+  // 2*(4*6 + 4*8 + 6*8) for half-extents 2,3,4 — exact, so a scaled or duplicated face shows up here.
+  check(Math.abs(area - 208) < 1e-9, 'and the surface area is exactly right',
+        `${area.toFixed(4)} vs 208`);
+}
 
 process.exit(failed === 0 ? 0 : 1);
