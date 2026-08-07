@@ -368,6 +368,21 @@ the method, not of a knob that can be turned off.
   the pulse's per-frame displacement is simply below this field's noise floor, and the 2.5x gap is
   not reachable this way.
 
+- **One glow mechanism instead of two.** Right now a star's halo is analytic and in-shader
+  (`exp(-ang / (sz * 1.4))` in `starField`, upstream of the resolve) while the bloom pyramid and the
+  lens flare add a second, independent glow downstream. Making the star a bright dot and letting post
+  do all the glowing would be the cleaner architecture, and it has a real prize attached: with no
+  wide analytic tail, `starField` would only need the NEAREST lattice candidate, so the candidate
+  count could drop from 9 back to 5 on every background pixel — which is where it started, before the
+  truncated search turned out to be what was biting wedges out of the glow.
+
+  Tested, and it does not work as-is: with the analytic term zeroed the stars become bare dots with
+  **no halo at all**. Bloom is not picking them up, which is the familiar failure — it thresholds and
+  then downsamples, and a one-to-four-pixel bright feature loses most of its energy in the reduction.
+  So the prerequisite is a prefilter that preserves small bright features (an energy-conserving
+  reduction, and a threshold low enough that a star clears it) rather than anything about the stars.
+  Worth doing as part of a bloom pass rather than a star pass.
+
 - **Depth of field, as a deterministic gather.** Fully designed in `CAMERA` in `tuning.js`, not built:
   circle of confusion from the thin-lens relation, read off the depth already in the accumulation
   buffer's alpha; a fixed golden-angle disk of 16-32 taps scaled by it; a per-tap reach test so a
