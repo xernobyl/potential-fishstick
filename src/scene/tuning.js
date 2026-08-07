@@ -1202,6 +1202,21 @@ export const FILM = {
   /** The colour that floor is lifted toward. A look choice, not a level — stays a const. */
   black: [0.026, 0.024, 0.030],
   /**
+   * TUNGSTEN BALANCE, the one thing about 5251 that is not a curve. The stock is balanced for
+   * 3200K: its blue layer carries the extra sensitivity that tungsten's blue-deficient spectrum
+   * needs, so a whiter source over-exposes that layer and the frame goes cold. Shooting 50T in
+   * daylight without an 85B on the lens is exactly this, and it is why period daylight exteriors
+   * on tungsten stock read icy.
+   *
+   * Von Kries channel gains for a D65-referred scene adapted to a 3200K sensor balance,
+   * normalised on green so the exposure does not move with the amount. A sensor property, so the
+   * composite applies it in LINEAR light ahead of the tone curve, not in the print split-tone.
+   */
+  balance: [0.87, 1.0, 1.42],
+  /** How much of it. 1 = uncorrected 50T under this sun, 0 = an 85B on the lens. Both are real
+   *  choices; this is the look the stock has when nobody filters for it. */
+  balanceAmount: 1.0,
+  /**
    * Contrast about a mid pivot, applied AFTER the display transfer.
    *
    * Display-referred on purpose. Contrast in linear light is just exposure and white point
@@ -1425,6 +1440,8 @@ export function wgslDefines() {
     // film
     // Only the look CONSTANTS remain compile-time; every level is a uniform now.
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
+    FILM_BALANCE: `vec3f(${FILM.balance.map(f).join(', ')})`,
+    FILM_BALANCE_AMT: f(FILM.balanceAmount),
     FILM_PIVOT: FILM.pivot,
     // tiling
     TILE: int(QUALITY.tile),
