@@ -576,6 +576,23 @@ the full reasoning; these are the ones worth knowing up front:
   It also moved into linear light, before the tone curve. Vignetting is an exposure falloff at the
   sensor, not a darkening of the print; applied after the display transfer the corners were scaled
   in a space the curve had already compressed, so they never rolled through the toe.
+- **Three defects the re-review turned up, all of the same shape: a quantity measured from the
+  wrong origin, or with an approximation where an identity was needed.**
+  The VIGNETTE measured its radius from the middle of the frame rather than from the optical axis
+  — the identical mistake the lens flare's ghosts were making, sitting untouched in a second
+  place. This camera composes off-centre, so the axis is 0.039 half-diagonals away, which
+  displaces the falloff by about 58 device pixels and leaves one corner ~15% darker than the one
+  opposite. Both read it from the same `LENS_AXIS` constant now.
+  The POLAR BOUND took its equatorial magnitude as `sqrt(1 - lp.z^2)` with `lp.z` clamped. Both
+  are approximations of the thing Cauchy-Schwarz actually needs, and `rot * dir` leaves |lp| a few
+  ulps off unity — so the "upper" bound could come out a hair low, which is the one direction that
+  drops a sphere and seams the surface. It uses `length(lp.xy)` and the raw `lp.z` now, which is
+  both provably safe for any input and slightly tighter. The check was extended to feed it
+  deliberately non-unit queries; worst slack +3.3e-16.
+  And `QUALITY.additiveDisplayRes` tied itself to the ACCUMULATION width rather than the display
+  width, which made it a silent no-op whenever upsampling was off — even though the composite
+  still runs at display resolution there and still upscales the layer. Verified across all four
+  combinations of the two flags.
 - **`converge` read its patch from the wrong grid, and it invalidated a published result.** The
   readback copies from the ACCUMULATION buffer but was handed `targets.width` as the texture size,
   and `FrameSampler.record` centres its patch using the size it is given. With upsampling on those

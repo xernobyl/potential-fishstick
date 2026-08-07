@@ -66,7 +66,11 @@ export class Targets {
     // The TAAU flag changes the accumulation size without changing the render size, so it
     // has to participate in this test or toggling it would silently keep the old buffers.
     const wantAccumW = QUALITY.taau ? displayW : w;
-    const wantAddW = QUALITY.additiveDisplayRes ? (QUALITY.taau ? displayW : w) : w;
+    // DISPLAY width, not the accumulation width. Tying it to the latter made the flag a no-op
+    // whenever upsampling was off — the composite still runs at display resolution and still
+    // upscales this layer, so there is a real difference to be had at renderScale 0.5 with
+    // `taau` false, and the flag was quietly declining to take it.
+    const wantAddW = QUALITY.additiveDisplayRes ? displayW : w;
     if (w === this.width && h === this.height && wantAccumW === this.accumWidth
         && wantAddW === this.addWidth) return false;
 
@@ -142,8 +146,8 @@ export class Targets {
     //
     // COPY_SRC for the same reason the bloom pyramid has it: this layer is the one the temporal
     // filter never sees, so it is the one whose stability has to be MEASURED rather than assumed.
-    this.addWidth = QUALITY.additiveDisplayRes ? aw : w;
-    this.addHeight = QUALITY.additiveDisplayRes ? ah : h;
+    this.addWidth = QUALITY.additiveDisplayRes ? displayW : w;
+    this.addHeight = QUALITY.additiveDisplayRes ? displayH : h;
     this.ember = this.own(tex(d, 'ember', this.addWidth, this.addHeight,
       U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC));
 
