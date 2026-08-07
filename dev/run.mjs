@@ -21,6 +21,7 @@ const checks = [
   ['prefilter', 'the bloom prefilter sees a point highlight the same wherever it lands'],
   ['walker', 'aurora walkers stay in their shell and never turn sharply'],
   ['continuity', 'the aurora ribbon\'s parameterisation does not step on emission'],
+  ['meshgen', 'the generated ring mesh is the same surface as the arithmetic it replaces'],
 ];
 
 let failed = 0;
