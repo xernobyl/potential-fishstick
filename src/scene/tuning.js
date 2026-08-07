@@ -760,7 +760,31 @@ export const CAMERA = {
    *  parallax the accumulation fails to average — i.e. of apparent camera shake.
    *  Kept modest on purpose; see LENS_DISK in renderer.js for the other half of
    *  that fix, which is the sample ORDER rather than its size. */
-  aperture: 0.036,
+  /**
+   * OFF, and this is the one setting that was making the picture crawl.
+   *
+   * A thin-lens aperture is sampled ONE point per frame and amortised over the temporal history, so
+   * every frame renders from a slightly different viewpoint. That is fine in principle - it converges
+   * to a defocus blur - except that the resolve's variance clip rebuilds its box from each frame's
+   * neighbourhood and pulls the history back toward the newest sample, so it never settles. Measured
+   * on a scene stopped dead (beep.still(), 16-frame span, share of pixels moving by more than 4 of
+   * 255 levels between adjacent frames):
+   *
+   *   aperture 0.036, pixel jitter on   0.457%     <- shipped until now
+   *   aperture 0,     pixel jitter on   0.107%
+   *   aperture 0,     pixel jitter off  0.000%     bit-exact
+   *
+   * So the lens carried about 77% of it, with the pixel jitter - which is the antialiasing and has
+   * to stay - accounting for the rest. None of the alternatives worked: more history (weightMax 6 ->
+   * 200, blend 0.15 -> 0.04) does nothing because the clip is the limiter, not the window; the lens
+   * cycle length is worth 5% (12 -> 6); and turning temporal upsampling off makes it WORSE, 0.702%,
+   * because native resolution is sharper with four times the independent samples.
+   *
+   * Set it back to 0.036 for the bokeh - it is a live slider in the panel under `g`, and the flares
+   * and glow do not depend on it. Keeping both the defocus and the stillness needs a real gather
+   * blur that takes several lens taps in ONE frame, instead of borrowing them from previous frames.
+   */
+  aperture: 0.0,
   focusPull: 1.5,              // focus this far in front of the body centre
   atmosphereR: 5.5,
 

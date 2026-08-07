@@ -1696,13 +1696,15 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
     renderer.resetHistory();
     for (let i = 0; i < settle; i++) renderer.frame(time, input);
 
-    // FOUR consecutive frames, compared BOTH ways. With every per-frame input disabled and the scene
-    // stopped, anything left has to be structural, and the ping-pong is the structure: the
-    // accumulation, the embers and the bloom all alternate buffers by frame parity. A difference
-    // between ADJACENT frames that disappears between SAME-PARITY frames is a period-2 alternation -
-    // two images being shown in turn - which reads as constant shimmer at half the frame rate and
-    // cannot be explained by any noise source, because there is no noise left.
-    const f = [await grab(), await grab(), await grab(), await grab()];
+    // A WHOLE CYCLE, not four frames. The lens offset walks a repeating set (LENS_CYCLE) and the
+    // pixel jitter a low-discrepancy sequence, so the difference between two adjacent frames depends
+    // on WHERE in those cycles the capture landed. With four frames that phase is luck, and three
+    // runs of the same build read 0.57%, 0.20% and 0.41% - a spread wide enough to invent a 46%
+    // improvement that was not there. Averaging every adjacent pair over a span longer than any
+    // cycle makes it phase-independent and repeatable.
+    const span = opts.frames ?? 16;
+    const f = [];
+    for (let i = 0; i < span; i++) f.push(await grab());
     const compare = (a, b) => {
       let over4 = 0, over16 = 0, over48 = 0, peak = 0, sum = 0;
       for (let y = 0; y < h; y++) {
@@ -1722,12 +1724,24 @@ export async function finalStability(renderer, gpu, knobs, opts = {}) {
       return { mean: sum / px, peak, over4: (over4 / px) * 100,
                over16: (over16 / px) * 100, over48: (over48 / px) * 100 };
     };
+    // Averaged over every adjacent pair, and the worst single pair kept separately: a wobble that is
+    // gentle on average but has one hard step in the cycle looks like a tick, not a shimmer.
+    const mean = (rows, k) => rows.reduce((a, r) => a + r[k], 0) / rows.length;
+    const worst = (rows, k) => rows.reduce((a, r) => Math.max(a, r[k]), 0);
+    const adj = [];
+    for (let i = 1; i < f.length; i++) adj.push(compare(f[i - 1], f[i]));
+    // Same parity, for the period-2 test the ping-pong would produce.
+    const par = [];
+    for (let i = 2; i < f.length; i++) par.push(compare(f[i - 2], f[i]));
     return {
       size: [w, h],
-      adjacent: compare(f[0], f[1]),
-      adjacent2: compare(f[1], f[2]),
-      sameParity: compare(f[0], f[2]),
-      sameParity2: compare(f[1], f[3]),
+      frames: f.length,
+      adjacent: { mean: mean(adj, 'mean'), over4: mean(adj, 'over4'), over16: mean(adj, 'over16'),
+                  over48: mean(adj, 'over48'), peak: worst(adj, 'peak'),
+                  worstOver4: worst(adj, 'over4') },
+      sameParity: { mean: mean(par, 'mean'), over4: mean(par, 'over4'), over16: mean(par, 'over16'),
+                    over48: mean(par, 'over48'), peak: worst(par, 'peak'),
+                    worstOver4: worst(par, 'over4') },
     };
   } finally {
     buf.destroy();

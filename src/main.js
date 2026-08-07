@@ -96,6 +96,13 @@ async function boot() {
     } else if (k === 'u') {
       e.preventDefault();
       setTaau(!TUNING.QUALITY.taau);
+    } else if (k === 'p') {
+      e.preventDefault();
+      // PAUSE: identical hold to `t`, but the accumulation carries over instead of being reset.
+      setFrozen(!frozen, true);
+    } else if (k === 'j') {
+      e.preventDefault();
+      setJitter(!jitterOn);
     } else if (k === 'g') {
       e.preventDefault();
       if (gui) { gui.destroy(); gui = null; return; }
@@ -226,14 +233,12 @@ async function boot() {
       const r = await finalStability(renderer, gpu, {
         film: TUNING.FILM, probe: TUNING.PROBE, camera: TUNING.CAMERA,
       }, opts);
-      const row = (k, v) => console.log(`  ${k.padEnd(12)} mean ${v.mean.toFixed(3)}  peak `
-        + `${v.peak.toFixed(0).padStart(3)}   >4 ${v.over4.toFixed(3)}%  >16 ${v.over16.toFixed(3)}%`
-        + `  >48 ${v.over48.toFixed(4)}%`);
-      console.log(`[still] ${r.size[0]}x${r.size[1]}, scene stopped dead`);
+      const row = (k, v) => console.log(`  ${k.padEnd(11)} mean ${v.mean.toFixed(3)}  peak `
+        + `${v.peak.toFixed(0).padStart(3)}   >4 ${v.over4.toFixed(3)}% (worst pair `
+        + `${v.worstOver4.toFixed(3)}%)  >16 ${v.over16.toFixed(3)}%  >48 ${v.over48.toFixed(4)}%`);
+      console.log(`[still] ${r.size[0]}x${r.size[1]}, scene stopped dead, ${r.frames} frames`);
       row('adjacent', r.adjacent);
-      row('adjacent2', r.adjacent2);
       row('sameParity', r.sameParity);
-      row('sameParity2', r.sameParity2);
       return r;
     } finally {
       if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
@@ -295,10 +300,14 @@ async function boot() {
   // per frame, so most of them can be changed live.
   window.beep = {
     renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shake, still, shot,
-    /** Freeze/unfreeze the clock and input; `t` does the same. Returns the new state. */
+    /** Freeze/unfreeze the clock and input, discarding the history; `t` does the same. */
     freeze: (on) => setFrozen(on === undefined ? !frozen : !!on),
+    /** The same hold, KEEPING the accumulated image; `p` does the same. */
+    pause: (on) => setFrozen(on === undefined ? !frozen : !!on, true),
     /** Temporal upsampling on/off, dropping to 1:1 when off; `u` does the same. */
     taau: (on) => setTaau(on === undefined ? !TUNING.QUALITY.taau : !!on),
+    /** Both per-frame random sources - pixel jitter AND lens - on/off; `j` does the same. */
+    jitter: (on) => setJitter(on === undefined ? !jitterOn : !!on),
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;
@@ -360,6 +369,8 @@ async function boot() {
   let frozenInput = null;
   /** Render scale to restore when upsampling is switched back on. */
   let taauScale = null;
+  let jitterOn = true;
+  let apertureSaved = null;
   let lastHud = 0;
   let frames = 0;
   let fps = 0;
@@ -375,8 +386,8 @@ async function boot() {
    * shimmer look the same. `beep.shake()` measures the same state as its `frozen` condition; this is
    * the version you can look at.
    */
-  function setFrozen(on) {
-    if (on === frozen) return;
+  function setFrozen(on, keepHistory = false) {
+    if (on === frozen) return frozen;
     frozen = on;
     // Not just the clock: dt is forced to zero too, or the particle sims keep creeping on the
     // clamped minimum step and the scene is in slow motion rather than stopped.
@@ -390,10 +401,14 @@ async function boot() {
     } else {
       start = performance.now() - frozenTime * 1000;
     }
-    // The accumulation is discarded either way: it was built under a different motion regime, and
+    // The accumulation is discarded by default: it was built under a different motion regime, and
     // letting it carry over would show a settling transient that belongs to the transition rather
     // than to whichever state is being judged.
-    renderer.resetHistory();
+    //
+    // `keepHistory` is the other thing you might want - PAUSE rather than freeze. It stops the scene
+    // without throwing the converged image away, so what you are looking at is the picture as it
+    // already was rather than one rebuilding itself from scratch. Same hold, different question.
+    if (!keepHistory) renderer.resetHistory();
     return frozen;
   }
 
@@ -426,6 +441,36 @@ async function boot() {
     renderer.resetHistory();
     console.log(`[taau] ${on ? 'on' : 'off'}, renderScale ${Q.renderScale}`);
     return Q.taau;
+  }
+
+  /**
+   * Every per-frame random source off, in one key.
+   *
+   * There are TWO, and they are easy to conflate because they arrive in the same uniform:
+   *   frame.jitter.xy  the PIXEL jitter - TAA's sub-pixel offset, which is what antialiases;
+   *   frame.jitter.zw  the LENS offset - depth of field, which resamples the aperture every frame
+   *                    and moves the whole image, background stars included.
+   * Neither belongs to temporal UPSAMPLING, so `u` does not touch either of them. Measured with
+   * beep.still(): the lens carries about three quarters of a frozen scene's movement and the pixel
+   * jitter the rest; with both off the frame is bit-exact, WITH upsampling still enabled.
+   *
+   * Off means no antialiasing and no defocus, so this is a diagnostic, not a setting.
+   */
+  function setJitter(on) {
+    if (on === jitterOn) return jitterOn;
+    jitterOn = on;
+    TUNING.PROBE.zeroJitter = on ? 0 : 1;
+    if (!on) {
+      apertureSaved = TUNING.CAMERA.aperture;
+      TUNING.CAMERA.aperture = 0;
+    } else if (apertureSaved !== null) {
+      TUNING.CAMERA.aperture = apertureSaved;
+      apertureSaved = null;
+    }
+    renderer.resetHistory();
+    console.log(`[jitter] ${on ? 'on' : 'off'} - pixel jitter ${on ? 'on' : 'off'}, `
+      + `aperture ${TUNING.CAMERA.aperture}`);
+    return jitterOn;
   }
 
   function loop(now) {
