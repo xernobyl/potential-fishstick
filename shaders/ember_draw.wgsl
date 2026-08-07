@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
+//!include "volumetric.wgsl"
 
 struct Ember {
   pos   : vec3f,
@@ -31,6 +32,7 @@ struct Ember {
 @group(1) @binding(4) var sceneTex : texture_2d<f32>;   // alpha = linear depth tag
 
 struct VOut {
+  @location(15) atmo : vec3f,
   @builtin(position) pos : vec4f,
   @location(0) uv    : vec2f,
   @location(1) tint  : vec3f,
@@ -67,6 +69,7 @@ fn vs(@builtin(vertex_index) vi : u32,
     out.tint = vec3f(0.0);
     out.alpha = 0.0;
     out.viewZ = 0.0;
+    out.atmo = vec3f(1.0);
     return out;
   }
 
@@ -75,6 +78,11 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.tint = e.tint;
   out.alpha = e.alpha;
   out.viewZ = length(rel);
+  // ATMOSPHERE IN FRONT OF THIS, as extinction only. The motes are born just above the surface,
+  // deep inside the shell, and without this they read as if the air were not there. Per VERTEX
+  // rather than per fragment: this pass overdraws heavily and the integral is smooth. See
+  // volTransmittance for why the in-scattering is left out.
+  out.atmo = volTransmittance(frame.camPos.xyz, rel / max(out.viewZ, 1e-6), out.viewZ);
   return out;
 }
 
@@ -92,5 +100,5 @@ fn fs(in : VOut) -> @location(0) vec4f {
 
   let a = sprite.a * in.alpha * vis;
   // Premultiplied additive: the pipeline blends with ONE, so fold alpha in here.
-  return vec4f(sprite.rgb * in.tint * in.alpha * vis, a);
+  return vec4f(sprite.rgb * in.tint * in.alpha * vis * in.atmo, a);
 }

@@ -1010,6 +1010,9 @@ export const VOLUME = {
    * that already accumulates — the same argument as one lens sample per frame rather than sixteen.
    */
   steps: 12,
+  /** Samples for the EXTINCTION-only integral the additive layer uses. Fewer, because there are no
+   *  shadows in it to resolve and it runs per vertex — see `volTransmittance`. */
+  trSteps: 6,
   /** Extinction per unit of density-length. With `albedo` below this also sets how much the
    *  atmosphere hides what is behind it, so it is the knob that reads as "thickness". */
   sigma: 0.55,
@@ -1169,6 +1172,7 @@ export function wgslDefines() {
     ATMO_R: CAMERA.atmosphereR,
     // volumetrics
     VOL_STEPS: int(VOLUME.steps),
+    VOL_TR_STEPS: int(VOLUME.trSteps),
     VOL_ALBEDO: `vec3f(${VOLUME.albedo.map(f).join(', ')})`,
     VOL_FALLOFF: VOLUME.falloff,
     VOL_AMBIENT: `vec3f(${VOLUME.ambient.map(f).join(', ')})`,

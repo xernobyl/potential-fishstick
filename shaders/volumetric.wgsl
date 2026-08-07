@@ -146,6 +146,37 @@ fn volStepOffset(px : vec2f, fi : f32) -> f32 {
 }
 
 /**
+ * EXTINCTION ONLY, along a segment. No shadows, no phase function, no in-scattering.
+ *
+ * For the additive layer — embers, contrails, rail guns — which is drawn AFTER the temporal resolve
+ * and therefore cannot afford a jittered march: 12 unaveraged steps per fragment through a
+ * heavily-overdrawn particle field would cost more than the whole atmosphere does. But an emissive
+ * mote sitting deep in the air should still be dimmed and reddened by what is in front of it, and
+ * that is transmittance. The in-scattering it displaces is second order for something that is
+ * itself a light source, and it is the expensive half.
+ *
+ * Cheap enough to be honest about: density is smooth and monotonic in altitude and there are no
+ * shadows in here to alias against, so a midpoint rule over a handful of samples is not an
+ * approximation worth apologising for. Call it from the VERTEX stage — once per sprite or ribbon
+ * vertex rather than once per fragment.
+ */
+fn volTransmittance(ro : vec3f, rd : vec3f, tMax : f32) -> vec3f {
+  if (frame.volume.x <= 1e-5) { return vec3f(1.0); }
+  let shell = iSphere(ro, rd, ATMO_R);
+  if (shell.y <= 0.0) { return vec3f(1.0); }
+  let t0 = max(shell.x, 0.0);
+  let t1 = min(shell.y, tMax);
+  if (t1 <= t0) { return vec3f(1.0); }
+
+  let dt = (t1 - t0) / f32(VOL_TR_STEPS);
+  var od = 0.0;
+  for (var i = 0; i < VOL_TR_STEPS; i++) {
+    od += volDensity(ro + rd * (t0 + (f32(i) + 0.5) * dt));
+  }
+  return exp(-od * dt * frame.volume.x * VOL_ALBEDO);
+}
+
+/**
  * The integral, from the camera to `tMax`.
  *
  * Returns in-scattered radiance and the transmittance behind it, so the caller composites as
@@ -191,17 +222,23 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
             + SUN2_COL * (ph2 * bodyShadow(p, SUN2_DIR) * ringShadow(rings, p, SUN2_DIR))
             + VOL_AMBIENT;
 
-    // ANALYTIC integration of the step rather than a midpoint sum. Over a step of constant
-    // density the source term integrates to S * (1 - exp(-od)) / sigma_t, and with S = sigma_s * L
-    // the extinction cancels into the albedo — so this is both exact for the step and cheaper than
-    // the sum it replaces. It is what stops a 12-step march banding as the optical depth rises.
-    let od = dens * frame.volume.x * dt;
-    let tr = exp(-od);
-    out.inScatter += out.transmittance * lit * VOL_ALBEDO * (1.0 - tr);
+    // ANALYTIC integration of the step rather than a midpoint sum. Over a step of constant density
+    // the source term integrates to S * (1 - Tr) / sigma_t, and with S = sigma_s * L the extinction
+    // cancels — so this is both exact for the step and cheaper than the sum it replaces. It is what
+    // stops a 12-step march banding as the optical depth rises.
+    //
+    // The extinction is SPECTRAL, and that is a correction rather than a refinement. It used to be
+    // grey with the albedo applied to the scattered term instead, which meant the medium scattered
+    // blue light out of the beam without ever removing it — energy conserved overall but not per
+    // channel. Making VOL_ALBEDO the shape of sigma_t and treating the gas as purely scattering
+    // (which it nearly is) gives `1 - Tr` as the scattered fraction directly, and reddens what is
+    // seen THROUGH the atmosphere, which is the whole reason a sunset is red.
+    let tr = exp(-dens * frame.volume.x * dt * VOL_ALBEDO);
+    out.inScatter += out.transmittance * lit * (1.0 - tr);
     out.transmittance *= tr;
 
     // Nothing behind this point can contribute once the medium is opaque.
-    if (out.transmittance.g < 0.003) { break; }
+    if (max(out.transmittance.r, out.transmittance.b) < 0.003) { break; }
   }
   return out;
 }

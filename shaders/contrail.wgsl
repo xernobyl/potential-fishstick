@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
+//!include "volumetric.wgsl"
 
 @group(1) @binding(0) var<storage, read> trail : array<vec4f>;  // xyz pos, w throttle
 @group(1) @binding(1) var sceneTex : texture_2d<f32>;           // alpha = depth tag
@@ -22,6 +23,7 @@ const QUAD = array<vec2f, 6>(
 );
 
 struct VOut {
+  @location(15) atmo : vec3f,
   @builtin(position) pos : vec4f,
   @location(0) fade  : f32,
   @location(1) across : f32,
@@ -62,6 +64,13 @@ fn vs(@builtin(vertex_index) vi : u32,
   var out : VOut;
   let wp = s.xyz + side * ((c.y * 2.0 - 1.0) * width);
   out.pos = frame.viewProj * vec4f(wp, 1.0);
+  // ATMOSPHERE IN FRONT OF THIS, as extinction only. Additive elements sit deep inside the shell —
+  // the embers are born just above the surface — and without this they read as if the air were not
+  // there. Per VERTEX, not per fragment: this layer overdraws heavily and the integral is smooth.
+  // See volTransmittance for why in-scattering is left out.
+  let toEye = wp - frame.camPos.xyz;
+  let dist = length(toEye);
+  out.atmo = volTransmittance(frame.camPos.xyz, toEye / max(dist, 1e-6), dist);
   // Fades as it ages, and carries how hard the engine was working when it was laid
   // down — so the trail thins where the pilot was coasting.
   out.fade = pow(1.0 - age, TRAIL_FALLOFF) * (0.25 + 0.75 * s.w);
@@ -84,5 +93,5 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let a = in.fade * profile * vis;
   // Cools as it disperses: hot near the nozzle, cold vapour further back.
   let col = mix(TRAIL_COLD, TRAIL_HOT, in.fade);
-  return vec4f(col * a * TRAIL_GAIN, a);
+  return vec4f(col * a * TRAIL_GAIN * in.atmo, a);
 }

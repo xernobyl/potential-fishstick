@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
+//!include "volumetric.wgsl"
 
 struct Shot {
   local : vec4f,    // xyz muzzle in SHIP-LOCAL space, w fire time
@@ -37,6 +38,7 @@ const QUAD = array<vec2f, 6>(
 );
 
 struct VOut {
+  @location(15) atmo : vec3f,
   @builtin(position) pos : vec4f,
   @location(0) fade   : f32,
   @location(1) across : f32,
@@ -98,6 +100,13 @@ fn vs(@builtin(vertex_index) vi : u32,
 
   let wp = p + side * ((c.y * 2.0 - 1.0) * RAIL_WIDTH);
   out.pos = frame.viewProj * vec4f(wp, 1.0);
+  // ATMOSPHERE IN FRONT OF THIS, as extinction only. Additive elements sit deep inside the shell —
+  // the embers are born just above the surface — and without this they read as if the air were not
+  // there. Per VERTEX, not per fragment: this layer overdraws heavily and the integral is smooth.
+  // See volTransmittance for why in-scattering is left out.
+  let toEye = wp - frame.camPos.xyz;
+  let dist = length(toEye);
+  out.atmo = volTransmittance(frame.camPos.xyz, toEye / max(dist, 1e-6), dist);
   // Snaps to full brightness and decays: a rail shot is an event, not a build-up.
   out.fade = pow(1.0 - age, RAIL_FALLOFF);
   out.across = c.y * 2.0 - 1.0;
@@ -119,5 +128,5 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let a = in.fade * profile * vis;
   // Hot at the muzzle, cooling down the beam.
   let col = mix(RAIL_HOT, RAIL_COLD, in.along);
-  return vec4f(col * a * RAIL_GAIN, a);
+  return vec4f(col * a * RAIL_GAIN * in.atmo, a);
 }

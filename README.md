@@ -597,6 +597,18 @@ the full reasoning; these are the ones worth knowing up front:
   one, with the ember pass's own spread WITHIN a configuration wider than the gap between
   configurations. This frame is bound by the march, not by additive fill. On much weaker hardware
   that stops being true, and it is one toggle in the panel.
+- **OPEN: temporal lag is worse than it was, and the cause is not identified.** `beep.lag()` reads
+  4.9x noise against a historical 3.6x, and `stability` 2.2% against 1.26%. Both were measured after
+  the world doubled, and the isolation so far RULES OUT the two changes that looked guilty:
+  switching the atmosphere off leaves lag at 5.5x and switching the jitter off leaves it at 6.4x —
+  both worse, not better. So it is neither the volumetrics nor the newly-jittered rings.
+  That leaves the scale change, and the mechanism is not found. The obvious candidates check out as
+  relative rather than absolute: the depth gate is a fraction of distance, the gradient slack is in
+  pixels, the lens offset's parallax scales with aperture over distance, and the detail noise's
+  amplitude and frequency moved in opposite directions so the field's gradient is unchanged. Worth
+  noting the baseline is also not like-for-like — 3.6x was measured on a different scene — so part
+  of this may be the content under the measurement window rather than a regression. Do not treat
+  this as settled either way.
 - **Scaling a world is mostly a hunt for the numbers that are secretly lengths.** Doubling the
   planet was four tuning values and a day's worth of consequences, and the consequences were all
   the same shape: a constant that reads as dimensionless but is not.

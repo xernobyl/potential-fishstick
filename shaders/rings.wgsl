@@ -95,7 +95,8 @@ fn vs(@builtin(vertex_index) vi : u32,
   let wn = radial * n2.x + r.az * n2.y;
 
   var out : VOut;
-  out.pos = frame.viewProj * vec4f(wp, 1.0);
+  // Jittered, like the marched geometry it is composited against — see jitterClip.
+  out.pos = jitterClip(frame.viewProj * vec4f(wp, 1.0));
   out.wp = wp;
   out.wn = wn;
   out.uv = vec2f(u, corner.y);
@@ -240,7 +241,11 @@ fn fs(in : VOut) -> FOut {
   // so emit the sentinel rather than a wild vector.
   if (in.prevClip.w > 1e-4) {
     let prevPx = uvToPixel(ndcToUV(in.prevClip.xy / in.prevClip.w));
-    out.motion = vec4f(prevPx - in.pos.xy, in.prevViewZ, in.viewZ);
+    // The jitter is added BACK here, and leaving it out would be the same bug the resolve had.
+    // `in.pos.xy` is this fragment's pixel CENTRE, but the surface it covers is the one whose
+    // unjittered projection is centre + jitter — and the history is indexed by pixel centres, so
+    // the motion has to be measured in that unjittered frame. `prevClip` is already unjittered.
+    out.motion = vec4f(prevPx - (in.pos.xy + frame.jitter.xy), in.prevViewZ, in.viewZ);
   } else {
     out.motion = vec4f(MOTION_NONE, 0.0, 0.0, 0.0);
   }

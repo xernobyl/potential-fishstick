@@ -210,6 +210,24 @@ fn uvToPixelAt(uv : vec2f, res : vec2f) -> vec2f {
   return 0.5 * (uv * vec2f(1.0, -1.0) * length(res) + res);
 }
 
+/// Apply the frame's sub-pixel jitter to a clip-space position.
+///
+/// The compute passes jitter the RAY — `px + 0.5 + frame.jitter` — so a RASTER pass has to move its
+/// geometry by the same amount or it lands on fixed pixel centres every frame, the temporal resolve
+/// has nothing to average for it, and it gets no antialiasing at all. That was true of the rings,
+/// which are the only geometry here that is rasterised rather than marched, and it went unnoticed
+/// because the jitter lives in ray generation where a raster pass never looks.
+///
+/// The shift is NEGATIVE. The march stores, at pixel `px`, the scene sampled at `px + jitter`, so a
+/// surface whose unjittered projection is `px + jitter` has to be drawn at `px`. Same reasoning,
+/// and the same sign, as the `rp -= jitter` correction in the resolve.
+///
+/// y flips because pixel y runs down while NDC y runs up — see uvToPixel.
+fn jitterClip(clip : vec4f) -> vec4f {
+  let j = frame.jitter.xy * 2.0 * frame.res.zw;
+  return vec4f(clip.x - j.x * clip.w, clip.y + j.y * clip.w, clip.z, clip.w);
+}
+
 /// Clip-space NDC (from a projection matrix) -> shared screen space.
 fn ndcToUV(ndc : vec2f) -> vec2f { return ndc * frame.screen.zw; }
 
