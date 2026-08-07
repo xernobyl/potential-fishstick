@@ -100,14 +100,14 @@ export const QUALITY = {
 };
 
 export const BODY = {
-  R: 1.0,
+  R: 2.0,
   octaves: 3,
   n0: 20.0,
   nGrow: 4.0,
-  rho0: 0.46,
+  rho0: 0.92,
   rhoFall: 0.5,
   jitter: 0.2,
-  detail: 0.03,
+  detail: 0.06,
   /** Lattice-window size for the SUBTRACTED hole layers. 5 (centre + edges) rather
    *  than the 9 the additive layers need: see the note on SFWIN in fibonacci.wgsl. */
   holeCandidates: 5,
@@ -146,7 +146,7 @@ export const MARCH = {
   near: 0.65,
   /** Where the noise band starts. Must stay at or above the 0.20 fade-in width in
    *  `mapBody`, or steps taken at the far scale reach into un-bounded field. */
-  nearBand: 0.24,
+  nearBand: 0.48,
   /** Hit threshold, relative to distance travelled — a pixel-footprint proxy. */
   hitEps: 0.0004,
 };
@@ -255,10 +255,10 @@ export const RINGS = {
   /** Innermost radius, then a fixed step outward so they nest concentrically.
    *  r0 must clear the body's bound (~1.5) and the outermost must stay inside the
    *  camera's closest approach (CAMERA.distance - CAMERA.zoom = 3.85). */
-  radius0: 1.75,
-  gap: 0.32,
-  width: 0.055,        // radial half-thickness
-  height: 0.11,        // axial half-height
+  radius0: 3.5,
+  gap: 0.64,
+  width: 0.11,        // radial half-thickness
+  height: 0.22,        // axial half-height
   precess: 0.045,      // axis tumble rate, rad/s
   spin: 0.17,          // rotation about its own axis; visible via surface detail
   roughness: 0.3,
@@ -387,14 +387,14 @@ export const AURORA = {
   // ---- the flow ----
   /** World-space frequency of the noise the curl is taken from. Lower is broader, lazier
    *  swirls; higher braids tightly and starts to look like turbulence rather than aurora. */
-  curlScale: 0.34,
+  curlScale: 0.17,
   /** How fast the field itself evolves. Non-zero is what stops the ribbons settling into fixed
    *  streamlines — with a static field a walker traces the same curve forever. */
   curlDrift: 0.08,
   /** Central-difference epsilon for the curl. Small enough to be a derivative, large enough
    *  that f64 cancellation does not dominate: at 1e-4 the two lattice samples differ in their
    *  last few bits and the curl comes out as noise. */
-  curlEps: 0.02,
+  curlEps: 0.01,
   /**
    * World units per second along the flow.
    *
@@ -410,7 +410,7 @@ export const AURORA = {
    * SPACING is the product and is unchanged, so the ribbon is the same length and the same
    * smoothness, it just drifts more slowly. Which, for an aurora, is the better read anyway.
    */
-  speed: 0.25,
+  speed: 0.5,
 
   // ---- where they live ----
   /**
@@ -422,8 +422,8 @@ export const AURORA = {
    * that goes wherever it is flown: there is no radius that is reliably in front of it. A near
    * fade in the shader is the honest fix and covers both cameras — see `nearFade`.
    */
-  shellMin: 2.9,
-  shellMax: 3.6,
+  shellMin: 5.8,
+  shellMax: 7.2,
   /**
    * How far from each face the vector potential is ramped down to zero, in world units.
    *
@@ -443,7 +443,7 @@ export const AURORA = {
    * contact, because moving a sample sideways IS a corner. Fixing the field beats correcting
    * the walker.
    */
-  shellRamp: 0.25,
+  shellRamp: 0.5,
   /**
    * Radial steering, as the weight of the radial term against the unit flow direction, per unit
    * of `shellRamp` past the point where alpha starts falling. At 3.0 the desired heading is
@@ -467,7 +467,7 @@ export const AURORA = {
   /** Hard bound, as slack past the shell — and the ramp length for the recovery steering. A
    *  backstop, not a mechanism: it fires only if both the field and the steering have failed,
    *  and it is kept only so a pathological flow cannot put a curtain behind the camera. */
-  shellSlack: 0.35,
+  shellSlack: 0.7,
   /**
    * Maximum turn rate along the path, in RADIANS PER SECOND. The single parameter that fixed
    * the sharp-turn artefacts, and it fixes them by construction rather than by handling them.
@@ -499,8 +499,8 @@ export const AURORA = {
    * frame: the shell sits between the camera and the body, so these are FOREGROUND objects and
    * a width that looks reasonable in world units is enormous on screen.
    */
-  width: 0.025,
-  widthGrow: 0.20,
+  width: 0.05,
+  widthGrow: 0.4,
   /** Fade exponent along the ribbon. Gentler than the contrail's 2.1 — an aurora's brightness
    *  varies slowly along the curtain instead of dropping off behind a nozzle. */
   falloff: 1.9,
@@ -553,7 +553,7 @@ export const AURORA = {
    * front of the camera. Fading by distance handles every case, including the one where the
    * camera flies through a ribbon, and it costs a smoothstep.
    */
-  nearFade: [0.55, 1.4],
+  nearFade: [1.1, 2.8],
   /**
    * Where the ribbon fades out as it turns toward the viewer, in sin(angle between the path and
    * the view ray). Below this the alpha ramps linearly to zero.
@@ -607,7 +607,7 @@ export const RAIL = {
 };
 
 export const MEDIUM = {
-  depth: 3.2,        // local thickness -> optical depth
+  depth: 1.6,        // local thickness -> optical depth
   density: 4.5,      // how hard the medium absorbs its complement
   g: 0.72,           // Henyey-Greenstein anisotropy
   ior: 1.44,
@@ -617,7 +617,7 @@ export const MEDIUM = {
 
 export const CORE = {
   radius: 0.78,
-  attenuation: 3.2,
+  attenuation: 1.6,
   colour: [1.0, 0.2, 0.045],
   intensity: 5.4,
 };
@@ -674,7 +674,7 @@ export const SUNS = {
 };
 
 export const CAMERA = {
-  distance: 4.7,
+  distance: 9.4,
   /**
    * Field of view across the screen DIAGONAL, in degrees.
    *
@@ -692,9 +692,9 @@ export const CAMERA = {
    *  parallax the accumulation fails to average — i.e. of apparent camera shake.
    *  Kept modest on purpose; see LENS_DISK in renderer.js for the other half of
    *  that fix, which is the sample ORDER rather than its size. */
-  aperture: 0.018,
-  focusPull: 0.75,              // focus this far in front of the body centre
-  atmosphereR: 2.75,
+  aperture: 0.036,
+  focusPull: 1.5,              // focus this far in front of the body centre
+  atmosphereR: 5.5,
 
   /**
    * Slow dolly in and out, layered over the rotation. Two incommensurate periods
@@ -706,7 +706,7 @@ export const CAMERA = {
    * per-frame change approaches it — the image would soften exactly while moving.
    * At this amplitude and period the per-frame change is ~16x under the gate.
    */
-  zoom: 0.85,
+  zoom: 1.7,
   zoomPeriod: 52.0,
 
   /** Chase camera, active once the player has touched a flight key. `lag` is the
@@ -946,7 +946,7 @@ export const SATELLITES = {
    * camera's closest approach (CAMERA.distance - CAMERA.zoom = 3.85): beyond that
    * a satellite sweeps past the lens.
    */
-  orbit: 2.85,
+  orbit: 5.7,
   rate: 0.085,          // radians per second, scaled per satellite
   bus: 0.055,           // half-extent of the central cube
   boom: 0.03,           // gap from bus face to the start of a panel
@@ -973,9 +973,9 @@ export const SATELLITES = {
 export const EMBERS = {
   count: 1400,
   rate: 0.42,                   // outward cycles per heartbeat
-  spawnR: 1.48,
+  spawnR: 2.96,
   travel: 0.62,
-  size: 0.020,                  // world-space billboard radius
+  size: 0.02,                  // world-space billboard radius
   colour: [1.0, 0.44, 0.15],
   intensity: 4.6,
   spriteSize: 64,
@@ -992,6 +992,60 @@ export const EMBERS = {
  * reaches the film, exposure is where the curve's shoulder sits relative to it — and their
  * defaults reproduce the old look exactly (2.0 * 0.42 = 0.84).
  */
+/**
+ * The atmosphere, as a real scattering medium.
+ *
+ * This replaced `limbGlow`, which was one smoothstep on the ray's perpendicular distance from the
+ * body — a halo painted around the silhouette, added in the composite because a screen-space halo
+ * has no world position to reproject. Everything here is a physical parameter of the integral that
+ * stood in for; see shaders/volumetric.wgsl for the method and for why it is not a froxel grid.
+ */
+export const VOLUME = {
+  /**
+   * Samples along the ray, inside the shell.
+   *
+   * Low on purpose. The step offset moves every frame and the pass runs upstream of the temporal
+   * resolve, so a handful of accumulated frames converge these 12 into a smooth integral. Raising
+   * it trades frame time for a shorter convergence, which is the wrong way round in a renderer
+   * that already accumulates — the same argument as one lens sample per frame rather than sixteen.
+   */
+  steps: 12,
+  /** Extinction per unit of density-length. With `albedo` below this also sets how much the
+   *  atmosphere hides what is behind it, so it is the knob that reads as "thickness". */
+  sigma: 0.55,
+  /**
+   * Scattering albedo — what fraction of extinguished light is scattered rather than absorbed, per
+   * channel. Blue-weighted because short wavelengths scatter more, which is the whole reason a sky
+   * is blue; near 1 because a gas absorbs very little.
+   */
+  albedo: [0.42, 0.62, 1.0],
+  /** How fast density falls with altitude above the body, per world unit. The inverse of a scale
+   *  height: larger is a thinner, more sharply bounded shell. */
+  falloff: 1.3,
+  /**
+   * Forward-scattering anisotropy for Cornette-Shanks, 0..1. Aerosol scatters strongly forward,
+   * which is what makes an atmosphere flare when you look toward a sun and stay dim looking away.
+   * Past ~0.85 the lobe gets narrow enough to alias against the step count.
+   */
+  g: 0.68,
+  /** A constant floor standing in for multiple scattering, which single-scattering by definition
+   *  misses. Without it a shadowed pocket goes pure black, and real shadowed air does not — it is
+   *  lit by the rest of the sky. Cheap, and it is the difference between "shadow" and "hole". */
+  ambient: [0.020, 0.026, 0.042],
+  /** Softness of the body's terminator, as a fraction of its mean radius. The occluder is a lumpy
+   *  distance field approximated by a sphere, so this is both the penumbra and the honest width of
+   *  the approximation. */
+  bodySoft: 0.10,
+  /** How much of a sun a ring blocks. Below 1 because a machined hoop seen edge-on is thin and the
+   *  shell is deep — a fully opaque bar would read as a painted stripe. */
+  ringOpacity: 0.85,
+  /** Ring penumbra: a base width in world units, plus how much it widens per unit of distance from
+   *  the occluder. The spread is what a real penumbra does, and it is also what keeps a sweeping
+   *  analytic edge from crawling through a 12-step march. */
+  ringSoft: 0.035,
+  ringSpread: 0.10,
+};
+
 export const FILM = {
   /** Pre-grade linear gain, applied to the scene before the curve sees it. */
   gain: 0.84,
@@ -1109,6 +1163,14 @@ export function wgslDefines() {
     // frame uniforms, so ray generation, reprojection and the ember billboards
     // cannot end up disagreeing about it.
     ATMO_R: CAMERA.atmosphereR,
+    // volumetrics
+    VOL_STEPS: int(VOLUME.steps),
+    VOL_ALBEDO: `vec3f(${VOLUME.albedo.map(f).join(', ')})`,
+    VOL_FALLOFF: VOLUME.falloff,
+    VOL_AMBIENT: `vec3f(${VOLUME.ambient.map(f).join(', ')})`,
+    VOL_BODY_SOFT: VOLUME.bodySoft,
+    VOL_RING_SOFT: VOLUME.ringSoft,
+    VOL_RING_SPREAD: VOLUME.ringSpread,
     // temporal — blend, gate and clip live in the frame UNIFORM now rather than here,
     // so they can be A/B tested without a recompile. Only the background weight is
     // still compile-time.
@@ -1212,6 +1274,9 @@ export function wgslDefines() {
     SHIP_JET_LEN: int(SHIP.jetLength),
     // rings
     RING_SEGMENTS: RINGS.segments,
+    // The ring COUNT is a shader constant now, not only a draw-call argument: the volumetric
+    // shadow loop iterates the hoops analytically, so it has to know how many there are.
+    RING_COUNT: int(RINGS.count),
     RING_R0: RINGS.radius0,
     RING_GAP: RINGS.gap,
     RING_W: RINGS.width,

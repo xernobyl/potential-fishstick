@@ -81,7 +81,11 @@ export class Gpu {
       device,
       format,
       alphaMode: 'opaque',              // no compositing work we do not need
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      // COPY_SRC as well as RENDER_ATTACHMENT, so the presented frame can be read back.
+      // A WebGPU canvas cannot be scraped the way a WebGL one can — `drawImage` returns
+      // transparent black, because the swapchain texture is gone once presented — so a
+      // screenshot has to be copied out of the texture before it is. See `beep.shot()`.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
     const gpu = new Gpu({ device, adapter, context, canvas, format, caps });

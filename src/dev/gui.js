@@ -17,7 +17,7 @@
  */
 
 import GUI from '../../vendor/lil-gui.esm.js';
-import { FILM, GLOW, FLARE, CAMERA, AURORA, TEMPORAL, QUALITY } from '../scene/tuning.js';
+import { FILM, GLOW, FLARE, CAMERA, AURORA, VOLUME, TEMPORAL, QUALITY } from '../scene/tuning.js';
 
 const STORE = 'beep.presets';
 
@@ -94,6 +94,17 @@ export function buildGui(renderer, live = {}) {
   aur.add(AURORA, 'rays', 0.0, 1.0, 0.01).name('ray depth');
   aur.add({ reseed: () => renderer.aurora.reseed() }, 'reseed');
 
+  // ---- atmosphere ----
+  //
+  // Three levels, and they are uniforms rather than constants precisely so these sliders work —
+  // the rest of VOLUME is geometry (step count, falloff, the shadow penumbrae) and stays a
+  // compile-time constant, so it is not exposed rather than shipped as controls that do nothing.
+  const vol = gui.addFolder('Atmosphere').close();
+  artFolders.push(['volume', vol]);
+  vol.add(VOLUME, 'sigma', 0.0, 3.0, 0.01).name('thickness');
+  vol.add(VOLUME, 'g', 0.0, 0.9, 0.01).name('forward scatter');
+  vol.add(VOLUME, 'ringOpacity', 0.0, 1.0, 0.01).name('ring shadow');
+
   // ---- temporal ----
   const taa = gui.addFolder('Temporal').close();
   artFolders.push(['temporal', taa]);
@@ -151,9 +162,66 @@ export function buildGui(renderer, live = {}) {
     mon.converged = renderer.accumFrames;
     for (const c of monCtrls) c.updateDisplay();
   };
+  // ---- traces ----
+  //
+  // lil-gui has no graph widget, so this is a canvas appended to the folder's own children
+  // container. The one piece of raw DOM in here, and it earns it: a single number cannot show a
+  // regression that only appears every few seconds, and the frame time on this renderer is spiky
+  // enough that a median hides real stalls.
+  //
+  // Two traces on one canvas, each auto-scaled to its own recent maximum rather than to a fixed
+  // range — the interesting thing about frame time is its SHAPE, and a fixed axis either clips the
+  // spikes or flattens everything into the bottom pixel.
+  const TRACE_N = 120;
+  const traces = [
+    { key: 'gpu', label: 'gpu ms', colour: '#7fd4ff', data: new Float32Array(TRACE_N) },
+    { key: 'fps', label: 'fps', colour: '#ffd27f', data: new Float32Array(TRACE_N) },
+  ];
+  let traceHead = 0;
+  const plot = document.createElement('canvas');
+  plot.width = 280;
+  plot.height = 64;
+  plot.style.cssText = 'display:block;width:calc(100% - 12px);height:64px;margin:4px 6px 6px;'
+    + 'background:rgba(0,0,0,0.25);border-radius:2px';
+  monitor.$children.appendChild(plot);
+  const g2d = plot.getContext('2d');
+
+  const drawTraces = () => {
+    const w = plot.width, h = plot.height;
+    g2d.clearRect(0, 0, w, h);
+    for (const tr of traces) {
+      let hi = 0;
+      for (const v of tr.data) hi = Math.max(hi, v);
+      if (hi <= 0) continue;
+      g2d.strokeStyle = tr.colour;
+      g2d.lineWidth = 1;
+      g2d.beginPath();
+      for (let i = 0; i < TRACE_N; i++) {
+        // Oldest sample first, so the trace reads left to right in time.
+        const v = tr.data[(traceHead + i) % TRACE_N];
+        const x = (i / (TRACE_N - 1)) * (w - 1);
+        const y = h - 1 - (v / hi) * (h - 3);
+        if (i === 0) g2d.moveTo(x, y); else g2d.lineTo(x, y);
+      }
+      g2d.stroke();
+      g2d.fillStyle = tr.colour;
+      g2d.font = '9px ui-monospace, monospace';
+      g2d.fillText(`${tr.label} peak ${hi.toFixed(hi < 10 ? 2 : 0)}`,
+        4, 10 + traces.indexOf(tr) * 10);
+    }
+  };
+
+  const sample = () => {
+    traces[0].data[traceHead] = mon.gpu;
+    traces[1].data[traceHead] = mon.fps;
+    traceHead = (traceHead + 1) % TRACE_N;
+    drawTraces();
+  };
+
   refresh();
   // Twice a second: these are for reading, and a value that changes every frame is unreadable.
-  const timer = setInterval(refresh, 500);
+  // The trace samples at the same rate, so 120 points is a minute of history.
+  const timer = setInterval(() => { refresh(); sample(); }, 500);
 
   // ---- measurements ----
   //

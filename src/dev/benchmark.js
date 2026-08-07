@@ -891,6 +891,62 @@ export async function additiveAliasing(renderer, gpu, quality, opts = {}) {
 }
 
 /**
+ * A PNG of the frame the renderer is showing.
+ *
+ * The swapchain texture is released when it is presented, so `drawImage` on a WebGPU canvas hands
+ * back transparent black — there is no browser-side way to screenshot one. It has to be copied out
+ * during the frame that drew it, which is why this lives here and why the canvas is configured
+ * with COPY_SRC.
+ *
+ * The surface format is BGRA on most platforms and the canvas is `opaque`, so the channels are
+ * swizzled and alpha forced on the way into the ImageData.
+ */
+export async function grabFrame(renderer, gpu, scale = 1) {
+  await ensureSize(renderer);
+  const input = benchInput();
+  // One frame, so the texture being copied is the one just drawn into.
+  renderer.frame(performance.now() / 1000, input);
+  const tex = gpu.context.getCurrentTexture();
+  const w = tex.width, h = tex.height;
+  const bpr = Math.ceil(w * 4 / 256) * 256;
+  const buf = gpu.device.createBuffer({
+    label: 'screenshot',
+    size: bpr * h,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const enc = gpu.device.createCommandEncoder({ label: 'screenshot-copy' });
+  enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, { width: w, height: h });
+  gpu.device.queue.submit([enc.finish()]);
+  await buf.mapAsync(GPUMapMode.READ);
+  const src = new Uint8Array(buf.getMappedRange().slice(0));
+  buf.unmap();
+  buf.destroy();
+
+  const img = new ImageData(w, h);
+  const bgra = gpu.format.startsWith('bgra');
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * bpr + x * 4;
+      const o = (y * w + x) * 4;
+      img.data[o] = bgra ? src[i + 2] : src[i];
+      img.data[o + 1] = src[i + 1];
+      img.data[o + 2] = bgra ? src[i] : src[i + 2];
+      img.data[o + 3] = 255;                 // the context is opaque; alpha is not meaningful
+    }
+  }
+  const ow = Math.max(1, Math.round(w * scale));
+  const oh = Math.max(1, Math.round(h * scale));
+  const full = new OffscreenCanvas(w, h);
+  full.getContext('2d').putImageData(img, 0, 0);
+  if (ow === w && oh === h) return full.convertToBlob({ type: 'image/png' });
+  const small = new OffscreenCanvas(ow, oh);
+  const c2 = small.getContext('2d');
+  c2.imageSmoothingQuality = 'high';
+  c2.drawImage(full, 0, 0, ow, oh);
+  return small.convertToBlob({ type: 'image/png' });
+}
+
+/**
  * SUB-PIXEL STABILITY: does the image flicker when the camera moves less than one pixel?
  *
  * The measurement every "is it crawling?" question actually wants, and the one the other

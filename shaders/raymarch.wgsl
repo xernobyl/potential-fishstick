@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
+//!include "volumetric.wgsl"
 //!include "hash.wgsl"
 //!include "sdf.wgsl"
 //!include "sky.wgsl"
@@ -130,6 +131,24 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
 
   // Plumes and thruster puffs, occluded by whatever ended up in front.
   col += shipJets(ray.o, ray.d, nearT);
+
+  // ---- the atmosphere ----
+  //
+  // LAST, and after `nearT` is final. It integrates only as far as the nearest thing this pass
+  // resolved, so it has to run once every candidate for that has been considered — the body, the
+  // satellites and the ship all set it, and putting this before them would have drawn air through
+  // whichever of them was in front.
+  //
+  // Here rather than in the composite so the temporal resolve averages it: every sample is a world
+  // position and the step offset moves every frame, so 12 steps converge into a smooth integral
+  // rather than 12 visible shells. See volumetric.wgsl for why this is not a froxel grid.
+  //
+  // Skipped under the field-evaluation probe, which reports work as radiance and must not have
+  // anything added to it.
+  if (frame.probe.y <= 0.5) {
+    let vol = volumetric(ray.o, ray.d, nearT, vec2f(gid.xy));
+    col = col * vol.transmittance + vol.inScatter;
+  }
 
   // Motion. The sentinel goes everywhere by default — the body and the sky are handled
   // by camera reprojection, which is exact for them and needs nothing stored. Only the

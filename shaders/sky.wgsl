@@ -81,16 +81,3 @@ fn bgSharp(rd : vec3f) -> vec3f {
 }
 
 fn background(rd : vec3f) -> vec3f { return bgNebula(rd) + bgSharp(rd); }
-
-/// Atmospheric limb glow. Camera-relative, so it is applied in the composite
-/// pass rather than baked into the accumulation buffer: it cannot be reprojected
-/// like a star at infinity, and accumulating it leaves soft ghost wedges
-/// drifting across the sky. Keyed off ATMO_R and deliberately not off the
-/// marching bound, so a geometry tweak cannot silently resize the atmosphere.
-fn limbGlow(ro : vec3f, rd : vec3f) -> vec3f {
-  let b2 = dot(ro, rd);
-  let perp = sqrt(max(dot(ro, ro) - b2 * b2, 0.0));
-  let front = step(b2, 0.0);
-  let glow = smoothstep(ATMO_R, R + 0.15, perp) * front;
-  return glow * glow * vec3f(0.16, 0.20, 0.36) * 0.7;
-}

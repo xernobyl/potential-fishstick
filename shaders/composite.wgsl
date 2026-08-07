@@ -110,14 +110,14 @@ fn fs(@builtin(position) fragPos : vec4f, @location(0) uv : vec2f) -> @location(
   let coc = clamp((depth - focus) / max(depth, 1e-3), -1.0, 1.0);
   col += halo * SPHERO_TINT * (coc * SPHERO_STRENGTH * frame.grade2.w);
 
-  // Limb glow and fireballs: both camera-relative or fast-changing, so both
-  // belong here rather than in the accumulation buffer. The glow could not be
-  // reprojected and left ghost wedges drifting across the sky; a detonation
-  // flash is over in a few frames and would smear into a streak.
+  // Fireballs: fast-changing, so they belong here rather than in the accumulation buffer — a
+  // detonation flash is over in a few frames and would smear into a streak.
+  //
+  // The atmosphere used to be here too, as `limbGlow`, for a reason that no longer holds: a
+  // screen-space halo has no world position, so it could not be reprojected and left ghost wedges
+  // drifting across the sky. It is a real scattering integral now, computed upstream where every
+  // sample IS a world position — see volumetric.wgsl.
   let centre = cameraRay(rpx, vec2f(0.0));
-  if (onSky) {
-    col += limbGlow(centre.o, centre.d);
-  }
   // `depth` already carries the scene distance (1e9 for sky), so a blast on the
   // far side of the body is occluded by it for free.
   col += blastGlow(centre.o, centre.d, depth);

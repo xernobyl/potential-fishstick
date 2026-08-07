@@ -9,7 +9,7 @@ import { Gpu } from './core/device.js';
 import { Renderer, LENS_DISK } from './renderer.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
-import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability } from './dev/benchmark.js';
+import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, grabFrame } from './dev/benchmark.js';
 
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
@@ -163,6 +163,30 @@ async function boot() {
     }
   }
 
+  /**
+   * Save a PNG of the current frame.
+   *
+   * Not a nicety: a WebGPU canvas cannot be captured with `drawImage`, which returns transparent
+   * black because the swapchain texture is released at present time. The frame has to be copied
+   * out of the texture during the frame that drew it, which means the renderer has to cooperate —
+   * hence a dev helper rather than something the browser can do for you.
+   */
+  async function shot(scale = 1) {
+    const wasRunning = running;
+    running = false;
+    try {
+      const png = await grabFrame(renderer, gpu, scale);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(png);
+      a.download = `beep-${renderer.targets.displayWidth}x${renderer.targets.displayHeight}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      return `${(png.size / 1024).toFixed(0)} KB`;
+    } finally {
+      if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
+    }
+  }
+
   /** Mean field evaluations per pixel, counted in the shader rather than reasoned about. */
   async function evals(opts) {
     const wasRunning = running;
@@ -180,7 +204,7 @@ async function boot() {
   // A handle for poking at the scene from the console. Tuning values are read
   // per frame, so most of them can be changed live.
   window.beep = {
-    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel,
+    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shot,
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;

@@ -72,6 +72,10 @@ struct Frame {
   // they need the ratio between those two specifically — and it is not `accumRes / res` unless
   // the additive layer happens to be at render resolution. See QUALITY.additiveDisplayRes.
   addRes    : vec4f,   // xy size, zw 1/size
+  // The atmosphere's three LEVELS. Uniforms for the same reason the grade's are: these are the
+  // ones worth sweeping while looking at the image, and as injected constants a slider bound to
+  // one would move nothing. The rest of VOLUME is geometry and stays a constant.
+  volume    : vec4f,   // x sigma, y ringOpacity, z g, w spare
 };
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -150,6 +154,19 @@ fn beerLambert(thick : f32, sigmaT : vec3f) -> vec3f { return exp(-thick * sigma
 fn phaseHG(cosT : f32, g : f32) -> f32 {
   let g2 = g * g;
   return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * cosT, 1.5));
+}
+
+/// Cornette-Shanks: Henyey-Greenstein with the (1 + cos^2) factor it is missing.
+///
+/// Same forward-lobe parameter `g`, and the extra factor is what restores the BACKSCATTER a real
+/// aerosol has — HG's lobe falls monotonically to a minimum at 180 degrees, where Mie scattering
+/// actually turns back up. It is the standard correction for atmospheric aerosol and costs two
+/// multiplies, so the atmosphere uses it while the body's interior keeps plain HG: inside a dense
+/// medium the light has forgotten which way it came from and the difference is unobservable.
+fn phaseCS(cosT : f32, g : f32) -> f32 {
+  let g2 = g * g;
+  return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + cosT * cosT))
+       / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * cosT, 1.5));
 }
 
 // ---- camera ------------------------------------------------------------

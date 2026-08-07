@@ -19,7 +19,7 @@
  *    frame, so a single write of the whole block beats several small ones.
  */
 
-export const FRAME_FLOATS = 156;                // 3 mat4x4 + 27 vec4
+export const FRAME_FLOATS = 160;                // 3 mat4x4 + 28 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
 /** Field offsets, in floats. Kept next to the WGSL struct in common.wgsl. */
@@ -71,6 +71,7 @@ const O = {
   grade3: 144,      // x contrast, y flareStrength, z bloomThreshold, w spare
   aurora: 148,      // x gain, y rays, z grazeFade, w emission phase 0..1
   addRes: 152,      // xy additive-target size, zw 1/size
+  volume: 156,      // x sigma, y ringOpacity, z g, w spare
 };
 
 export class FrameUniforms {
@@ -181,6 +182,10 @@ export class FrameUniforms {
 
     a[O.addRes] = s.addWidth; a[O.addRes + 1] = s.addHeight;
     a[O.addRes + 2] = 1 / s.addWidth; a[O.addRes + 3] = 1 / s.addHeight;
+
+    const vol = s.volume;
+    a[O.volume] = vol.sigma; a[O.volume + 1] = vol.ringOpacity;
+    a[O.volume + 2] = vol.g;
 
     const au = s.aurora;
     a[O.aurora] = au.gain; a[O.aurora + 1] = au.rays;

@@ -1,15 +1,34 @@
 # beep beep beep
 
-A WebGPU render of a translucent planetoid: a raymarched signed-distance field built
-from octaves of spheres on a spherical-Fibonacci lattice, lit as a scattering
-medium, ringed by three precessing metal hoops, with a flyable ship trailing twin
-contrails and firing helical rail guns, orbiting satellites, ember particles, surface
-detonations, curl-noise auroras, raymarched reflections, and a film grade on the way out.
+**[Live →](https://xernobyl.github.io/potential-fishstick/)**  · WebGPU · needs Chrome, Edge, Safari 18+ or a recent Firefox
 
-Everything is procedural. There are no textures, no meshes and no assets — every
-shape in the scene is a distance field or a handful of instanced boxes. The only dependency is
-a vendored copy of `lil-gui` for the tuning panel, which is loaded on demand and is not in the
-render path at all.
+A translucent planetoid, raymarched. The body is a signed-distance field built from octaves of
+spheres on a spherical-Fibonacci lattice, lit as a scattering medium rather than a surface, wrapped
+in a volumetric atmosphere that the rings cast real shadows through. Around it: three precessing
+metal hoops, a flyable ship trailing contrails and firing helical rail guns, orbiting satellites,
+GPU particle embers, curl-noise auroras, marched reflections, temporal upsampling from half
+resolution, and an analytic film response on the way out.
+
+Everything is procedural. No textures, no meshes, no assets — every shape is a distance field or a
+handful of instanced boxes. The one dependency is a vendored copy of `lil-gui` for the tuning panel,
+loaded on demand and outside the render path.
+
+Press **`g`** for the panel. **Drag** to orbit, **arrows/WASD** to fly, **space** to shoot.
+
+---
+
+### About the rest of this file
+
+It is long, and it is a log rather than a manual. The interesting parts of this renderer are not the
+features but the things that turned out to be wrong about them: a temporal filter that tracked its
+own jitter, a lattice bound a few ulps too tight, a bloom prefilter that read four of every sixteen
+texels, a vignette measured from the wrong point, a benchmark that read a patch from the wrong
+quarter of the frame and invalidated its own conclusion. Each of those was found by measuring, and
+each entry below records the measurement, including the ones that came out negative and got
+reverted.
+
+If you only want to run it, the next section is all you need. If you want to change something, start
+at [Tuning it](#tuning-it) and `src/scene/tuning.js`.
 
 ## Running it
 
@@ -183,6 +202,11 @@ the same shader twice.
 `beep.bench({serial: true})` drains the queue every frame to isolate one frame from
 queue depth. It stalls, so its frame time is not a throughput figure.
 
+`beep.shot()` saves a PNG of the current frame, and it exists because you cannot screenshot a
+WebGPU canvas any other way: `drawImage` returns transparent black, since the swapchain texture is
+released the moment it is presented. The frame has to be copied out during the frame that drew it,
+which needs the renderer's cooperation. Pass a scale to downsize — `beep.shot(0.5)`.
+
 ### The headless checks
 
 ```bash
@@ -248,6 +272,12 @@ worse, not better, which is consistent with a steady state rather than a converg
 - **Graphs, rather than numbers, in the panel.** The Monitor folder shows current values and the
   Measure folder runs each instrument on demand, but neither plots anything over time. A frame-time
   or residual sparkline would show a regression that a single number hides.
+
+- **An art pass on the new world scale.** The planet is twice the size relative to everything else
+  now, and while every coefficient that needed it was rescaled, the LOOK moved: it reads cooler and
+  flatter than it did. The atmosphere's blue in-scattering integrates over twice the depth, and the
+  suns want re-balancing against it. All of it is on sliders — Film, Atmosphere — so this is taste,
+  not engineering.
 
 ## Where things are
 

@@ -16,6 +16,8 @@
 
 //!include "common.wgsl"
 //!include "hash.wgsl"
+//!include "ring_geom.wgsl"
+//!include "volumetric.wgsl"
 //!include "sky.wgsl"
 //!include "brdf.wgsl"
 //!include "explosion.wgsl"
@@ -33,47 +35,6 @@ const QUAD = array<vec2f, 6>(
 );
 
 /// One ring's rigid frame plus its dimensions.
-struct RingDef {
-  radius : f32,
-  halfW  : f32,   // radial half-thickness
-  halfH  : f32,   // axial half-height
-  ax     : vec3f, // in-plane basis
-  ay     : vec3f,
-  az     : vec3f, // the ring's axis
-};
-
-fn ringDefAt(i : u32, t : f32) -> RingDef {
-  let fi = f32(i);
-  let h0 = hash11(fi * 5.17 + 0.31);
-  let h1 = hash11(fi * 9.71 + 4.13);
-
-  var r : RingDef;
-  // Concentric: each ring a fixed step further out, so they nest rather than
-  // intersecting. Widths shrink outward, which reads as a hierarchy.
-  r.radius = RING_R0 + fi * RING_GAP;
-  r.halfW = RING_W * (1.0 - 0.18 * fi);
-  r.halfH = RING_H * (1.0 - 0.12 * fi);
-
-  // Pseudo-random axis, precessing on two incommensurate periods so no ring ever
-  // returns to the same attitude and none of them share a rhythm.
-  let a = TAU * h0 + t * RING_PRECESS * (0.6 + 0.8 * h0);
-  let b = 1.1 + 1.4 * h1 + t * RING_PRECESS * 0.61 * (0.5 + h1);
-  let sb = sin(b);
-  r.az = normalize(vec3f(cos(a) * sb, cos(b), sin(a) * sb));
-
-  // Any stable in-plane basis will do; the surface detail is what makes the spin
-  // visible, so the basis is rotated about the axis by the spin angle here rather
-  // than the geometry being re-derived per vertex.
-  let spin = t * RING_SPIN * (0.7 + 0.9 * h1) + TAU * h0;
-  // Pick a reference not parallel to the axis, then orthonormalise.
-  // `ref` is a WGSL reserved keyword.
-  let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(r.az.y) > 0.9);
-  let e0 = normalize(cross(up, r.az));
-  let e1 = cross(r.az, e0);
-  r.ax = e0 * cos(spin) + e1 * sin(spin);
-  r.ay = cross(r.az, r.ax);
-  return r;
-}
 
 /// The ring's world position for a given vertex, at an arbitrary time. Factored out
 /// so the vertex shader can evaluate it TWICE — now and one frame ago — which is what
@@ -260,6 +221,15 @@ fn fs(in : VOut) -> FOut {
        * (0.55 + 0.45 * heartbeat(beatPhase())) * (alb + f0 * 0.5);
 
   col += (alb + f0 * 0.35) * RING_AMBIENT;
+
+  // ---- the atmosphere in front of this hoop ----
+  //
+  // The rings orbit at 1.75-2.39 and the shell reaches 2.75, so there is genuinely air in front of
+  // every one of them. Without this they would read CLEARER than the body behind them, which is
+  // backwards. Integrated to this fragment's own depth, because each pass owns its own surface —
+  // see the note on where volumetrics run in volumetric.wgsl.
+  let vol = volumetric(frame.camPos.xyz, normalize(in.wp - frame.camPos.xyz), in.viewZ, in.pos.xy);
+  col = col * vol.transmittance + vol.inScatter;
 
   var out : FOut;
   // Alpha carries linear view distance, which is how the merge pass resolves this

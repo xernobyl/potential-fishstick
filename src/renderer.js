@@ -49,7 +49,7 @@ import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
 import { RailgunPass } from './passes/railgun.js';
 import { AuroraPass } from './passes/aurora.js';
-import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, RINGS, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
+import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { RingsPass } from './passes/rings.js';
 import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
@@ -129,6 +129,7 @@ export class Renderer {
       sunA: null, sunB: null, ship: null,
       taa: TEMPORAL, march: MARCH, probe: PROBE,
       grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
+      volume: VOLUME,
     };
 
     this.passes = {
@@ -256,6 +257,7 @@ export class Renderer {
     st.glow = GLOW;
     st.flareStrength = FLARE.strength;
     st.aurora = AURORA;
+    st.volume = VOLUME;
     st.auroraPhase = this.aurora.emitPhase;
     this.uniforms.write(st);
 

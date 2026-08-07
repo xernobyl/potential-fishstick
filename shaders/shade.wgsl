@@ -232,7 +232,7 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   col += iri * sugar * pow(fre, 2.0) * 0.30;
 
   // Aerial haze with view distance across the little world.
-  let haze = 1.0 - exp(-0.10 * max(t - 3.0, 0.0));
+  let haze = 1.0 - exp(-0.05 * max(t - 6.0, 0.0));
   col = mix(col, vec3f(0.42, 0.44, 0.58) * 0.5, haze * 0.45);
   return col;
 }
