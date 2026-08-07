@@ -27,7 +27,7 @@ const O = {
   viewProj: 0,      // world -> clip, this frame
   invViewProj: 16,  // clip  -> world, this frame (ray generation)
   prevViewProj: 32, // world -> clip, previous frame (reprojection)
-  camRight: 48,     // xyz right,      w spare (was the aperture)
+  camRight: 48,     // xyz right,      w buffer-viewer display mode
   camUp: 52,        // xyz up,         w spare (was the focus distance)
   camFwd: 56,       // xyz forward,    w focal length (half-diagonal units)
   camPos: 60,       // xyz position,   w time
@@ -102,6 +102,7 @@ export class FrameUniforms {
     // it in world space: the thin-lens offset (which shifts the ray ORIGIN, not
     // its projection) and the ember billboards' quad expansion.
     a[O.camRight] = cam.right[0]; a[O.camRight + 1] = cam.right[1]; a[O.camRight + 2] = cam.right[2];
+    a[O.camRight + 3] = s.viewMode;
 
     a[O.camUp] = cam.up[0]; a[O.camUp + 1] = cam.up[1]; a[O.camUp + 2] = cam.up[2];
 

@@ -7,6 +7,7 @@
 
 import { Gpu } from './core/device.js';
 import { Renderer } from './renderer.js';
+import { VIEWS } from './passes/debugview.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
 import { benchmark, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, finalStability, grabFrame } from './dev/benchmark.js';
@@ -101,6 +102,13 @@ async function boot() {
       e.preventDefault();
       // PAUSE: identical hold to `t`, but the accumulation carries over instead of being reset.
       setFrozen(!frozen, true);
+    } else if (k === 'b') {
+      e.preventDefault();
+      // -1 is the normal composite, then each buffer in turn, then back.
+      renderer.debugView = renderer.debugView + 1 >= VIEWS.length ? -1 : renderer.debugView + 1;
+      const v = renderer.debugView;
+      console.log(`[buffer] ${v < 0 ? 'off — normal composite' : VIEWS[v].name}`);
+      if (overlay === 1) keysEl.textContent = controlsText();
     } else if (k === 'j') {
       e.preventDefault();
       setJitter(!jitterOn);
@@ -486,6 +494,8 @@ async function boot() {
       ['u', `temporal upsampling: ${on(Q.taau)}`],
       ['j', `pixel jitter: ${on(jitterOn)}`],
       ['', ''],
+      ['b', `buffer: ${renderer.debugView < 0 ? 'off' : VIEWS[renderer.debugView].name}`],
+      ['', ''],
       ['r', 'record 15s of 1080p30 to mp4'],
       ['f', 'fullscreen'],
       ['g', 'controls / panel / off'],
@@ -497,6 +507,9 @@ async function boot() {
   function setOverlay(next) {
     overlay = next;
     keysEl.style.display = overlay === 1 ? 'block' : 'none';
+    // The perf readout rides with the controls. It is debug output like everything else in this
+    // cycle, and the default state should be the picture and nothing but the picture.
+    perfEl.style.display = overlay === 1 ? 'block' : 'none';
     if (overlay === 1) keysEl.textContent = controlsText();
     if (overlay === 2 && !gui) {
       // Imported on demand: lil-gui is 59 KB of debug surface and has no business in the

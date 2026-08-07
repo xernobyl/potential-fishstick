@@ -39,12 +39,20 @@ fn nearestSF(dir : vec3f, n : f32, rotIdx : i32, nCand : i32) -> NearSF {
   return out;
 }
 
-/// Crisp, evenly spread stars on their own Fibonacci set, with only ~1/4 of the
-/// slots lit. 5 candidates rather than 9: this runs on every background pixel,
-/// i.e. most of the screen, and a missed star is invisible when three quarters
-/// of the slots are dark anyway.
+/// Crisp, evenly spread stars on their own Fibonacci set, with only ~1/4 of the slots lit.
+///
+/// NINE CANDIDATES, and it used to be five. The saving was real - this runs on every background
+/// pixel, i.e. most of the screen - and the reasoning given for it was that a missed star is
+/// invisible when three quarters of the slots are dark anyway. That holds for the CORE, which is
+/// two thousandths of a radian across: miss the cell and you simply do not draw a dot.
+///
+/// It does not hold for the GLOW. `exp(-ang / (sz * 1.4))` has a long tail, several times wider than
+/// the core, and a truncated candidate search does not fail randomly - the four omitted slots are
+/// particular DIRECTIONS in the lattice neighbourhood. So on those sides the search returns a
+/// different star and the glow stops dead along a boundary, taking a wedge out of it. Every bright
+/// star had a bite missing, which is what it looked like: a pacman.
 fn starField(rd : vec3f) -> vec3f {
-  let near = nearestSF(rd, 3800.0, 7, 5);
+  let near = nearestSF(rd, 3800.0, 7, 9);
   let idx = near.idx;
   if (hash11(idx * 1.73 + 3.3) > 0.25) { return vec3f(0.0); }
   let b = hash11(idx * 0.31 + 7.7);

@@ -45,6 +45,7 @@ import { Camera } from './scene/camera.js';
 import { Ship } from './scene/ship.js';
 import { Contrail } from './scene/contrail.js';
 import { AdditivePass } from './passes/additive.js';
+import { DebugViewPass, VIEWS } from './passes/debugview.js';
 import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
@@ -85,6 +86,8 @@ export class Renderer {
     this._fireSlot = -1;
     /** Set by the freeze control: dt becomes exactly 0, so no simulation advances. */
     this.held = false;
+    /** Index into VIEWS, or -1 for the normal composite. See passes/debugview.js. */
+    this.debugView = -1;
     // The controller is FED, not polling: one genuine sample per resolved frame — see dynres.js.
     this.profiler.onFrame = (ms) => { if (QUALITY.dynamicRes) this.dynres.sample(ms); };
     this.accumFrames = 0;
@@ -102,7 +105,7 @@ export class Renderer {
     // it contains; and adding keys to an object after construction changes its shape, which
     // is exactly the per-frame deoptimisation the scratch objects above exist to avoid.
     this._state = {
-      camera: null, time: 0, width: 0, height: 0,
+      camera: null, time: 0, viewMode: 0, width: 0, height: 0,
       accumWidth: 0, accumHeight: 0, addWidth: 0, addHeight: 0,
       beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
       historyValid: false, dragging: false, exposure: 0,
@@ -119,6 +122,7 @@ export class Renderer {
       bloom: new BloomPass(gpu, this.targets, this.shaders),
       flare: new LensFlarePass(gpu, this.targets, this.shaders),
       composite: new CompositePass(gpu, this.targets, this.shaders),
+      debugview: new DebugViewPass(gpu, this.targets, this.shaders),
       rings: new RingsPass(gpu, this.targets, this.shaders, RINGS),
       // Three instanced additive draws that differ only in their data — see AdditivePass. The
       // `source` thunks are called when bind groups are built rather than captured now, so an
@@ -161,6 +165,7 @@ export class Renderer {
       this.passes.bloom.init(this.frameBGL),
       this.passes.flare.init(this.frameBGL),
       this.passes.composite.init(this.frameBGL, this.gpu.format),
+      this.passes.debugview.init(this.frameBGL, this.gpu.format, wgslDefines()),
       this.passes.rings.init(this.frameBGL, wgslDefines()),
       this.passes.contrail.init(this.frameBGL, wgslDefines()),
       this.passes.railgun.init(this.frameBGL, wgslDefines()),
@@ -258,6 +263,8 @@ export class Renderer {
     if (PROBE.zeroJitter) { this._jitter[0] = 0; this._jitter[1] = 0; }
 
     st.camera = this.camera;
+
+    st.viewMode = this.debugView >= 0 ? VIEWS[this.debugView].mode : 0;
     st.time = time;
     st.width = t.width;
     st.height = t.height;
@@ -310,8 +317,16 @@ export class Renderer {
     flare.record(encoder, this.frameBG, p);
 
     const surface = this.gpu.context.getCurrentTexture().createView();
-    composite.record(encoder, this.frameBG, surface,
-      bloom.resultView, flare.resultView, p);
+    // The buffer viewer REPLACES the composite rather than drawing over it: the point is to see the
+    // buffer, not the buffer under a film grade. Everything upstream still ran, so the timings on the
+    // HUD stay comparable to a normal frame.
+    const shown = this.debugView >= 0 && this.debugView < VIEWS.length
+      ? this.passes.debugview.record(encoder, this.frameBG, surface, this.debugView, p)
+      : false;
+    if (!shown) {
+      composite.record(encoder, this.frameBG, surface,
+        bloom.resultView, flare.resultView, p);
+    }
 
     p.resolve(encoder);
     this.gpu.device.queue.submit([encoder.finish()]);
