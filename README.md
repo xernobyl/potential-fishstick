@@ -399,19 +399,27 @@ the method, not of a knob that can be turned off.
   sharp foreground cannot bleed onto a blurred background. It needs its own target and pass, because
   a gather has to read a texture while the composite builds its colour in a local.
 
-- **Shade the detail at the pixel CENTRE, not at the jittered sample.** The technique real engines
-  use with textures — evaluate the material at the unjittered centre while still jittering the
-  geometry — applies directly to a procedural renderer, and possibly more strongly: our detail is a
-  function of the hit position, the hit position moves with the jitter, so the detail value at a
-  given pixel changes every frame. That is variance the resolve then has to admit into its clip box,
-  which is the same mechanism behind every stability problem this renderer has had.
+- **CLOSED: shading the detail at the pixel centre.** Tiago's suggestion, built and measured, and it
+  does not pay here. The technique is real — jitter the geometry, evaluate the material at the
+  unjittered centre — and it maps onto a procedural renderer cleanly: `pShade` is the same hit
+  distance along the unjittered ray, which is exact rather than a ray-differential approximation and
+  costs one ray construction, no extra field evaluation. Applied to the two highest-frequency material
+  terms only: `fleck` at 34 per unit, and the sugar smoothstep, whose hard edges alias hardest.
 
-  It is a genuine trade, not a free win: averaging detail over sub-pixel positions is *correct*
-  filtering, and evaluating at the centre gives a stable but aliased detail signal. The interesting
-  version is therefore selective — geometry and silhouettes keep the jitter, high-frequency
-  procedural detail (the cell grain, the greeble, the SSS taps) does not. Measure with `beep.still()`
-  for stability and `beep.detail()` for what it costs in real resolved detail; both already exist,
-  and the pair is exactly the trade being made.
+      condition                detail at sample     at centre
+      animated (trustworthy)   0.630%  0.629%       0.686%  0.691%     9% WORSE
+      drift (motion-mixed)     2.11%   2.19%        2.05%   2.08%      4% better
+
+  It loses on the metric that isolates the defect and wins slightly on the one contaminated by
+  legitimate motion, so the honest reading is that it loses. The mechanism is the trade that was
+  flagged going in: centre evaluation removes the sub-pixel averaging, so the detail SNAPS rather than
+  blending as the surface moves under it — aliasing traded for stability, and on an animated surface
+  the aliasing costs more than the stability buys.
+
+  Worth revisiting only with the aliasing paid for separately: band-limit the detail analytically by
+  the pixel footprint (the derivative of the noise is available in closed form for value noise) rather
+  than relying on the jitter to average it. That is a different change with a different cost, and it
+  would make the centre evaluation free of its downside.
 
 - **Render into a sub-rectangle instead of reallocating.** Dynamic resolution currently rebuilds every
   render-resolution target each time it changes rung. The alternative is to allocate once at the
