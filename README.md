@@ -331,6 +331,58 @@ the method, not of a knob that can be turned off.
   suns want re-balancing against it. All of it is on sliders — Film, Atmosphere — so this is taste,
   not engineering.
 
+- **Motion vectors for the body's own animation.** The last measured temporal gap: camera pinned,
+  world animating reads **0.60%** frame-to-frame flicker against a **0.24%** floor — 2.5x — because
+  reprojection assumes static geometry and the body pulses. The rings solve this analytically and the
+  ship and satellites now do too; the body is what is left. Gate any attempt on `beep.shake()`'s
+  `animated` condition, never on `drift`, which is contaminated by legitimate motion.
+
+  There is a cheap first-order method for it, and it needs no per-sphere bookkeeping. For an implicit
+  surface the normal velocity is `-(dd/dt)/|grad d|`, and at a hit `d(p, t) = 0`, so
+  `dd/dt ~ -d(p, t-dt)/dt`. With `|grad d| ~ 1` for a signed distance field that collapses to:
+
+      p_prev ~ p - N * mapBodyAt(p, prevBeatPhase)
+
+  One extra field evaluation per pixel — against the 40-160 the march already does, so ~1-2% — plus
+  the normal, which shading has computed anyway. Tangential drift is lost, but on a smooth surface it
+  is unobservable, and normal motion is the part TAA needs.
+
+  The one prerequisite is evaluating the field at a *previous* beat phase. Time enters the geometry at
+  exactly one line (`sdf.wgsl`, the `heartbeat(beatPhase() - ph * PULSE_LAG)` in `layerDist`), but
+  `mapImpl`/`mapBody` have ~13 call sites, so thread the phase through `layerDist` and add
+  `mapImplAt` / `mapBodyAt` twins with the existing names as wrappers — WGSL has no overloading and
+  no default arguments, so the wrapper pair is what keeps the call sites untouched. The previous
+  phase can go in `camUp.w` or `jitter.zw`, both of which fell spare when the lens was removed.
+
+- **Depth of field, as a deterministic gather.** Fully designed in `CAMERA` in `tuning.js`, not built:
+  circle of confusion from the thin-lens relation, read off the depth already in the accumulation
+  buffer's alpha; a fixed golden-angle disk of 16-32 taps scaled by it; a per-tap reach test so a
+  sharp foreground cannot bleed onto a blurred background. It needs its own target and pass, because
+  a gather has to read a texture while the composite builds its colour in a local.
+
+- **Shade the detail at the pixel CENTRE, not at the jittered sample.** The technique real engines
+  use with textures — evaluate the material at the unjittered centre while still jittering the
+  geometry — applies directly to a procedural renderer, and possibly more strongly: our detail is a
+  function of the hit position, the hit position moves with the jitter, so the detail value at a
+  given pixel changes every frame. That is variance the resolve then has to admit into its clip box,
+  which is the same mechanism behind every stability problem this renderer has had.
+
+  It is a genuine trade, not a free win: averaging detail over sub-pixel positions is *correct*
+  filtering, and evaluating at the centre gives a stable but aliased detail signal. The interesting
+  version is therefore selective — geometry and silhouettes keep the jitter, high-frequency
+  procedural detail (the cell grain, the greeble, the SSS taps) does not. Measure with `beep.still()`
+  for stability and `beep.detail()` for what it costs in real resolved detail; both already exist,
+  and the pair is exactly the trade being made.
+
+- **Render into a sub-rectangle instead of reallocating.** Dynamic resolution currently rebuilds every
+  render-resolution target each time it changes rung. The alternative is to allocate once at the
+  largest size and render into the top-left sub-rect, moving the viewport and scissor rather than the
+  allocation: no reallocation churn, no bind-group rebuild, no `generation` bump on a rung change.
+  The catch is that every pass reading those targets must clamp its taps to the ACTIVE rect rather
+  than the texture size, or it samples stale pixels from outside the current render area — which is
+  why this is a real change and not a tidy-up. Worth it mainly if the ladder ends up moving often;
+  right now it settles and stays.
+
 ## Where things are
 
 ```
