@@ -26,7 +26,7 @@ export class Input {
     this._px = 0;
     this._py = 0;
     // Reused: this is read exactly once per frame, forever.
-    this._cmd = { pitch: 0, yaw: 0, roll: 0, thrust: 0, fire: false, trigger: false };
+    this._cmd = { pitch: 0, yaw: 0, roll: 0, thrust: 0, trigger: false };
     this._state = {
       dragging: false, everUsed: false, x: 0, y: 0, width: 0, height: 0,
       // The flight command rides along on the frame state, because that object is
@@ -73,7 +73,10 @@ export class Input {
     this.chase = false;
     this._cHeld = false;
     this._spaceHeld = false;
-    this._fireEdge = false;
+    /** Whether `command()` has sampled the trigger while it was down. See the keyup handler. */
+    this._triggerSeen = false;
+    /** A press too short to be sampled, replayed as one frame of "down". */
+    this._pendingTap = false;
     const key = (e, down) => {
       // Never swallow a browser shortcut.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -84,14 +87,18 @@ export class Input {
         // C toggles between chasing the ship and the free orbit camera. On keydown
         // only, so holding it does not strobe.
         if (k === 'c' && !this._cHeld) { this.chase = !this.chase; this._cHeld = true; }
-        // Space is a TRIGGER now, not a button: holding it charges and releasing it fires. The edge
-        // is still latched, but only so a tap cannot be missed by a frame that lands between the
-        // keydown and the keyup — the shot itself leaves on release, where the charge is known.
-        if (k === ' ' && !this._spaceHeld) { this._fireEdge = true; this._spaceHeld = true; }
+        // Space is a TRIGGER now, not a button: holding it charges and releasing it fires.
+        if (k === ' ' && !this._spaceHeld) { this._spaceHeld = true; this._triggerSeen = false; }
       } else {
         this.keys.delete(k);
         if (k === 'c') this._cHeld = false;
-        if (k === ' ') this._spaceHeld = false;
+        if (k === ' ') {
+          // A press and release that both land between two frames would never be sampled as "down",
+          // so the trigger would never transition and no shot would leave. Latch it, and report one
+          // frame of "down" below — the railgun then sees the down-then-up it needs.
+          if (!this._triggerSeen) this._pendingTap = true;
+          this._spaceHeld = false;
+        }
       }
       if (FLIGHT_KEYS.has(k)) e.preventDefault();
     };
@@ -129,12 +136,17 @@ export class Input {
     // Thrust is up/W only now: space is the trigger. `pitch` already carries the
     // accelerate axis, so this stays at zero rather than double-counting it.
     c.thrust = 0;
-    // Consumed on read, so one press is one event however many frames the key is down for. The
-    // railgun turns these two into shots: `trigger` integrates the charge, `fire` only guarantees a
-    // press shorter than a frame is still seen.
-    c.fire = this._fireEdge;
-    this._fireEdge = false;
-    c.trigger = this._spaceHeld;
+    // The trigger LEVEL, which the railgun integrates into a charge and fires on the fall of. A press
+    // too short to have been sampled is replayed here as a single frame of "down", so every press
+    // produces exactly one down-then-up transition and therefore exactly one shot.
+    if (this._pendingTap && !this._spaceHeld) {
+      c.trigger = true;
+      this._pendingTap = false;
+      this._triggerSeen = true;
+    } else {
+      c.trigger = this._spaceHeld;
+      if (this._spaceHeld) this._triggerSeen = true;
+    }
     c.pitch = Math.max(-1, Math.min(1, c.pitch));
     c.yaw = Math.max(-1, Math.min(1, c.yaw));
     return c;

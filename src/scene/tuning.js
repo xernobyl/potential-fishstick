@@ -751,13 +751,18 @@ export const RAIL = {
   chargeGain: 2.2,
 
   /**
-   * Peak angular kick at full charge, radians. Small: a camera that swings reads as a bug.
+   * Peak angular kick at full charge, radians.
+   *
+   * 0.13 is about 7.5 degrees, which sounds enormous written down and is roughly right: the first
+   * value here was 0.035, two degrees, and it measured correctly while being completely invisible on
+   * screen. A kick has to be a decent fraction of the frame to read as an impact rather than as a
+   * dropped frame, and it is gone in under half a second either way.
    *
    * Only the SIZE of the kick lives here, because that is a property of the weapon. How the camera
    * responds to being kicked — how fast it settles, how quickly it wobbles — is the camera's, and sits
    * in CAMERA beside the rest of its behaviour.
    */
-  shake: 0.035,
+  shake: 0.13,
 };
 
 export const MEDIUM = {
@@ -920,7 +925,7 @@ export const CAMERA = {
    *  lazier; this is the lag that makes a follow camera readable rather than rigid. */
   chaseTau: 0.28,
   /** How fast a shake settles. A time constant in seconds, never a per-frame fraction. */
-  shakeDecay: 0.13,
+  shakeDecay: 0.19,
   /** Shake frequency, radians per second. Fast enough to read as an impact rather than a wobble. */
   shakeFreq: 47.0,
 

@@ -1489,7 +1489,7 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
         // Optional now that `renderer.ship` belongs to whichever scene is active: a probe run while the
         // model viewer is up has no ship to quiet, and that is not an error.
         renderer.ship?.markFlown();
-        input.cmd.fire = false;
+        input.cmd.trigger = false;   // the trigger is the field that fires now
         if (c.pin) {
           // The arcball branch takes yaw and pitch straight from the pointer, so a fixed pointer
           // is a fixed camera — except for the dolly and roll, which breathe on the clock and

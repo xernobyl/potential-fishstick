@@ -176,6 +176,29 @@ export class Camera {
   }
 
   /**
+   * Finish a basis: shake it, build the matrices, seed the history on the first frame.
+   *
+   * EVERY PATH THAT PLACES THE CAMERA ENDS HERE, and it exists because they did not. There are three —
+   * chase, orbit, and explicit — and each had its own copy of these four lines. The chase branch
+   * returns early, so when the shake was added to the other two it silently did nothing in the one
+   * camera you actually fly with; the same branch had already been skipping the focus update. Both
+   * bugs are the same bug, and it is this function's absence.
+   */
+  #finish() {
+    this.#applyShake();
+    const c = this.current;
+    m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
+    m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
+    // On the very first frame there is no previous basis; make it identical so reprojection has
+    // nothing to smear from.
+    if (this._first) {
+      this.previous.copyFrom(c);
+      this.prevViewProj.set(this.viewProj);
+      this._first = false;
+    }
+  }
+
+  /**
    * Place the camera explicitly, for a scene that positions rather than orbits.
    *
    * The model viewer needs a fixed studio camera, and driving `update` toward one would mean teaching
@@ -215,16 +238,7 @@ export class Camera {
     const r = cross(this._tmp2, c.fwd, upRef);
     normalize(c.right, r[0], r[1], r[2]);
     cross(c.up, c.right, c.fwd);
-    this.#applyShake();
-
-    m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
-    m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
-
-    if (this._first) {
-      this.previous.copyFrom(c);
-      this.prevViewProj.set(this.viewProj);
-      this._first = false;
-    }
+    this.#finish();
   }
 
   /**
@@ -262,13 +276,10 @@ export class Camera {
       normalize(c.right, r[0], r[1], r[2]);
       cross(c.up, c.right, c.fwd);
       this.distance = CAMERA.chaseBack;
-      m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
-      m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
-      if (this._first) {
-        this.previous.copyFrom(c);
-        this.prevViewProj.set(this.viewProj);
-        this._first = false;
-      }
+      // No `focusPull` here: chasing, the subject IS the ship and it sits at exactly `chaseBack`.
+      // The pull corrects an ORBIT radius to the body's near surface, which is a different situation.
+      this.focus = CAMERA.chaseBack;
+      this.#finish();
       return;
     }
 
@@ -325,18 +336,7 @@ export class Camera {
 
     // The orbit radius is not the subject distance: the body's near surface is `focusPull` closer.
     this.focus = this.distance - CAMERA.focusPull;
-    this.#applyShake();
-
-    m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
-    m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
-
-    // On the very first frame there is no previous basis; make it identical so
-    // reprojection has nothing to smear from.
-    if (this._first) {
-      this.previous.copyFrom(c);
-      this.prevViewProj.set(this.viewProj);
-      this._first = false;
-    }
+    this.#finish();
   }
 
   /**

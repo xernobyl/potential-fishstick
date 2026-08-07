@@ -237,9 +237,13 @@ export class PlanetoidScene extends Scene {
     this.ship.update(dt, input.cmd);
     this.contrail.update(dt, this.ship);
     // AUTO-FIRE while the ship is still cruising, so there is something to look at before anyone
-    // touches a key. A one-frame PULSE per period, not a held boolean: the rail gun deliberately
-    // triggers on a rising edge — holding it would fire once and then never again.
-    let fire = !!input.cmd.fire;
+    // touches a key. A one-frame PULSE per period.
+    //
+    // THE PLAYER'S KEY IS NOT IN HERE, and putting it in was a real bug: the trigger already fires on
+    // RELEASE, so feeding the keydown edge in as well fired twice per tap — and because the wing
+    // alternates between shots, the pair came out of both wings at once. One press, one shot, and the
+    // press that produces it is the one that ends.
+    let fire = false;
     if (!this.ship.flown) {
       const slot = Math.floor(time / SHIP.autoFireEvery);
       if (slot !== this._fireSlot) { this._fireSlot = slot; fire = true; }
