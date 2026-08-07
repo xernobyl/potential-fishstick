@@ -9,24 +9,36 @@
  * `ownOut` for the allocation split that makes that true.
  *
  * The lever is unusually effective here: the frame is march-bound, and the march is per-pixel
- * compute, so its cost tracks the scale almost linearly. What caps the win is everything that does
- * NOT scale — the resolve, the additive layer, the glow, the composite — which is about 10 ms of a
- * 35 ms frame. Below roughly that the controller runs out of road, and no ladder step will help.
+ * compute, so its cost tracks the scale almost linearly.
  *
  * Design notes, all of them about not making things worse:
  *
- *   GPU TIME, not wall time. Wall includes present pacing, so a vsync-limited frame reads as
- *   "exactly on budget" no matter how much headroom there is, and the controller would never
- *   climb. The profiler's timestamp queries give the real figure; wall is only the fallback when
- *   they are unavailable.
+ *   GPU TIME, and nothing else. Wall time includes present pacing, so a vsync-limited frame reads
+ *   as exactly on budget however much headroom there is — and worse, at 60 Hz it reads as 16.7 ms
+ *   forever, so against a 14 ms target the controller would find itself over budget every single
+ *   frame and pin itself to the bottom rung. There is no honest fallback, so without timestamp
+ *   queries this REFUSES TO RUN rather than driving off a number that cannot mean what it needs to.
+ *
+ *   RAW samples, PUSHED. `Profiler.timings` is exponentially smoothed so the HUD stays readable,
+ *   and a median of an already-smoothed series is a lag on top of a lag. Worse, readbacks land
+ *   every few frames while a frame hook fires every frame, so POLLING it filled the window with
+ *   duplicates — and the median of one repeated number is that number. The profiler reports the
+ *   raw total once per resolved frame and this consumes those.
  *
  *   A MEDIAN over a window, never a single frame. Frame times here are spiky — a detonation or a
  *   ring sweeping across the view moves the march by milliseconds — and reacting to one sample
  *   would oscillate.
  *
- *   A LADDER, not a continuous scale. Every change costs a reallocation of the render-resolution
- *   targets and a discontinuity in sample density, so the useful thing is few, decisive steps
- *   rather than fine tracking.
+ *   A LADDER of STEPS, and a step is more than a render scale. Every change costs a reallocation of
+ *   the render-resolution targets and a discontinuity in sample density, so few decisive rungs beat
+ *   fine tracking. The LAST rung gives up the additive layer's resolution rather than the render
+ *   scale — measured at 2.2x worse sub-pixel stability, so it is genuinely a last resort, which is
+ *   what the bottom of a ladder is for.
+ *
+ *   THE ROAD RUNS OUT, and it stops here on purpose. What does not scale even after that rung — the
+ *   resolve above all, then the glow and the composite — is a few milliseconds of the frame, and
+ *   reducing it means lowering the OUTPUT resolution. That is leaving temporal upsampling's premise
+ *   rather than tuning it, so the ladder does not go there.
  *
  *   ASYMMETRY. Drop quickly when over budget, recover slowly. Being briefly too slow is worse than
  *   being briefly too soft, and climbing eagerly into a spike then falling straight back out is
@@ -43,27 +55,36 @@ export class DynamicRes {
     this.lastChange = 0;
   }
 
-  /** Nearest ladder rung to a scale, so switching the feature on does not jump the image. */
-  #snap(scale) {
+  /** Nearest rung to the live settings, so switching the feature on does not jump the image. */
+  #snap() {
     const l = QUALITY.dynamicLadder;
     let best = 0;
-    for (let i = 1; i < l.length; i++) {
-      if (Math.abs(l[i] - scale) < Math.abs(l[best] - scale)) best = i;
+    let bestCost = Infinity;
+    for (let i = 0; i < l.length; i++) {
+      // Scale dominates; the additive flag only breaks ties between rungs of equal scale.
+      const cost = Math.abs(l[i].scale - QUALITY.renderScale)
+                 + (l[i].additive === QUALITY.additiveDisplayRes ? 0 : 0.01);
+      if (cost < bestCost) { bestCost = cost; best = i; }
     }
     return best;
   }
 
   /**
-   * @param {number} gpuMs  measured GPU time for the frame, or 0 if unavailable
-   * @param {number} dt     seconds, the wall-clock fallback
-   * @returns {number|null} a new render scale to apply, or null to leave it alone
+   * One genuine GPU-time sample. Pushed by the profiler when a readback resolves — see the note on
+   * raw samples above.
    */
-  update(gpuMs, dt) {
-    const ms = gpuMs > 0 ? gpuMs : dt * 1000;
-    if (!(ms > 0) || !Number.isFinite(ms)) return null;
-
+  sample(ms) {
+    if (!(ms > 0) || !Number.isFinite(ms)) return;
     this.samples.push(ms);
     if (this.samples.length > QUALITY.dynamicWindow) this.samples.shift();
+  }
+
+  /**
+   * Decide, from the samples pushed since the last decision.
+   *
+   * @returns {{scale: number, additive: boolean}|null} a rung to apply, or null to hold
+   */
+  update() {
     if (this.cooldown > 0) { this.cooldown--; return null; }
     if (this.samples.length < QUALITY.dynamicWindow) return null;
 
@@ -72,9 +93,9 @@ export class DynamicRes {
     const target = QUALITY.dynamicTargetMs;
     const ladder = QUALITY.dynamicLadder;
 
-    // Re-derive the rung from the live value, so a slider or a preset moving `renderScale`
-    // underneath the controller is picked up rather than fought.
-    this.index = this.#snap(QUALITY.renderScale);
+    // Re-derived from the live settings, so a slider or a preset moving them underneath the
+    // controller is picked up rather than fought.
+    this.index = this.#snap();
 
     let next = this.index;
     if (median > target * QUALITY.dynamicDropAt && this.index < ladder.length - 1) {

@@ -189,6 +189,16 @@ export class Profiler {
         slot.buffer.unmap();
         if (this.onRaw) this.onRaw(slot.labels, times);
         const durations = passDurations(slot.labels.length, times);
+        // The RAW total for this frame, before the smoothing below, reported once per resolved
+        // frame. A controller needs it: `timings` is exponentially smoothed so the HUD is readable,
+        // and taking a median of an already-smoothed series is a lag on top of a lag — and polling
+        // it every frame pushes the same value repeatedly, which makes the median meaningless. The
+        // HUD wants smoothing; a controller wants genuine samples and its own statistic.
+        if (this.onFrame) {
+          let raw = 0;
+          for (const ms of durations) if (ms !== null) raw += ms;
+          if (raw > 0) this.onFrame(raw);
+        }
         for (let i = 0; i < slot.labels.length; i++) {
           const ms = durations[i];
           if (ms === null) continue;

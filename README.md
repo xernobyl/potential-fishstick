@@ -622,8 +622,22 @@ the full reasoning; these are the ones worth knowing up front:
   since every change costs a reallocation, and asymmetric thresholds so it drops fast and climbs
   slowly. Measured: with an unreachable target it walks to the bottom rung and HOLDS rather than
   oscillating; with an easy one it climbs a rung per cooldown and settles at the top.
-  The honest limit is the tail that does not scale — the resolve, the additive layer, the glow, the
-  composite, about 10 ms of a 35 ms frame. Below roughly that the controller has no road left.
+  Three things about the FEED were wrong on the first pass, and all three would have made the
+  controller quietly bad rather than obviously broken. `Profiler.timings` is exponentially smoothed
+  so the HUD stays readable, and taking a median of an already-smoothed series is a lag on top of a
+  lag. Readbacks land every few frames while the frame hook fires every frame, so polling filled the
+  window with duplicates — and the median of one repeated number is that number. And with no
+  timestamp queries `total()` returns 0, so the wall-time fallback took over: at 60 Hz that reads
+  16.7 ms forever, which against a 14 ms target means over budget every frame and a permanent pin to
+  the bottom rung. The profiler now reports the RAW total once per resolved frame, the controller
+  consumes those pushed samples, and without timestamps the feature refuses to run and says so once.
+  Verified against live GPU timing by driving frames with a yield between them so readbacks can
+  actually land: from scale 1.0 with an 11 ms target it dropped to 0.7 within 50 frames and HELD
+  there for 350 more, with the accumulation texture unchanged the whole way.
+  The tail that does not scale is the honest limit, and the ladder's last rung goes after the
+  biggest remaining piece of it: keep the render scale, give up the additive layer's resolution.
+  Beyond that only the resolve is left, and reducing that means lowering the OUTPUT resolution —
+  which is leaving temporal upsampling's premise rather than tuning it, so the ladder stops.
 - **Three passes were one pass with three names.** The contrail, the auroras and the rail guns each
   had their own ~100-line class, and the aurora and contrail files were byte-identical modulo
   identifiers and TWO lines — the shader name and where the instance count came from. That is not a

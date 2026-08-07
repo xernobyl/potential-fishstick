@@ -107,6 +107,9 @@ export class Renderer {
 
     this.frameIndex = 0;
     this.dynres = new DynamicRes();
+    this._warnedNoTimestamps = false;
+    // The controller is FED, not polling: one genuine sample per resolved frame — see dynres.js.
+    this.profiler.onFrame = (ms) => { if (QUALITY.dynamicRes) this.dynres.sample(ms); };
     this.accumFrames = 0;
     this.prevTime = 0;
 
@@ -221,9 +224,16 @@ export class Renderer {
     // applied mid-frame: reallocating render targets between passes is the hitch this feature
     // exists to avoid, and a one-frame delay costs nothing. GPU time when the timestamps are
     // available, wall time only as a fallback — see dynres.js for why that distinction matters.
-    if (QUALITY.dynamicRes) {
-      const next = this.dynres.update(this.profiler.total(), dt);
-      if (next !== null) { QUALITY.renderScale = next; }
+    if (QUALITY.dynamicRes && this.profiler.enabled) {
+      const step = this.dynres.update();
+      if (step !== null) {
+        QUALITY.renderScale = step.scale;
+        QUALITY.additiveDisplayRes = step.additive;
+      }
+    } else if (QUALITY.dynamicRes && !this._warnedNoTimestamps) {
+      // Once, not every frame. Wall time cannot substitute — see dynres.js.
+      this._warnedNoTimestamps = true;
+      console.warn('dynamic resolution needs timestamp queries, which this adapter lacks; holding renderScale');
     }
 
     // Projection first: it depends only on the viewport, and the camera folds it

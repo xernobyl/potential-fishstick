@@ -109,10 +109,22 @@ export const QUALITY = {
    *  frame reads as exactly on budget however much headroom there is, and nothing would ever
    *  climb. 14 ms is about a 70 fps budget with room for the parts that do not scale. */
   dynamicTargetMs: 14,
-  /** The rungs. Few and decisive rather than continuous: every change costs a reallocation of the
-   *  render-resolution targets and a discontinuity in sample density, so fine tracking buys
-   *  nothing and jitters the image. */
-  dynamicLadder: [1.0, 0.85, 0.7, 0.6, 0.5, 0.42, 0.35],
+  /** The rungs, as STEPS. Few and decisive rather than continuous: every change costs a
+   *  reallocation of the render-resolution targets and a discontinuity in sample density, so fine
+   *  tracking buys nothing and jitters the image. See dynres.js. */
+  dynamicLadder: [
+    { scale: 1.0, additive: true },
+    { scale: 0.85, additive: true },
+    { scale: 0.7, additive: true },
+    { scale: 0.6, additive: true },
+    { scale: 0.5, additive: true },
+    { scale: 0.42, additive: true },
+    { scale: 0.35, additive: true },
+    // Last resort: keep the render scale and give up the additive layer's resolution instead.
+    // Measured at 2.2x worse sub-pixel stability, which is why it is the bottom rung and not a
+    // step on the way down.
+    { scale: 0.35, additive: false },
+  ],
   /** Frames of GPU time to median over. Frame times here are spiky — a detonation or a ring
    *  sweeping into view moves the march by milliseconds — and a single sample oscillates. */
   dynamicWindow: 15,
