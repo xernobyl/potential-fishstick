@@ -181,6 +181,7 @@ export class EmberPass {
     const enc = d.createCommandEncoder({ label: 'mip-chain' });
     for (let m = 1; m < mipCount; m++) {
       const bg = d.createBindGroup({
+        label: 'ember-draw-bg',
         layout: pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: texture.createView({ baseMipLevel: m - 1, mipLevelCount: 1 }) },

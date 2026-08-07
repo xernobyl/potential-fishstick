@@ -6,13 +6,28 @@
  * knows about the scene — passes ask `caps` what is available and adapt.
  */
 
-/** Features we take if offered. Everything here must be optional at runtime. */
+/**
+ * Features we take if offered. Everything here must be optional at runtime, and everything here has
+ * to be USED - a request with no consumer is a claim the code does not honour.
+ *
+ * Four were removed after an audit found them requested with comments asserting they were in use:
+ *
+ *   shader-f16 — claimed "half precision in the heavy inner loops"; nothing declared f16 and nothing
+ *   read the capability. It was also the wrong idea here: the march is ALU-bound on transcendentals
+ *   rather than bandwidth-bound, the storage targets are already rgba16float, and halving the
+ *   precision of a DISTANCE field trades a real artefact risk (a distance that reads slightly long
+ *   overshoots and creases the surface) for a saving this frame does not need.
+ *
+ *   subgroups — claimed "wave-level reductions (tile cull)". The tile cull performs one sphere test
+ *   per tile and writes one flag; there is no reduction to accelerate.
+ *
+ *   indirect-first-instance — the ember draw is indirect, but its firstInstance is 0, which needs no
+ *   feature. This one was plausible and still unnecessary.
+ *
+ *   float32-filterable — nothing samples an f32 texture; every render target is rgba16float.
+ */
 const WANTED_FEATURES = [
-  'timestamp-query',      // GPU-side pass timings for the profiler
-  'shader-f16',           // half precision in the heavy inner loops
-  'subgroups',            // wave-level reductions (tile cull)
-  'indirect-first-instance',
-  'float32-filterable',
+  'timestamp-query',      // GPU-side pass timings for the profiler — the one that is actually used
 ];
 
 export class Gpu {
@@ -66,9 +81,7 @@ export class Gpu {
 
     const caps = {
       timestamps: device.features.has('timestamp-query'),
-      f16: device.features.has('shader-f16'),
-      subgroups: device.features.has('subgroups'),
-      indirectFirstInstance: device.features.has('indirect-first-instance'),
+
       limits: device.limits,
       adapterInfo: adapter.info ?? {},
     };

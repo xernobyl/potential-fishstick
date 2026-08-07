@@ -318,17 +318,33 @@ export class Renderer {
     const p = this.profiler;
     const { scene, taa, embers, bloom, flare, composite } = this.passes;
 
+    // DEBUG GROUPS around the phases, not around every pass.
+    //
+    // Each pass already labels its own render pass, which is what a capture lists; what a capture
+    // cannot infer is the STRUCTURE - which passes belong to the same phase, and therefore which of
+    // them a change should be expected to move. These four names are the frame graph's own phases, so
+    // a capture reads the way the file above documents it. Free when no tool is attached.
+    encoder.pushDebugGroup('scene');
     scene.record(encoder, this.frameBG, p);
     // Solids BEFORE taa: they carry exact motion vectors, so TAA can accumulate
     // them, which is what anti-aliases their silhouettes and puts them in the bloom.
     this.passes.rings.record(encoder, this.frameBG, p);
+    encoder.popDebugGroup();
+
+    encoder.pushDebugGroup('resolve');
     taa.record(encoder, this.frameBG, p);
+    encoder.popDebugGroup();
+
+    encoder.pushDebugGroup('additive');
     embers.simulate(encoder, this.frameBG, p);
     embers.record(encoder, this.frameBG, p);
     // Into the same additive target, right after the particles.
     this.passes.contrail.record(encoder, this.frameBG, p);
     this.passes.railgun.record(encoder, this.frameBG, p);
     this.passes.aurora.record(encoder, this.frameBG, p);
+    encoder.popDebugGroup();
+
+    encoder.pushDebugGroup('post');
     bloom.record(encoder, this.frameBG, p);
     flare.record(encoder, this.frameBG, p);
 
@@ -343,6 +359,8 @@ export class Renderer {
       composite.record(encoder, this.frameBG, surface,
         bloom.resultView, flare.resultView, p);
     }
+
+    encoder.popDebugGroup();
 
     p.resolve(encoder);
     this.gpu.device.queue.submit([encoder.finish()]);
