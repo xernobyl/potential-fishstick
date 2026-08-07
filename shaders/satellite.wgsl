@@ -115,13 +115,13 @@ fn satPartDisplay(part : u32, spin : f32) -> SatPart {
     o.ax = sx; o.ay = sy; o.az = sz;
     o.mat = SAT_MAT_BUS;
   } else {
-    let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
-    o.centre = MODEL_ORIGIN + sx * (boom * 0.5);
+    let sideSign = select(-1.0, 1.0, part == 1u);
+    o.centre = MODEL_ORIGIN;
     // Panel space is x thin, y along the boom, z across the width. `az` comes from a cross product
     // rather than being written out, so the basis is right-handed by construction — a hand-written
     // third axis is exactly how a display-only layout ends up mirrored.
     o.ax = sy;
-    o.ay = sx;
+    o.ay = sx * sideSign;
     o.az = cross(o.ax, o.ay);
     o.mat = SAT_MAT_PANEL;
   }
@@ -141,11 +141,14 @@ fn satPart(sat : f32, part : u32, t : f32) -> SatPart {
     // the boom, z across the width - and it rides the sun-tracking basis, not the bus one, which is the
     // rotation that has to be carried into the previous frame as well or the panels shear in the
     // history.
-    let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
-    // The wing's own mesh already reaches out along the boom, so the frame is placed at the JOINT
-    // rather than at the panel's centre — the geometry decides where the panel is.
-    o.centre = f.pos + f.by * (boom * 0.5);
-    o.ax = f.pn; o.ay = f.by; o.az = f.pw;
+    // The wing mesh grows outward from y = 0, so the frame sits ON the bus and the geometry decides
+    // how far out the panel is. The two sides differ only in which way "outward" points.
+    //
+    // TWO axes are flipped for the far side, never one. Flipping one would mirror the basis, and a
+    // mirrored basis reverses triangle winding — which back-face culling answers by drawing nothing.
+    let sideSign = select(-1.0, 1.0, part == 1u);
+    o.centre = f.pos;
+    o.ax = f.pn; o.ay = f.by * sideSign; o.az = f.pw * sideSign;
     o.mat = SAT_MAT_PANEL;
   }
   return o;

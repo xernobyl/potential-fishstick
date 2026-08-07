@@ -117,38 +117,37 @@ export function satellitePanelTree() {
   const t = SATELLITES.panelThick;
   const L = SATELLITES.panelLen;
   const W = SATELLITES.panelWide;
+  const boom = SATELLITES.boom;
 
-  // TWO DISTINCT PANELS PER WING, not one long sheet. A real array is a string of hinged sections and
-  // the gap between them is most of what says so — one continuous slab reads as a plank.
+  // ONE-SIDED, growing outward from y = 0 where the bus is.
   //
-  // Each is 44% of the wing's half-length, centred at 54%, so the gap between them is 0.2L. At the
-  // resolution this meshes at that is comfortably past the three-cell floor; closing it further would
-  // weld the two panels into the plank they are meant not to be.
-  const half = L * 0.44;
-  const at = L * 0.54;
-  const panel = translate([0, at, 0], box([t * 1.6, half, W * 0.97]));
+  // This mesh used to be MIRRORED about its own origin, so it extended both ways from wherever it was
+  // placed — and placed at the joint, its inboard half reached past the bus to y = -0.085. Both wings
+  // did that, their inboard halves overlapped across the centreline and merged, and what should have
+  // been two panels rendered as three: outboard, merged-middle, outboard.
+  //
+  // A wing extends AWAY from the spacecraft. Building it one-sided is what makes that true by
+  // construction rather than by choosing a placement that happens to hide the other half.
+  const mid = boom + L;
 
-  // A frame around each panel's rim, standing slightly proud of the cells.
-  const railLong = translate([0, at, W * 0.965], box([t * 2.2, half, W * 0.035]));
-  const railEnd = translate([0, at + half * 0.965, 0], box([t * 2.2, half * 0.035, W]));
-  const railInner = translate([0, at - half * 0.965, 0], box([t * 2.2, half * 0.035, W]));
+  // The substrate. Thicker than the analytic slab was: three grid cells is the floor for meshing it at
+  // all, and at this size on screen the difference is invisible where a broken surface would not be.
+  const sheet = translate([0, mid, 0], box([t * 1.6, L * 0.97, W * 0.97]));
 
-  // The spine runs the WHOLE wing, through the gap, which is what carries the outer panel and what
-  // makes the pair read as one wing in two sections rather than as two loose plates.
-  const spine = translate([0, L * 0.1, 0], box([t * 2.4, L * 0.98, W * 0.05]));
-  const crossRibs = translate([0, at, 0], repeat(1, half, 3, box([t * 2.0, half * 0.05, W * 0.9])));
+  // A frame around the rim, standing slightly proud of the cells.
+  const railLong = translate([0, mid, W * 0.965], box([t * 2.2, L, W * 0.035]));
+  const railOuter = translate([0, mid + L * 0.965, 0], box([t * 2.2, L * 0.035, W]));
+  const railInner = translate([0, mid - L * 0.965, 0], box([t * 2.2, L * 0.035, W]));
 
-  const sheet = mirror(1, panel);
+  // A spine down the middle and cross ribs, which is what an array's back actually looks like.
+  const spine = translate([0, mid, 0], box([t * 2.4, L, W * 0.05]));
+  const crossRibs = translate([0, mid, 0], repeat(1, L * 0.62, 3, box([t * 2.0, L * 0.04, W * 0.9])));
 
-  // The arm out to the bus. Along the boom, so it joins the stub the bus carries.
-  const arm = translate([0, -L * 0.9 - SATELLITES.boom * 0.5, 0],
-    rotate([1, 0, 0], [0, 1, 0], [0, 0, 1], cylinder(t * 3.0, SATELLITES.boom * 0.5)));
+  // The arm from the bus out to the panel's inner edge.
+  const arm = translate([0, boom * 0.5, 0], cylinder(t * 3.0, boom * 0.6));
 
-  return union(
-    sheet,
-    mirror(1, railLong), mirror(1, mirror(2, railLong)),
-    mirror(1, railEnd), mirror(1, railInner),
-    spine, mirror(1, crossRibs), arm);
+  return union(sheet, railLong, mirror(2, railLong), railOuter, railInner,
+               spine, crossRibs, arm);
 }
 
 /**
