@@ -159,10 +159,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   // point in the hull's own space, so the same piece of hull can be found in last
   // frame's transform directly.
   var motion = vec4f(MOTION_NONE, 0.0, 0.0, 0.0);
-  // The PIXEL CENTRE, shared by both writers below. `uvToPixel` returns centre-relative
-  // coordinates, so pairing it with the integer corner would put a fixed half-pixel bias into every
-  // motion vector - which is indistinguishable from the crawl these are here to remove.
-  let motionPx = vec2f(gid.xy) + 0.5;
+  // `px` ITSELF - the jittered ray position, not the pixel centre. Both writers below hit their
+  // surface along that ray, so that is where the surface they are describing currently is. Using the
+  // bare centre drops the jitter out of the delta and makes the history fetch wander by up to a
+  // pixel every frame, which is what the ship and the satellites were doing. See motionFor.
+  let motionPx = px;
   if (ship.hit) {
     // Exact: `lp` is the hit point in the hull's own space, so the same piece of hull is found
     // directly in last frame's transform.

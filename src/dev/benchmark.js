@@ -1533,6 +1533,13 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
         // Two frames of history, because the metric needs three samples in time.
         let m2 = null, m1 = null;
         const n = sampler.w * sampler.h;
+        const band = opts.tagBand ?? null;
+        // Counted per frame, not sticky. Sticky selected 88% of the frame with large satellites
+        // sweeping across it over 20 frames, which is not a mask - it is the whole image with extra
+        // steps. A pixel qualifies only if the object was there for MOST of the run, so the
+        // measurement is about pixels the object actually occupies rather than ones it passed over.
+        const bandHits = band ? new Uint16Array(n) : null;
+        const bandNeed = opts.bandFraction ?? 0.7;
         const d2sum = new Float64Array(n);     // per-pixel sum of |second difference|
         const dsum = new Float64Array(n);      // per-pixel sum of |first difference|, for context
         const lsum = new Float64Array(n);      // per-pixel temporal mean, the normaliser
@@ -1543,7 +1550,19 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
           sampler.record(enc, renderer.targets.accumRead, t.accumWidth, t.accumHeight);
           gpu.device.queue.submit([enc.finish()]);
           await gpu.device.queue.onSubmittedWorkDone();
-          const L = lumaPlane(decodeHalf(await sampler.read()), sampler.w, sampler.h);
+          const rgba = decodeHalf(await sampler.read());
+          const L = lumaPlane(rgba, sampler.w, sampler.h);
+          // SCOPE BY DEPTH TAG when asked. The accumulation buffer's alpha is the hit distance, so a
+          // band around an object's distance selects that object's pixels - which is the only way to
+          // measure something that covers a small share of the frame. A median over the whole image
+          // cannot see a change confined to the satellites however large the change is, and three
+          // ablations were run against that blind spot before this existed.
+          if (band) {
+            for (let i = 0; i < n; i++) {
+              const a = rgba[i * 4 + 3];
+              if (a >= band[0] && a <= band[1]) bandHits[i]++;
+            }
+          }
           for (let i = 0; i < n; i++) lsum[i] += L[i];
           if (m1) for (let i = 0; i < n; i++) dsum[i] += Math.abs(L[i] - m1[i]);
           if (m2) {
@@ -1566,13 +1585,29 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
           flick[i] = (d2sum[i] / Math.max(counted, 1)) / den;
           rel[i] = (dsum[i] / Math.max(frames - 1, 1)) / den;
         }
+        let keptFlick = flick;
+        let keptRel = rel;
+        let coverage = 1;
+        if (band) {
+          keptFlick = []; keptRel = [];
+          const need = Math.max(1, Math.floor(frames * bandNeed));
+          for (let i = 0; i < n; i++) {
+            if (bandHits[i] >= need) { keptFlick.push(flick[i]); keptRel.push(rel[i]); }
+          }
+          coverage = keptFlick.length / n;
+          // An empty mask would otherwise report a confident 0% - the worst possible failure for a
+          // measurement, because it looks like a fix that worked perfectly.
+          if (keptFlick.length === 0) throw new Error(`tagBand [${band}] selected no pixels`);
+        }
         out.push({
           name: c.name,
           // The one that means shimmer.
-          flick: median(flick) * 100,
-          flick95: percentile(flick, 95) * 100,
+          flick: median(keptFlick) * 100,
+          flick95: percentile(keptFlick, 95) * 100,
           // Motion-dominated once the camera moves; useful only against `frozen`.
-          mad: median(rel) * 100,
+          mad: median(keptRel) * 100,
+          // What share of the frame the band selected, so a suspiciously good number can be checked.
+          coverage,
         });
       }
     } finally { sampler.destroy?.(); }

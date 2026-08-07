@@ -239,9 +239,20 @@ fn ndcToUV(ndc : vec2f) -> vec2f { return ndc * frame.screen.zw; }
 /// tell whose motion this is. Every exact motion vector needs exactly these steps, so the ship and
 /// the satellites share this rather than each doing it slightly differently.
 ///
-/// `px` must be the pixel CENTRE, not its integer corner: the stored vector is a delta between two
-/// pixel-space positions and `uvToPixel` returns centre-relative coordinates, so passing the corner
-/// would bias every motion vector by half a pixel - toward the same crawl the vector exists to fix.
+/// `px` MUST BE WHERE THE SAMPLE WAS ACTUALLY TAKEN, jitter included - not the bare pixel centre.
+///
+/// This is the whole subtlety, and getting it wrong is invisible in a still frame. `prevWp` is the
+/// previous position of the surface this sample HIT, and a marched sample hits along the JITTERED
+/// ray, so the surface's current position is the jittered one. The consumer adds the delta to the
+/// unjittered pixel centre (`rp = opc + motionPx`), which means the delta itself has to carry the
+/// -jitter: it is what turns "where the surface I sampled used to be" into "where the surface now at
+/// this pixel centre used to be". The history is indexed by pixel centres, so that is the frame the
+/// answer has to be in.
+///
+/// Omit it and the fetch position wanders with the jitter sequence every frame, so the history is
+/// re-filtered along a path that never settles - the same failure the body's reprojection path
+/// documents, measured there at 0.2389 output pixels against a jitter of 0.2361. The rings do this
+/// correctly by adding the jitter back to their fragment centre; see rings.wgsl.
 fn motionFor(prevWp : vec3f, px : vec2f, owner : f32) -> vec4f {
   let clip = frame.prevViewProj * vec4f(prevWp, 1.0);
   if (clip.w <= 1e-4) { return vec4f(MOTION_NONE, 0.0, 0.0, 0.0); }

@@ -521,9 +521,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       // local depth gradient. That gate change measured a real 22% win precisely because it
       // compensated for this, one layer downstream of the cause.
       //
-      // The other two paths were already correct, which is what gave this away: motion
-      // vectors are built against the unjittered pixel centre, and the background ray is
-      // deliberately constructed without jitter.
+      // The background ray is deliberately constructed without jitter, so it needs none of this.
+      //
+      // The MOTION-VECTOR path was assumed correct here and was not: it subtracted the bare pixel
+      // centre from a reprojection of a jittered hit, leaving exactly this error in the only two
+      // things that use it - the ship and the satellites, which were the two that visibly crawled.
+      // Fixed at the producer (see motionFor), so `rp = opc + motionPx` above needs no correction:
+      // the delta now carries the -jitter itself.
       rp = reprojectPrevAt(hitP, 1.0, outRes);
       rp = vec3f(rp.xy - frame.jitter.xy / toIn, rp.z);
     } else {
