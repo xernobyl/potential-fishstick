@@ -1151,6 +1151,27 @@ export const FLARE = {
  * array, on a boom. Sizes are world units, and the body has radius ~1, so these
  * are deliberately tiny — they read as hardware only if they stay small.
  */
+/**
+ * The model viewer: a turntable for inspecting the generated meshes on their own.
+ *
+ * FAR FROM THE ORIGIN, and that is the one number here with a reason behind it rather than a taste. The
+ * hull's material adds a core-light term that falls off as 1/|p|^2 from the world origin, where the
+ * planet is; a model sitting at the origin would be lit by a planet that the viewer deliberately does
+ * not draw, and a vertex landing exactly on it would normalise a zero vector. Two hundred units out, the
+ * term is ~2.5e-5 and the studio is lit only by the three suns, which is what you want when judging a
+ * shape.
+ */
+export const MODELVIEW = {
+  /** Where the model sits. See above — this is a correctness constraint, not a preference. */
+  origin: [0, 0, 200],
+  /** Turntable rate, radians per second. Slow enough to read the silhouette at every angle. */
+  spinRate: 0.55,
+  /** Camera stand-off as a multiple of the model's bounding radius, so both models frame the same. */
+  distance: 3.4,
+  /** Elevation above the model's equator, radians. ~35 degrees is the "quarter top-down" view. */
+  elevation: 0.62,
+};
+
 export const SATELLITES = {
   count: 5,
   /**
@@ -1624,6 +1645,8 @@ export function wgslDefines() {
     SHIPM_CORE: `vec3f(${[0.36, 0.16, 0.30].map(f).join(', ')})`,
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
     FILM_PIVOT: FILM.pivot,
+    // The model viewer's studio location, needed by the satellite display layout in WGSL.
+    MODEL_ORIGIN: `vec3f(${MODELVIEW.origin.map(f).join(', ')})`,
     // tiling
     TILE: int(QUALITY.tile),
   };

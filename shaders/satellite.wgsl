@@ -91,6 +91,43 @@ struct SatPart {
   mat    : i32,
 };
 
+/// The same three boxes, laid out for INSPECTION rather than for orbit.
+///
+/// Here rather than in the model viewer's own file for the same reason `satPart` is here: what a
+/// satellite is made of — a bus and two array wings on a boom, at these half-extents — is one fact, and
+/// two files disagreeing about it is a model viewer that shows something the scene does not contain.
+/// Only the placement differs.
+///
+/// The boom runs along X and the arrays face +Y, so a turntable spin about Y sweeps the panels through
+/// the view instead of rotating them about their own axis, which would barely move them at all.
+fn satPartDisplay(part : u32, spin : f32) -> SatPart {
+  let c = cos(spin);
+  let s = sin(spin);
+  let sx = vec3f(c, 0.0, -s);      // world X, spun
+  let sy = vec3f(0.0, 1.0, 0.0);
+  let sz = vec3f(s, 0.0, c);
+
+  var o : SatPart;
+  if (part == 0u) {
+    o.centre = MODEL_ORIGIN;
+    o.ax = sx; o.ay = sy; o.az = sz;
+    o.rad = vec3f(SAT_BUS);
+    o.mat = SAT_MAT_BUS;
+  } else {
+    let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
+    o.centre = MODEL_ORIGIN + sx * boom;
+    // Panel space is x thin, y along the boom, z across the width. `az` comes from a cross product
+    // rather than being written out, so the basis is right-handed by construction — a hand-written
+    // third axis is exactly how a display-only layout ends up mirrored.
+    o.ax = sy;
+    o.ay = sx;
+    o.az = cross(o.ax, o.ay);
+    o.rad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
+    o.mat = SAT_MAT_PANEL;
+  }
+  return o;
+}
+
 fn satPart(sat : f32, part : u32, t : f32) -> SatPart {
   let f = satFrameAt(sat, t);
   var o : SatPart;

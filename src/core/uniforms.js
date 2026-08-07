@@ -26,7 +26,7 @@ import { whiteBalanceGains } from '../scene/tuning.js';
 // distance. Neither failed loudly - one silently changed the culling whenever the buffer viewer was
 // open, the other degenerated to a constant colour rim on every highlight. A slot is not free just
 // because the feature that named it is gone.
-export const FRAME_FLOATS = 164;                // 3 mat4x4 + 29 vec4
+export const FRAME_FLOATS = 168;                // 3 mat4x4 + 30 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
 /** Field offsets, in floats. Kept next to the WGSL struct in common.wgsl. */
@@ -89,6 +89,10 @@ const O = {
   // below is what caught it, because a member has to exist in the struct at that offset and the
   // order there is the layout. Anything added here goes at the END and grows FRAME_FLOATS.
   balance: 160,     // xyz linear per-channel gains, w buffer-viewer display mode
+  // The MODEL VIEWER's state, and zero in every other scene — which is what makes `w` a usable flag.
+  // x: turntable angle now, y: the same one frame ago (so the spin gets an exact motion vector),
+  // z: unused, w: 1 while the model-viewer scene is active. See scenes/modelview.js.
+  model: 164,
 };
 
 export class FrameUniforms {
@@ -207,6 +211,10 @@ export class FrameUniforms {
     }
     a[O.balance] = this._wb[0]; a[O.balance + 1] = this._wb[1]; a[O.balance + 2] = this._wb[2];
     a[O.balance + 3] = s.viewMode;
+    a[O.model] = s.modelSpin ?? 0;
+    a[O.model + 1] = s.modelPrevSpin ?? 0;
+    a[O.model + 2] = 0;
+    a[O.model + 3] = s.modelView ? 1 : 0;
 
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;

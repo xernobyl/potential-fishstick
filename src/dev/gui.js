@@ -18,6 +18,7 @@
 
 import GUI from '../../vendor/lil-gui.esm.js';
 import { VIEWS } from '../passes/debugview.js';
+import { MODELS } from '../scenes/modelview.js';
 import { FILM, GLOW, FLARE, CAMERA, AURORA, VOLUME, TEMPORAL, QUALITY } from '../scene/tuning.js';
 
 const STORE = 'beep.presets';
@@ -38,6 +39,32 @@ function saveStore(all) {
  */
 export function buildGui(renderer, live = {}) {
   const gui = new GUI({ title: 'beep beep beep', width: 300 });
+
+  // ---- scene ----
+  // FIRST, because it decides what every control below is acting on. The model selector only means
+  // anything in the viewer, so it is shown and hidden with the scene rather than sitting greyed out.
+  const sceneFolder = gui.addFolder('Scene');
+  const sceneProxy = {
+    scene: renderer.sceneKey,
+    model: MODELS[renderer.scenes.modelview.model].key,
+  };
+  const modelCtl = sceneFolder
+    .add(sceneProxy, 'model', Object.fromEntries(MODELS.map((m) => [m.label, m.key])))
+    .onChange((key) => {
+      renderer.scenes.modelview.model = MODELS.findIndex((m) => m.key === key);
+      // The two models are different sizes, so the camera re-frames; the history describes the old
+      // framing and would smear across the switch.
+      renderer.resetHistory();
+    });
+  // lil-gui's own show/hide, not a style on the DOM node. A controller's `domElement.parentElement` is
+  // the FOLDER's children container, so setting display there hides every control in the folder — which
+  // it duly did, leaving an empty "Scene" panel with the scene selector inside it.
+  const syncModelVisibility = () => { modelCtl.show(renderer.sceneKey === 'modelview'); };
+  sceneFolder
+    .add(sceneProxy, 'scene', Object.fromEntries(
+      Object.entries(renderer.scenes).map(([key, sc]) => [sc.constructor.label, key])))
+    .onChange((key) => { renderer.setScene(key); syncModelVisibility(); });
+  syncModelVisibility();
 
   // ---- grade ----
   // First, because it is the one set of controls you reach for while LOOKING at the image
@@ -234,11 +261,6 @@ export function buildGui(renderer, live = {}) {
     drawTraces();
   };
 
-  refresh();
-  // Twice a second: these are for reading, and a value that changes every frame is unreadable.
-  // The trace samples at the same rate, so 120 points is a minute of history.
-  const timer = setInterval(() => { refresh(); sample(); }, 500);
-
   // ---- measurements ----
   //
   // The instruments are console-only otherwise, which means knowing they exist and what to type.
@@ -255,6 +277,16 @@ export function buildGui(renderer, live = {}) {
   const viewState = { buffer: -1 };
   const viewCtrl = gui.add(viewState, 'buffer', viewNames).name('show buffer')
     .onChange((v) => { renderer.debugView = v; });
+
+  // AFTER `viewState` and `viewCtrl`, not before. `refresh` closes over both to keep the dropdown in
+  // step with the `b` key, so calling it earlier hit their temporal dead zone and threw
+  // "Cannot access 'viewState' before initialization" — which rejected `buildGui`'s promise and left
+  // the panel silently absent rather than visibly broken. The first call has to follow the last
+  // declaration it reads.
+  refresh();
+  // Twice a second: these are for reading, and a value that changes every frame is unreadable.
+  // The trace samples at the same rate, so 120 points is a minute of history.
+  const timer = setInterval(() => { refresh(); sample(); }, 500);
 
   const measure = gui.addFolder('Measure').close();
   const resultCtrl = measure.add(result, 'last').name('result').disable();

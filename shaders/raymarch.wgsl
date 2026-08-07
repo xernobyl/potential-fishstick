@@ -47,7 +47,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   if (gid.x >= size.x || gid.y >= size.y) { return; }
 
   let tiles = (size + u32(TILE) - 1u) / u32(TILE);
-  let mayHitBody = tileFlags[wid.y * tiles.x + wid.x] != 0u;
+  // The MODEL VIEWER reuses this pass for its backdrop and wants only the sky out of it: no body, no
+  // plumes, no atmosphere. Gating here rather than skipping the pass entirely is what keeps the depth
+  // tags, the motion sentinel and the temporal resolve behaving exactly as they do in the real scene —
+  // a scene that skipped this would be resolving against whatever the previous one left behind.
+  let studio = frame.model.w > 0.5;
+  let mayHitBody = tileFlags[wid.y * tiles.x + wid.x] != 0u && !studio;
 
   // The jitter is what buys anti-aliasing over time; the lens offset is what
   // turns one sample per frame into a real bokeh once accumulated.
@@ -117,7 +122,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   // `nearT` therefore no longer accounts for either, so a plume behind them is not clipped by them here.
   // The resolve fixes that anyway: the hull is nearer in the depth tag, so it wins the pixel. What is
   // lost is only self-occlusion WITHIN the plume, which is additive and has none to lose.
-  col += shipJets(ray.o, ray.d, nearT);
+  if (!studio) { col += shipJets(ray.o, ray.d, nearT); }
 
   // ---- the atmosphere ----
   //
@@ -132,7 +137,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   //
   // Skipped under the field-evaluation probe, which reports work as radiance and must not have
   // anything added to it.
-  if (frame.probe.y <= 0.5) {
+  if (frame.probe.y <= 0.5 && !studio) {
     let vol = volumetric(ray.o, ray.d, nearT, vec2f(gid.xy));
     col = col * vol.transmittance + vol.inScatter;
   }

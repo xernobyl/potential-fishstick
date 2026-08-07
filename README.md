@@ -124,6 +124,14 @@ Press **`g`** to put this list on screen; `g` again for the tuning panel, again 
 - **R** — record 15 s of 1080p at a constant 30 fps to an MP4, then download it. The render is
   OFFLINE, so it takes about 50 s of wall time and the result is smooth regardless — see below.
 
+  It also renders at **FULL QUALITY**, which the interactive view does not. Normally the march runs at
+  `renderScale` (0.5, a quarter of the pixels) and TAAU upsamples it, and the additive layer is upscaled
+  too; both are the right trade at 60 fps and the wrong one for a file that gets watched frame by frame.
+  A recording is not real time, so it takes neither shortcut: the body is marched at output resolution
+  and the embers, contrails, rail guns and auroras rasterise at display resolution. Dynamic resolution
+  is pinned off so quality cannot shift mid-shot, and the temporal history gets a longer warm-up because
+  at full resolution it has four times the samples to converge. Every setting is restored afterwards.
+
 Click the canvas first so it has keyboard focus.
 
 ## Tuning it
@@ -577,6 +585,10 @@ src/
       qef.js         the error function, in the form that can be ADDED
       octree.js      adaptive SDF -> triangles: simplified, crack-free, LOD chain
       dualcontour.js the uniform mesher, kept as the oracle the adaptive one is checked against
+  scenes/            what the renderer draws; the post chain is shared between them
+    scene.js         the contract: six methods and a getter
+    planetoid.js     the original world — body, rings, ship, satellites, additive layer
+    modelview.js     a turntable for inspecting the generated meshes on their own
   passes/            one file per pass, each records itself
     additive.js      ONE pass for the contrail, auroras and rail guns — see below
     solidmesh.js     ONE pass for every rasterised opaque mesh, for the same reason

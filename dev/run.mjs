@@ -25,6 +25,7 @@ const checks = [
   ['dualcontour', 'the SDF mesher makes closed, manifold, correctly-wound surfaces'],
   ['octree', 'adaptive dual contouring simplifies without cracking the mesh'],
   ['lod', 'level-of-detail selection stays under its pixel budget'],
+  ['scenes', 'every scene honours the contract the renderer calls it through'],
   ['frustum', 'the extracted frustum planes bound exactly what the camera sees'],
 ];
 

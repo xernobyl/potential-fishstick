@@ -49,7 +49,10 @@ export async function recordVideo(renderer, gpu, quality, opts = {}) {
   const width = (opts.width ?? 1920) & ~1;      // H.264 wants even dimensions
   const height = (opts.height ?? 1080) & ~1;
   const total = Math.round(seconds * fps);
-  const warmup = opts.warmup ?? 48;
+  // Longer than the interactive default. At full resolution the history has four times the samples to
+  // converge and the first frame of the file is the one most likely to be looked at closely; the cost is
+  // wall-clock time during an export that is already not real time.
+  const warmup = opts.warmup ?? 96;
   const t0 = opts.startTime ?? 0;
   // The SAME neutral command the instruments use, rather than a second copy of one. Recording with
   // live input would let a stray keypress steer the shot, and the ship cruises on its own until
@@ -100,9 +103,25 @@ export async function recordVideo(renderer, gpu, quality, opts = {}) {
     maxWidth: quality.maxWidth,
     dynamicRes: quality.dynamicRes,
     scale: quality.renderScale,
+    additive: quality.additiveDisplayRes,
   };
-  // Dynamic resolution off: it would change the image quality partway through the shot.
-  quality.dynamicRes = false;
+
+  // FULL RESOLUTION AND THE BEST QUALITY THE SETTINGS OFFER, for the whole recording.
+  //
+  // The interactive defaults are a frame-rate compromise: the march runs at `renderScale` (0.5, so a
+  // quarter of the pixels) and TAAU upsamples it, which is the right trade at 60 fps and the wrong one
+  // for a file that gets watched frame by frame. A recording is not real time — every frame is rendered
+  // on a synthetic clock and read back, so it can cost whatever it costs.
+  //
+  // What this buys, concretely: the body is MARCHED at output resolution rather than reconstructed from
+  // a quarter-resolution history, which is most of the silhouette detail; and the additive layer
+  // (embers, contrails, rail guns, auroras) rasterises at display resolution rather than being upscaled,
+  // which `beep.additive()` measured as the larger of the two effects on those elements.
+  //
+  // Restored in the `finally` below, all of it — leaving any of these changed would be a trap.
+  quality.dynamicRes = false;      // it would change the image quality partway through the shot
+  quality.renderScale = 1.0;       // march at output resolution, no temporal upsampling to do
+  quality.additiveDisplayRes = true;
   // `maxWidth` caps the swapchain, and `syncSize` re-derives the canvas from its CSS box every
   // frame — so the cap is what actually pins the resolution here, not the backing store.
   quality.maxWidth = width;
@@ -191,6 +210,7 @@ export async function recordVideo(renderer, gpu, quality, opts = {}) {
     quality.maxWidth = saved.maxWidth;
     quality.dynamicRes = saved.dynamicRes;
     quality.renderScale = saved.scale;
+    quality.additiveDisplayRes = saved.additive;
     canvas.style.width = saved.style.width;
     canvas.style.height = saved.style.height;
     renderer.resize();

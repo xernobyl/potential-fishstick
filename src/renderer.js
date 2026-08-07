@@ -42,30 +42,18 @@ import { FrameUniforms } from './core/uniforms.js';
 import { Profiler } from './core/profiler.js';
 import { ShaderCache } from './core/wgsl.js';
 import { Camera } from './scene/camera.js';
-import { Ship } from './scene/ship.js';
-import { Contrail } from './scene/contrail.js';
-import { AdditivePass } from './passes/additive.js';
+import { PlanetoidScene } from './scenes/planetoid.js';
+import { ModelViewScene } from './scenes/modelview.js';
+import { SHIP_MESH } from './scene/ship_sdf.js';
 import { DebugViewPass, VIEWS } from './passes/debugview.js';
-import { Railgun } from './scene/railgun.js';
-import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
-import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
-         SATELLITES, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
-import { SolidMeshPass } from './passes/solidmesh.js';
-import { Mesh } from './core/mesh.js';
+import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME,
+         TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { extractFrustum } from './core/frustum.js';
-import { rectTube, box, concatMeshes } from './scene/meshgen.js';
-import { shipTree, SHIP_MESH } from './scene/ship_sdf.js';
-import { compile, bounds } from './scene/sdf/nodes.js';
-import { resolutionForScreen } from './scene/sdf/dualcontour.js';
-import { dualContourAdaptive } from './scene/sdf/octree.js';
 import { selectLod } from './core/lod.js';
-import { ringDims } from './scene/tuning.js';
-import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
 import { BloomPass } from './passes/bloom.js';
 import { LensFlarePass } from './passes/lensflare.js';
-import { EmberPass } from './passes/embers.js';
 import { CompositePass } from './passes/composite.js';
 
 /** Hammersley-ish low-discrepancy jitter: converges far faster than white noise. */
@@ -76,64 +64,6 @@ function radicalInverse(bits) {
 }
 
 
-/**
- * Mesh the ship's SDF, once, at a resolution derived from how large a cell may look on screen.
- *
- * RESOLUTION IS DERIVED, NOT FIXED, so the mesh suits the window rather than the machine it was authored
- * on — and because the same call at other resolutions is the LOD chain, whenever that is wanted. Capped
- * because this runs at startup: measured on the ship's tree, 40 cells is 3540 triangles in 43 ms and 64
- * cells is 8836 in 101 ms, and a hull that is usually 40 px across does not need the second one.
- *
- * The mesh is scaled AFTER contouring rather than by scaling the tree: a uniform scale of a distance
- * field is exact, but scaling the tree would also scale every blend width and fillet, which are authored
- * in body units on purpose.
- */
-function buildShipMesh() {
-  const tree = shipTree();
-  const b = bounds(tree);
-  const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) * SHIP_MESH.scale;
-  const res = Math.min(
-    SHIP_MESH.maxResolution,
-    resolutionForScreen({
-      size,
-      distance: SHIP_MESH.viewDistance,
-      focal: 1.2,
-      diagonalPx: 2500,
-      errorPx: SHIP_MESH.errorPx,
-    }),
-  );
-  // THE WHOLE LOD CHAIN FROM ONE OCTREE. Passing the array of budgets simplifies progressively rather
-  // than meshing four times, so four levels cost barely more than the finest one — and the levels are
-  // nested, which is what stops a switch from popping.
-  const levels = dualContourAdaptive(compile(tree), {
-    bounds: b,
-    resolution: res,
-    error: SHIP_MESH.lodErrors,
-  });
-
-  return levels.map((mesh, i) => {
-    // Body units -> world units. A uniform scale leaves normals unchanged, which is the whole reason
-    // `scale` is uniform-only.
-    const positions = new Float32Array(mesh.positions.length);
-    for (let j = 0; j < positions.length; j++) positions[j] = mesh.positions[j] * SHIP_MESH.scale;
-
-    // Through `concatMeshes` even though there is one object, rather than hand-rolling the ids and the
-    // empty `extra`. It is the same three lines either way until it is not: the first version wrote them
-    // by hand and silently skipped the per-object RANGE, so the ship fell back to a bounding sphere of
-    // Infinity and was never culled. One code path produces the ids, the extra data and the bounds
-    // together, so a mesh cannot arrive half-described.
-    const out = concatMeshes([{
-      positions,
-      normals: mesh.normals,
-      extra: new Float32Array(mesh.vertexCount * 4),
-      indices: mesh.indices,
-    }]);
-    // The budget this level was simplified to, in WORLD units — what the selector compares against.
-    out.errorWorld = SHIP_MESH.lodErrors[i] * SHIP_MESH.scale;
-    return out;
-  });
-}
-
 export class Renderer {
   constructor(gpu) {
     this.gpu = gpu;
@@ -142,15 +72,20 @@ export class Renderer {
     this.uniforms = new FrameUniforms(gpu.device);
     this.profiler = new Profiler(gpu.device, { enabled: gpu.caps.timestamps });
     this.camera = new Camera();
-    this.ship = new Ship();
-    this.contrail = new Contrail(gpu.device);
-    this.railgun = new Railgun(gpu.device);
-    this.aurora = new Aurora(gpu.device);
+
+    // THE SCENES. Both are constructed up front and both are initialised, so switching is a property
+    // change rather than a load: the alternative stalls the one frame where a stall is most obviously
+    // the switch's fault. They share the ship's contoured mesh through a memo in planetoid.js, so the
+    // second one costs GPU buffers rather than another hundred milliseconds of contouring.
+    this.scenes = {
+      planetoid: new PlanetoidScene(gpu, this.targets, this.shaders),
+      modelview: new ModelViewScene(gpu, this.targets, this.shaders),
+    };
+    this.sceneKey = 'planetoid';
 
     this.frameIndex = 0;
     this.dynres = new DynamicRes();
     this._warnedNoTimestamps = false;
-    this._fireSlot = -1;
     /** Set by the freeze control: dt becomes exactly 0, so no simulation advances. */
     this.held = false;
     /** Index into VIEWS, or -1 for the normal composite. See passes/debugview.js. */
@@ -169,6 +104,13 @@ export class Renderer {
     this._sunA = [0, 0];
     this._sunB = [0, 0];
     this._jitter = [0, 0];
+    // The render context handed to the scene each frame. Allocated once and refilled, for the same
+    // reason every other scratch object here is: a per-frame object is a per-frame allocation.
+    this._rc = {
+      renderer: this, gpu: this.gpu, targets: this.targets, camera: this.camera,
+      shaders: this.shaders, frameBGL: null,
+      time: 0, dt: 0, input: null, frustum: null,
+    };
     // Declared in full, every field the uniform writer reads. Two reasons: this literal is
     // the frame-state contract, so a reader should not have to scan `frame()` to learn what
     // it contains; and adding keys to an object after construction changes its shape, which
@@ -182,103 +124,42 @@ export class Renderer {
       taa: TEMPORAL, march: MARCH, probe: PROBE, renderScale: 0,
       grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
       volume: VOLUME,
+      // Contributed by the active scene's `writeState`. Declared here anyway: this literal is the
+      // frame-state contract, and a field that only exists in one scene is exactly the kind that
+      // silently carries the other scene's last value.
+      modelView: false, modelSpin: 0, modelPrevSpin: 0,
     };
 
+    // ONLY THE SHARED CHAIN. Everything that draws a world belongs to a scene; what is left here is
+    // what every scene gets for free — resolve, bloom, flare, grade, and the buffer viewer.
     this.passes = {
-      scene: new ScenePass(gpu, this.targets, this.shaders),
       taa: new TaaPass(gpu, this.targets, this.shaders),
-      embers: new EmberPass(gpu, this.targets, this.shaders),
       bloom: new BloomPass(gpu, this.targets, this.shaders),
       flare: new LensFlarePass(gpu, this.targets, this.shaders),
       composite: new CompositePass(gpu, this.targets, this.shaders),
       debugview: new DebugViewPass(gpu, this.targets, this.shaders),
-      // THE SHIP, meshed from its SDF. Drawn after the rings and appending rather than clearing, which
-      // is what the solid layer was always meant to support - the pass header promised that another
-      // kind of solid would be a draw rather than another target, and this is that promise being cashed.
-      shipmesh: new SolidMeshPass(gpu, this.targets, this.shaders, {
-        label: 'ship-mesh',
-        shader: 'shipmesh.wgsl',
-        clear: false,
-        mesh: () => buildShipMesh().map((data, i) => {
-          const m = new Mesh(gpu.device, data, `ship-lod${i}`);
-          m.errorWorld = data.errorWorld;
-          return m;
-        }),
-        // The hull's sphere rides with the ship, centred on its position — an orientation cannot change
-        // a sphere, which is the whole reason this needs nothing but a position.
-        //
-        // The radius is used AS IS. `buildShipMesh` scales the vertices into world units before handing
-        // them to `concatMeshes`, so the radius measured from them is already world-space; multiplying
-        // by the mesh scale again shrank the sphere to 60% of the hull and would have culled the ship
-        // while part of it was still on screen. That was latent for exactly as long as the range was
-        // missing and the radius was Infinity.
-        worldSphere: (_id, r) => [
-          this.ship.pos[0], this.ship.pos[1], this.ship.pos[2], r.radius,
-        ],
-      }),
-      rings: new SolidMeshPass(gpu, this.targets, this.shaders, {
-        label: 'rings',
-        shader: 'rings.wgsl',
-        // Built at init, not here: the three hoops concatenated into one buffer, each vertex tagged
-        // with its ring index so one draw covers all of them and the vertex shader fetches each
-        // ring's precessing basis. Baked in ring-local space, which is what keeps the motion vectors
-        // exact - see meshgen.js.
-        mesh: () => new Mesh(gpu.device, concatMeshes(
-          Array.from({ length: RINGS.count }, (_, i) => rectTube({
-            segments: RINGS.segments, ...ringDims(i),
-          }))), 'rings'),
-        // A hoop's sphere is centred on the world origin and its radius does not depend on the
-        // precessing basis, so this needs nothing the CPU does not already have. The object-space radius
-        // from the mesh is already exactly that.
-        worldSphere: (_id, r) => [0, 0, 0, r.radius],
-      }),
-      // Fifteen boxes - five satellites, a bus and two array wings each - as ONE unit cube drawn fifteen
-      // times, each instance scaled and placed by the orbital frame its own instance index selects. They
-      // were analytic boxes intersected inside the scene march, which every ray in the frame paid for
-      // whether or not it went near one; see satmesh.wgsl for the rest of that trade.
-      //
-      // No `worldSphere`, so nothing is culled: the orbits are evaluated in WGSL and never reach the CPU,
-      // and a second copy of them in JavaScript to reject 180 triangles would cost more than it saves.
-      satellites: new SolidMeshPass(gpu, this.targets, this.shaders, {
-        label: 'satellites',
-        shader: 'satmesh.wgsl',
-        clear: false,
-        mesh: () => new Mesh(gpu.device, concatMeshes([box()]), 'satellites'),
-        instances: SATELLITES.count * 3,
-      }),
-      // Three instanced additive draws that differ only in their data — see AdditivePass. The
-      // `source` thunks are called when bind groups are built rather than captured now, so an
-      // owner is free to reallocate its buffer.
-      contrail: new AdditivePass(gpu, this.targets, this.shaders, {
-        label: 'contrail',
-        shader: 'contrail.wgsl',
-        vertices: (CONTRAIL.samples - 1) * 6,
-        instances: 2,                         // one per nacelle, selected by instance index
-        source: () => this.contrail.buffer,
-      }),
-      railgun: new AdditivePass(gpu, this.targets, this.shaders, {
-        label: 'railgun',
-        shader: 'railgun.wgsl',
-        vertices: RAIL.segments * 6,
-        instances: RAIL.pool * 2,             // two strands per shot
-        source: () => this.railgun.buffer,
-      }),
-      aurora: new AdditivePass(gpu, this.targets, this.shaders, {
-        label: 'aurora',
-        shader: 'aurora.wgsl',
-        vertices: (AURORA.samples - 1) * 6,
-        instances: AURORA.ribbons,
-        source: () => this.aurora.buffer,
-      }),
     };
+  }
 
-    // THE SOLID MESH PASSES, IN DRAW ORDER, as one list.
-    //
-    // Three things need this order and this membership: init, recording, and the wireframe flag. Listing
-    // them once means adding a fourth generated mesh cannot half-land — which it could when the order
-    // was spelled out three times, and did: the first solid to draw is the one that CLEARS the layer, so
-    // getting the list right in one place and wrong in another is a cleared buffer, not an error.
-    this.solidPasses = [this.passes.rings, this.passes.shipmesh, this.passes.satellites];
+  /** The active scene. */
+  get scene() { return this.scenes[this.sceneKey]; }
+
+  /**
+   * The player ship, when the active scene has one.
+   *
+   * A forwarding accessor rather than a field, because the ship belongs to the planetoid now. It exists
+   * because the benchmark suppresses auto-fire through it, and a probe reaching for `renderer.ship`
+   * should get `undefined` in a scene without one rather than a stale object from another.
+   */
+  get ship() { return this.scene.ship; }
+
+  /** Switch scenes. Both are already initialised, so this is a property change. */
+  setScene(key) {
+    if (!this.scenes[key] || key === this.sceneKey) return;
+    this.sceneKey = key;
+    // The history describes a world that no longer exists: reprojecting into it would smear the old
+    // scene across the first frames of the new one.
+    this.resetHistory();
   }
 
   async init() {
@@ -287,19 +168,17 @@ export class Renderer {
     // interchangeable across pipelines and never has to be rebuilt per pass.
     this.frameBGL = FrameUniforms.bindGroupLayout(d);
     this.frameBG = this.uniforms.bindGroup(this.frameBGL);
+    this._rc.frameBGL = this.frameBGL;
+    const rc = this._rc;
 
     await Promise.all([
-      this.passes.scene.init(this.frameBGL),
       this.passes.taa.init(this.frameBGL),
-      this.passes.embers.init(this.frameBGL),
       this.passes.bloom.init(this.frameBGL),
       this.passes.flare.init(this.frameBGL),
       this.passes.composite.init(this.frameBGL, this.gpu.format),
       this.passes.debugview.init(this.frameBGL, this.gpu.format, wgslDefines()),
-      ...this.solidPasses.map((m) => m.init(this.frameBGL, wgslDefines())),
-      this.passes.contrail.init(this.frameBGL, wgslDefines()),
-      this.passes.railgun.init(this.frameBGL, wgslDefines()),
-      this.passes.aurora.init(this.frameBGL, wgslDefines()),
+      // Every scene, not just the active one — see the constructor for why.
+      ...Object.values(this.scenes).map((sc) => sc.init(rc)),
     ]);
   }
 
@@ -355,23 +234,16 @@ export class Renderer {
       console.warn('dynamic resolution needs timestamp queries, which this adapter lacks; holding renderScale');
     }
 
-    // Projection first: it depends only on the viewport, and the camera folds it
-    // into the view matrix it is about to build.
-    this.ship.update(dt, input.cmd);
-    this.contrail.update(dt, this.ship);
-    // AUTO-FIRE while the ship is still cruising, so there is something to look at before anyone
-    // touches a key. A one-frame PULSE per period, not a held boolean: the rail gun deliberately
-    // triggers on a rising edge — holding it would fire once and then never again, which is the
-    // behaviour its own comment exists to explain.
-    let fire = !!input.cmd.fire;
-    if (!this.ship.flown) {
-      const slot = Math.floor(time / SHIP.autoFireEvery);
-      if (slot !== this._fireSlot) { this._fireSlot = slot; fire = true; }
-    }
-    this.railgun.update(time, this.ship, fire);
-    this.aurora.update(dt, time);
+    // Projection first: it depends only on the viewport, and the camera folds it into the view matrix
+    // it is about to build. Then the scene advances its own world and places the camera — which of
+    // those two things happens is the scene's business, not this method's.
     this.camera.setViewport(t.width, t.height);
-    this.camera.update(time, dt, input, this.ship);
+
+    const rc = this._rc;
+    rc.time = time;
+    rc.dt = dt;
+    rc.input = input;
+    this.scene.update(rc);
 
     // Sun screen positions, for the flare pass to anchor its streaks. 1e3 is the
     // sentinel the shader reads as "behind the camera", written in place so the
@@ -416,7 +288,6 @@ export class Renderer {
     st.exposure = FILM.gain;
     st.sunA = this._sunA;
     st.sunB = this._sunB;
-    st.ship = this.ship;
     st.taa = TEMPORAL;      // read live, so console tweaks take effect immediately
     st.march = MARCH;
     st.probe = PROBE;
@@ -426,55 +297,50 @@ export class Renderer {
     st.flareStrength = FLARE.strength;
     st.aurora = AURORA;
     st.volume = VOLUME;
-    st.auroraPhase = this.aurora.emitPhase;
+    // The scene's own fields last, so it can override anything above it.
+    this.scene.writeState(st, rc);
     this.uniforms.write(st);
 
     const encoder = this.gpu.device.createCommandEncoder({ label: 'frame' });
     this.profiler.beginFrame();
     const p = this.profiler;
-    const { scene, taa, embers, bloom, flare, composite } = this.passes;
+    const { taa, bloom, flare, composite } = this.passes;
+    const solids = this.scene.solidPasses;
 
     // DEBUG GROUPS around the phases, not around every pass.
     //
     // Each pass already labels its own render pass, which is what a capture lists; what a capture
     // cannot infer is the STRUCTURE - which passes belong to the same phase, and therefore which of
-    // them a change should be expected to move. These four names are the frame graph's own phases, so
-    // a capture reads the way the file above documents it. Free when no tool is attached.
+    // them a change should be expected to move. These names are the frame graph's own phases, so a
+    // capture reads the way the architecture document describes it. Free when no tool is attached.
+
     // Frustum planes once per frame, from the same matrix the vertex stages use, into a buffer that is
     // reused rather than reallocated.
     extractFrustum(this.camera.viewProj, this._frustum);
+    rc.frustum = this._frustum;
 
-    encoder.pushDebugGroup('scene');
-    scene.record(encoder, this.frameBG, p);
-    // Solids BEFORE taa: they carry exact motion vectors, so TAA can accumulate
-    // them, which is what anti-aliases their silhouettes and puts them in the bloom.
-    // The wireframe view swaps every solid mesh onto its line-list pipeline. Built on demand the first
-    // time the view is selected, and the flag only takes effect once it exists, so selecting it never
-    // stalls the frame waiting on a pipeline compile.
-    // LOD, once per frame per pass that has a chain. The distance is to the object's bounding sphere
-    // CENTRE, which is what the sphere-based culling already knows how to place — so the two share the
-    // same one fact about where an object is.
-    for (const m of this.solidPasses) {
-      if (!m.meshes || m.meshes.length < 2) continue;
-      const sphereOf = m.spec.worldSphere;
-      const s0 = sphereOf?.(0, m.mesh.ranges[0]);
-      if (!s0) continue;
-      const dx = s0[0] - this.camera.current.pos[0];
-      const dy = s0[1] - this.camera.current.pos[1];
-      const dz = s0[2] - this.camera.current.pos[2];
-      m.lod = selectLod(m.meshes, Math.hypot(dx, dy, dz), 1.2,
-                        Math.hypot(t.width, t.height), SHIP_MESH.lodErrorPx);
-    }
-
+    // LOD and the wireframe view apply to whatever the scene lists, because both are properties of how
+    // this renderer draws meshes rather than of what any scene contains.
     const view = this.debugView >= 0 ? VIEWS[this.debugView] : null;
     const wire = !!view?.wireframe;
-    for (const m of this.solidPasses) {
+    for (const m of solids) {
       m.wireframe = wire;
       if (wire) m.prepareWireframe(this.frameBGL, wgslDefines());
+      if (!m.meshes || m.meshes.length < 2) continue;
+      // The distance is to the object's bounding sphere CENTRE, which the sphere-based culling already
+      // knows how to place — so selection and culling share one fact about where an object is.
+      const s0 = m.spec.worldSphere?.(0, m.mesh.ranges[0]);
+      const c = this.camera.current.pos;
+      const dist = s0
+        ? Math.hypot(s0[0] - c[0], s0[1] - c[1], s0[2] - c[2])
+        // No sphere: the object is wherever the scene put it, and the only distance available is to
+        // whatever the camera is looking at. Good enough for a model on a turntable.
+        : this.camera.distance;
+      m.lod = selectLod(m.meshes, dist, 1.2, Math.hypot(t.width, t.height), SHIP_MESH.lodErrorPx);
     }
-    for (const m of this.solidPasses) m.record(encoder, this.frameBG, p, this._frustum);
-    // After the rings, into the same layer and the same depth buffer, so the two occlude each other by
-    // hardware depth rather than by anyone sorting them.
+
+    encoder.pushDebugGroup('scene');
+    this.scene.recordWorld(encoder, this.frameBG, p, rc);
     encoder.popDebugGroup();
 
     encoder.pushDebugGroup('resolve');
@@ -482,12 +348,7 @@ export class Renderer {
     encoder.popDebugGroup();
 
     encoder.pushDebugGroup('additive');
-    embers.simulate(encoder, this.frameBG, p);
-    embers.record(encoder, this.frameBG, p);
-    // Into the same additive target, right after the particles.
-    this.passes.contrail.record(encoder, this.frameBG, p);
-    this.passes.railgun.record(encoder, this.frameBG, p);
-    this.passes.aurora.record(encoder, this.frameBG, p);
+    this.scene.recordAdditive(encoder, this.frameBG, p, rc);
     encoder.popDebugGroup();
 
     encoder.pushDebugGroup('post');
@@ -519,10 +380,7 @@ export class Renderer {
   }
 
   destroy() {
-    this.contrail.destroy();
-    this.railgun.destroy();
-    this.aurora.destroy();
-    this.passes.embers.destroy?.();
+    for (const sc of Object.values(this.scenes)) sc.destroy();
     this.targets.destroy();
     this.profiler.destroy();
   }

@@ -79,7 +79,10 @@ struct Frame {
   // Per-channel white-balance gains, derived from FILM.temperature on the CPU. Last, because the
   // order of this struct IS the uniform layout - a field inserted anywhere else silently reinterprets
   // everything after it.
-  balance   : vec4f,   // xyz gains, w spare
+  balance   : vec4f,   // xyz gains, w buffer-viewer display mode
+  /// The model viewer: x turntable angle, y the same one frame ago, z spare, w 1 when it is active.
+  /// Zero in every other scene, which is what lets `w` gate the studio backdrop and the model layout.
+  model     : vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame : Frame;

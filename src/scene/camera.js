@@ -112,6 +112,47 @@ export class Camera {
   }
 
   /**
+   * Place the camera explicitly, for a scene that positions rather than orbits.
+   *
+   * The model viewer needs a fixed studio camera, and driving `update` toward one would mean teaching
+   * the drift-and-arcball logic about a mode it has no other reason to know. This does the same
+   * bookkeeping that path does — roll the previous basis and matrices forward first, rebuild both
+   * matrices after — so the temporal resolve cannot tell the difference between a camera that was
+   * orbited and one that was placed.
+   *
+   * @param {ArrayLike<number>} pos world position
+   * @param {ArrayLike<number>} fwd unit forward direction
+   * @param {number} [roll] radians about the view axis
+   */
+  lookAt(pos, fwd, roll = 0) {
+    this.previous.copyFrom(this.current);
+    this.prevViewProj.set(this.viewProj);
+
+    const c = this.current;
+    c.pos[0] = pos[0]; c.pos[1] = pos[1]; c.pos[2] = pos[2];
+    normalize(c.fwd, fwd[0], fwd[1], fwd[2]);
+
+    // Same guard as the orbit path relies on implicitly: an up reference parallel to the view
+    // direction collapses the cross product. Straight down is the one aim where that happens, and a
+    // studio camera looking down at a model is not far from it.
+    const upRef = Math.abs(c.fwd[1]) > 0.999
+      ? normalize(this._tmp, Math.sin(roll), 0, Math.cos(roll))
+      : normalize(this._tmp, Math.sin(roll), Math.cos(roll), 0);
+    const r = cross(this._tmp2, c.fwd, upRef);
+    normalize(c.right, r[0], r[1], r[2]);
+    cross(c.up, c.right, c.fwd);
+
+    m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
+    m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
+
+    if (this._first) {
+      this.previous.copyFrom(c);
+      this.prevViewProj.set(this.viewProj);
+      this._first = false;
+    }
+  }
+
+  /**
    * @param {number} time    seconds
    * @param {object} input   { dragging, x, y, width, height, everUsed }
    */

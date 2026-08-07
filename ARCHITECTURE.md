@@ -45,12 +45,51 @@ pass is one class plus one line. The shader include graph is kept deliberately s
 same reason — `brdf.wgsl` and `fibonacci.wgsl` were extracted precisely so that lighting a
 surface or drawing a star does not pull in the marched body.
 
+## Scenes
+
+The renderer draws a SCENE. There are two, and the split falls where the frame graph already had a
+seam.
+
+| | Owns |
+|---|---|
+| **Scene** (`scenes/*.js`) | the world: what exists, how it moves, where the camera goes, and the passes that draw it |
+| **Renderer** (`renderer.js`) | everything after the sample: temporal resolve, bloom, flare, grade, buffer viewer, and the frame uniform |
+
+`scenes/planetoid.js` is the original — the marched body, the rings, the ship, the satellites and the
+additive layer. `scenes/modelview.js` is a turntable for inspecting the generated meshes on their own,
+since there is no file to open in a modelling tool. Both are constructed and initialised at startup, so
+switching is a property change rather than a load; they share the ship's contoured mesh through a memo,
+so the second costs GPU buffers rather than another ~135 ms of contouring.
+
+The contract is six methods and a getter — `init`, `update`, `writeState`, `recordWorld`,
+`recordAdditive`, `destroy`, and `solidPasses`. LOD selection and the wireframe view apply to whatever
+a scene lists in `solidPasses`, because both are properties of how this renderer draws meshes rather
+than of what any scene contains: a new scene gets both by listing its passes.
+
+The alternative was an `if (modelView)` through `frame()`. That works for two scenes and collapses at
+three, and it puts the viewer's concerns inside the code that has to stay correct for the real scene. A
+scene that cannot reach into the frame graph cannot break it.
+
+**The model viewer still runs the march pass.** It needs a backdrop, a depth tag of "background"
+everywhere the model is not, and a motion sentinel, and the scene pass already produces all three; a
+`studio` flag in `raymarch.wgsl` drops the body, the plumes and the atmosphere and leaves the sky.
+Skipping it outright would leave the previous scene's samples in the buffer for the resolve to blend
+against. It also draws through the models' **own** shaders — a viewer with its own simplified shader
+shows you a model nothing else renders, and hides exactly the discrepancies you opened it to find.
+
+Two details are load-bearing rather than cosmetic. The model spins and the camera does not, because
+rotating the camera keeps the lighting fixed to the model and shows the same shading from every angle.
+And the studio sits 200 units from the world origin: the hull's material carries a core-light term
+falling off as 1/|p|², so a model at the origin would be lit by a planet the viewer deliberately does
+not draw — and a vertex landing exactly on it would normalise a zero vector. That distance is asserted
+in `dev/scenes.mjs` rather than left as a comment.
+
 ## The frame graph
 
 ```mermaid
 flowchart TD
     tilecull[tilecull: which tiles can reach the body] --> raymarch
-    raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag] --> taa
+    raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag<br/>sky only in the model viewer] --> taa
     solid[solid meshes: rings, ship hull, satellites<br/>rasterised opaque + exact motion vectors<br/>frustum + back-face culled, shared depth] --> taa
     taa[TAA resolve: depth-sort solid vs body,<br/>reproject, variance-clip, accumulate]
     taa --> bloom

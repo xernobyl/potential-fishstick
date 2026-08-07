@@ -1486,7 +1486,9 @@ export async function temporalShake(renderer, gpu, knobs, opts = {}) {
         // Autopilot fire OFF for the duration: a shot during the window is worth several multiples
         // of the figure being measured. Marking the ship flown is the switch for it, and it also
         // stops the barrel roll, which is a second event the metric would otherwise pick up.
-        renderer.ship.markFlown();
+        // Optional now that `renderer.ship` belongs to whichever scene is active: a probe run while the
+        // model viewer is up has no ship to quiet, and that is not an error.
+        renderer.ship?.markFlown();
         input.cmd.fire = false;
         if (c.pin) {
           // The arcball branch takes yaw and pitch straight from the pointer, so a fixed pointer

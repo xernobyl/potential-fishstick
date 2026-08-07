@@ -73,11 +73,21 @@ fn vs(v : MeshVertex, @builtin(instance_index) inst : u32) -> VOut {
   let sat = f32(inst / 3u);
   let part = inst % 3u;
 
-  let now = satPart(sat, part, frame.camPos.w);
-  // `misc.w` is dt. The orbits are analytic, so one frame ago is the same evaluation at an earlier
-  // time — no stored transforms, no velocity extrapolation, and exact for both the orbital motion and
-  // the arrays' sun-tracking rotation.
-  let prev = satPart(sat, part, frame.camPos.w - frame.misc.w);
+  // In the model viewer the same three boxes are laid out on a turntable instead of in orbit. Both
+  // layouts are parameterised on their own notion of "when", so the previous frame is an evaluation
+  // rather than a stored transform either way — which is what keeps the motion vector exact in both.
+  var now : SatPart;
+  var prev : SatPart;
+  if (frame.model.w > 0.5) {
+    now = satPartDisplay(part, frame.model.x);
+    prev = satPartDisplay(part, frame.model.y);
+  } else {
+    now = satPart(sat, part, frame.camPos.w);
+    // `misc.w` is dt. The orbits are analytic, so one frame ago is the same evaluation at an earlier
+    // time — no stored transforms, no velocity extrapolation, and exact for both the orbital motion
+    // and the arrays' sun-tracking rotation.
+    prev = satPart(sat, part, frame.camPos.w - frame.misc.w);
+  }
 
   // Unit cube -> this box's shape. Position scales; the normal does not need to, because both the box
   // and the scale are axis-aligned (see the header).
