@@ -48,6 +48,16 @@ export function buildGui(renderer, live = {}) {
     scene: renderer.sceneKey,
     model: MODELS[renderer.scenes.modelview.model].key,
   };
+
+  // SCENE FIRST, THEN MODEL. The model row is hidden outside the viewer, so with it added first the
+  // scene row jumped up a line every time you switched away from the viewer and back — the control
+  // you just used moving out from under the pointer. A row that appears and disappears has to be
+  // BELOW the one that controls it.
+  const sceneCtl = sceneFolder
+    .add(sceneProxy, 'scene', Object.fromEntries(
+      Object.entries(renderer.scenes).map(([key, sc]) => [sc.constructor.label, key])))
+    .onChange((key) => { renderer.setScene(key); syncModelVisibility(); });
+
   const modelCtl = sceneFolder
     .add(sceneProxy, 'model', Object.fromEntries(MODELS.map((m) => [m.label, m.key])))
     .onChange((key) => {
@@ -56,14 +66,10 @@ export function buildGui(renderer, live = {}) {
       // framing and would smear across the switch.
       renderer.resetHistory();
     });
+
   // lil-gui's own show/hide, not a style on the DOM node. A controller's `domElement.parentElement` is
-  // the FOLDER's children container, so setting display there hides every control in the folder — which
-  // it duly did, leaving an empty "Scene" panel with the scene selector inside it.
+  // the FOLDER's children container, so setting display there hides every control in the folder.
   const syncModelVisibility = () => { modelCtl.show(renderer.sceneKey === 'modelview'); };
-  const sceneCtl = sceneFolder
-    .add(sceneProxy, 'scene', Object.fromEntries(
-      Object.entries(renderer.scenes).map(([key, sc]) => [sc.constructor.label, key])))
-    .onChange((key) => { renderer.setScene(key); syncModelVisibility(); });
   syncModelVisibility();
 
   // WHAT IS ACTUALLY BEING DRAWN, in triangles.
