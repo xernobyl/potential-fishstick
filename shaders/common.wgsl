@@ -76,6 +76,10 @@ struct Frame {
   // ones worth sweeping while looking at the image, and as injected constants a slider bound to
   // one would move nothing. The rest of VOLUME is geometry and stays a constant.
   volume    : vec4f,   // x sigma, y ringOpacity, z g, w spare
+  // Per-channel white-balance gains, derived from FILM.temperature on the CPU. Last, because the
+  // order of this struct IS the uniform layout - a field inserted anywhere else silently reinterprets
+  // everything after it.
+  balance   : vec4f,   // xyz gains, w spare
 };
 
 @group(0) @binding(0) var<uniform> frame : Frame;

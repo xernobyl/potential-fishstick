@@ -43,6 +43,10 @@ export function buildGui(renderer, live = {}) {
   // First, because it is the one set of controls you reach for while LOOKING at the image
   // rather than while reasoning about it.
   const film = gui.addFolder('Film');
+  // Kelvin, and it reads like a camera's white balance: up warms, down cools. 1800 is candlelight and
+  // 12000 is deep shade, which is wider than anyone needs and cheap to allow. 3200 is where Eastman
+  // 50T actually sits; the default of 4750 is where the hand-picked balance it replaced sat.
+  film.add(FILM, 'temperature', 1800, 12000, 25).name('temperature (K)');
   // Folders a PRESET covers, keyed by a stable string of our own rather than by lil-gui's
   // private `_title`: the key ends up in saved JSON, so it must not move if a folder is
   // renamed or reordered.

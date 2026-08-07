@@ -40,10 +40,11 @@ fn filmGrade(c0 : vec3f) -> vec3f {
   let h = smoothstep(0.5, 1.4, hi);
   c += h * h * vec3f(0.12, 0.035, 0.005) * frame.grade.z;
 
-  // TUNGSTEN BALANCE, before the curve because it is a property of the SENSOR rather than of the
-  // print. See FILM.balance for the derivation; the print's cool-toe/warm-highlight split below is
-  // a separate stage and deliberately not where this lives.
-  c *= mix(vec3f(1.0), FILM_BALANCE, FILM_BALANCE_AMT);
+  // WHITE BALANCE, before the curve because it is a property of the SENSOR rather than of the print.
+  // Derived from FILM.temperature on the CPU - see whiteBalanceGains - and delivered as a uniform so
+  // the slider moves it live. The print's cool-toe/warm-highlight split below is a separate stage and
+  // deliberately not where this lives.
+  c *= frame.balance.rgb;
 
   c = hableCurve(c * frame.grade.x) / hableCurve(vec3f(frame.grade.y));
   c = pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2));   // display transfer

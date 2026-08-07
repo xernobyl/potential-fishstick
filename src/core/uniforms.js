@@ -1,3 +1,4 @@
+import { whiteBalanceGains } from '../scene/tuning.js';
 /**
  * The per-frame uniform block, shared by every pass as bind group 0.
  *
@@ -19,7 +20,7 @@
  *    frame, so a single write of the whole block beats several small ones.
  */
 
-export const FRAME_FLOATS = 160;                // 3 mat4x4 + 28 vec4
+export const FRAME_FLOATS = 164;                // 3 mat4x4 + 29 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
 /** Field offsets, in floats. Kept next to the WGSL struct in common.wgsl. */
@@ -72,6 +73,16 @@ const O = {
   aurora: 148,      // x gain, y rays, z grazeFade, w emission phase 0..1
   addRes: 152,      // xy additive-target size, zw 1/size
   volume: 156,      // x sigma, y ringOpacity, z g, w spare
+  // White-balance gains, derived from FILM.temperature. A uniform and not an injected const for the
+  // same reason the grade is: a const is baked at pipeline creation, so a slider bound to one moves
+  // nothing.
+  //
+  // APPENDED, and the block grew from 160 floats to 164 to hold it. There was no free slot: `volume`
+  // was already at 156, and the first version of this put `balance` there too - which does not
+  // collide loudly, it silently overwrites the atmosphere's sigma with a red gain. The WGSL struct
+  // below is what caught it, because a member has to exist in the struct at that offset and the
+  // order there is the layout. Anything added here goes at the END and grows FRAME_FLOATS.
+  balance: 160,     // xyz linear per-channel gains, w spare
 };
 
 export class FrameUniforms {
@@ -178,6 +189,15 @@ export class FrameUniforms {
     a[O.grade + 2] = gr.halation; a[O.grade + 3] = gr.saturation;
     a[O.grade2] = gr.vignette; a[O.grade2 + 1] = gr.grain;
     a[O.grade2 + 2] = gr.blackLift; a[O.grade2 + 3] = s.glow.strength;
+    // MEMOISED on the temperature: the derivation walks two polynomials and a matrix, which is
+    // nothing against a frame but is also pointless to redo when the slider has not moved.
+    if (gr.temperature !== this._wbK || gr.sceneTemperature !== this._wbScene) {
+      this._wbK = gr.temperature;
+      this._wbScene = gr.sceneTemperature;
+      this._wb = whiteBalanceGains(gr.temperature, gr.sceneTemperature);
+    }
+    a[O.balance] = this._wb[0]; a[O.balance + 1] = this._wb[1]; a[O.balance + 2] = this._wb[2];
+
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;
 

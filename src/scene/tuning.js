@@ -861,6 +861,54 @@ export function ringDims(i) {
   };
 }
 
+/**
+ * Per-channel linear gains that adapt a `sceneK` white point to a `targetK` one.
+ *
+ * Von Kries adaptation in the working RGB primaries: put both temperatures on the Planckian locus,
+ * convert to linear sRGB, take the ratio. Normalised on green, so moving the slider changes colour and
+ * not exposure - which matters because exposure is a separate control and a temperature slider that
+ * quietly dims the image is a slider nobody can reason about.
+ *
+ * The locus approximation is Kim et al. (1999), the cubic used everywhere for this; it is valid from
+ * 1667K to 25000K and the input is clamped to that, since outside it the polynomial diverges rather
+ * than degrading.
+ */
+export function whiteBalanceGains(targetK, sceneK) {
+  const xy = (K) => {
+    const T = Math.min(25000, Math.max(1667, K));
+    const t = 1000 / T;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const x = T < 4000
+      ? -0.2661239 * t3 - 0.2343589 * t2 + 0.8776956 * t + 0.179910
+      : -3.0258469 * t3 + 2.1070379 * t2 + 0.2226347 * t + 0.240390;
+    const x2 = x * x;
+    const x3 = x2 * x;
+    const y = T < 2222
+      ? -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683
+      : T < 4000
+        ? -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867
+        : 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
+    return [x, y];
+  };
+  // xy -> linear sRGB at Y = 1.
+  const rgb = ([x, y]) => {
+    const X = x / y;
+    const Z = (1 - x - y) / y;
+    return [
+      3.2404542 * X - 1.5371385 - 0.4985314 * Z,
+      -0.9692660 * X + 1.8760108 + 0.0415560 * Z,
+      0.0556434 * X - 0.2040259 + 1.0572252 * Z,
+    ];
+  };
+  const wt = rgb(xy(targetK));
+  const ws = rgb(xy(sceneK));
+  const g = [ws[0] / wt[0], ws[1] / wt[1], ws[2] / wt[2]];
+  // Green is the reference: it carries most of the luminance, so normalising there is what keeps the
+  // exposure fixed as the slider moves.
+  return [g[0] / g[1], 1.0, g[2] / g[1]];
+}
+
 export const PROBE = {
   /**
    * 1 = read the layer rotations from the injected table (lattice.js);
@@ -1269,20 +1317,33 @@ export const FILM = {
   /** The colour that floor is lifted toward. A look choice, not a level — stays a const. */
   black: [0.026, 0.024, 0.030],
   /**
-   * TUNGSTEN BALANCE, the one thing about 5251 that is not a curve. The stock is balanced for
-   * 3200K: its blue layer carries the extra sensitivity that tungsten's blue-deficient spectrum
-   * needs, so a whiter source over-exposes that layer and the frame goes cold. Shooting 50T in
-   * daylight without an 85B on the lens is exactly this, and it is why period daylight exteriors
-   * on tungsten stock read icy.
+   * WHITE BALANCE, in kelvin: the temperature the film treats as neutral.
    *
-   * Von Kries channel gains for a D65-referred scene adapted to a 3200K sensor balance,
-   * normalised on green so the exposure does not move with the amount. A sensor property, so the
-   * composite applies it in LINEAR light ahead of the tone curve, not in the print split-tone.
+   * Reads like a camera's white-balance setting, and behaves like one - raise it and the image warms,
+   * lower it and the image cools - because that is exactly what it is. The scene is rendered
+   * D65-referred, so the gains adapt D65 into this white point; at 6500 they are (1,1,1) and nothing
+   * happens.
+   *
+   * DERIVED, not dialled. `whiteBalanceGains` puts the temperature on the Planckian locus (the Kim
+   * cubic, valid 1667-25000K), converts both white points to linear sRGB and takes the per-channel
+   * ratio, normalised on green so exposure does not move with the slider. That is von Kries
+   * adaptation, and doing it properly is what makes the slider behave predictably across its whole
+   * range instead of only near where it was tuned.
+   *
+   * WHY 4750 AND NOT 3200. Eastman 50T is balanced for 3200K, and 3200 here is physically honest: it
+   * gives gains of (0.55, 1.00, 2.80) and reads far colder than this project has ever looked. The
+   * hand-picked triple this replaces was (0.87, 1.00, 1.42) - a much milder adaptation - and the
+   * temperature that reproduces its blue-to-red ratio is 4740. So the default preserves the look that
+   * was there, and the physically-correct 50T value is one drag away if you want it.
+   *
+   * A green-magenta tint axis is the usual companion to this in a grading tool, and is deliberately
+   * absent: there is nothing in this scene that needs it, and a knob with no subject is a knob that
+   * gets set wrong.
    */
-  balance: [0.87, 1.0, 1.42],
-  /** How much of it. 1 = uncorrected 50T under this sun, 0 = an 85B on the lens. Both are real
-   *  choices; this is the look the stock has when nobody filters for it. */
-  balanceAmount: 1.0,
+  temperature: 4750,
+  /** What the scene's own illuminant is taken to be. D65 because the sky and suns are authored that
+   *  way; it exists so the adaptation has a stated reference rather than an implied one. */
+  sceneTemperature: 6500,
   /**
    * Contrast about a mid pivot, applied AFTER the display transfer.
    *
@@ -1509,8 +1570,6 @@ export function wgslDefines() {
     // film
     // Only the look CONSTANTS remain compile-time; every level is a uniform now.
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
-    FILM_BALANCE: `vec3f(${FILM.balance.map(f).join(', ')})`,
-    FILM_BALANCE_AMT: f(FILM.balanceAmount),
     FILM_PIVOT: FILM.pivot,
     // tiling
     TILE: int(QUALITY.tile),
