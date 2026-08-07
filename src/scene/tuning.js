@@ -1139,14 +1139,46 @@ export const VOLUME = {
   ringSpread: 0.10,
 };
 
+/**
+ * Graded for EASTMAN COLOR NEGATIVE 50T 5251 - the 1962 stock, EI 50, tungsten-balanced at 3200K,
+ * superseded by 5254 in 1968. Every value below is reasoned from a published characteristic of that
+ * emulsion rather than picked by eye, so each one can be argued with:
+ *
+ *   white 13.4       A negative has a long shoulder and enormous highlight latitude. Raising the
+ *                    white point stretches the shoulder so the suns and the rail gun roll off
+ *                    instead of clipping - the single most recognisable negative behaviour.
+ *   contrast 1.01    Camera negative gamma is around 0.55-0.65; the print stock supplies the rest
+ *                    of the system gamma. A 1960s stock is flatter still than a modern one, so the
+ *                    S-curve here backs off to nearly straight.
+ *   pivot 0.38       Lower pivot with the flatter curve, which keeps the midtones where the old
+ *                    long straight-line portion put them rather than lifting the whole frame.
+ *   blackLift 0.021  The toe is long and soft. Film has no true black: the base plus fog sets a
+ *                    floor, and this is that floor.
+ *   black triplet    Warm and very slightly green, because the 1962 dye set has a weak cyan layer
+ *                    and high unwanted absorptions. That is what makes period footage read amber in
+ *                    the shadows rather than neutral.
+ *   saturation 0.94  Same cause, other end: dye crosstalk means the primaries are not clean, so
+ *                    the palette is muted next to a modern stock. Pastel, not punchy.
+ *   halation 1.42    Pronounced, and red-weighted. Anti-halation backing on this generation was
+ *                    far less effective than today's, so bright sources bleed a red-orange corona.
+ *   grain 0.026      EI 50 is a slow, fine-grain stock - but a 1962 EI 50 is roughly a modern
+ *                    EI 200 in grain terms, so this comes down only slightly rather than to zero.
+ *
+ * WHAT THIS IS NOT. A real match needs the densitometry, not a grade: per-channel D-logE curves for
+ * the three layers, a 3x3 crosstalk matrix for the unwanted absorptions, and the print stock's own
+ * curve on top. That is a shader change and it is the honest way to do this; these numbers are the
+ * closest the existing analytic grade can get without one. The tungsten balance in particular is
+ * NOT applied here - 3200K stock under a daylight-ish sun wants an 85B correction, and faking the
+ * cast with the black point would be a different look, not this one.
+ */
 export const FILM = {
   /** Pre-grade linear gain, applied to the scene before the curve sees it. */
   gain: 0.84,
   /** Input scale into the tone curve. Together with `white` this places the shoulder. */
   exposure: 2.0,
-  white: 11.2,
-  halation: 1.0,
-  grain: 0.032,
+  white: 13.4,
+  halation: 1.42,
+  grain: 0.026,
   /**
    * How much of the physical vignette to apply, 0 = none, 1 = the full cosine-fourth law.
    *
@@ -1158,7 +1190,7 @@ export const FILM = {
    * back up, so a high amount lands near where the old post-gamma term did.
    */
   vignette: 0.85,
-  saturation: 1.06,
+  saturation: 0.94,
   /**
    * How much the black floor is LIFTED toward `black`, 0..1. The dominant control over how
    * dark the sky reads, and by a long way: the background is near zero almost everywhere, so
@@ -1166,9 +1198,9 @@ export const FILM = {
    * Print film never reaches zero, so some lift is the honest look — but 0.035 was enough to
    * put a visible grey wash behind the stars.
    */
-  blackLift: 0.014,
+  blackLift: 0.021,
   /** The colour that floor is lifted toward. A look choice, not a level — stays a const. */
-  black: [0.020, 0.023, 0.032],
+  black: [0.026, 0.024, 0.030],
   /**
    * Contrast about a mid pivot, applied AFTER the display transfer.
    *
@@ -1177,8 +1209,8 @@ export const FILM = {
    * Pivoting after the transfer opens the gap between the sky and everything in front of it
    * while leaving the midtones where they were, which is what "more contrast" actually means.
    */
-  contrast: 1.10,
-  pivot: 0.42,
+  contrast: 1.01,
+  pivot: 0.38,
 };
 
 /**
