@@ -49,6 +49,7 @@ async function boot() {
   // without the canvas having focus, and ignored while a modifier is held so they
   // never eat a browser shortcut.
   let gui = null;
+  let recording = false;
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key.toLowerCase();
@@ -56,6 +57,39 @@ async function boot() {
       e.preventDefault();
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
+    } else if (k === 'r') {
+      e.preventDefault();
+      if (recording) { console.warn('already recording'); return; }
+      recording = true;
+      // Imported on demand, like the panel: a video encoder and a muxer have no business in the
+      // startup path of a renderer.
+      import('./dev/record.js').then(async (m) => {
+        const wasRunning = running;
+        running = false;
+        let last = -1;
+        try {
+          console.log('recording 15s @ 1080p30 — the render is offline, so this takes longer than 15s');
+          const r = await m.recordVideo(renderer, gpu, TUNING.QUALITY, {
+            seconds: 15, fps: 30, width: 1920, height: 1080,
+            onProgress: ({ frame, total }) => {
+              const pc = Math.floor((frame / total) * 10);
+              if (pc !== last) { last = pc; console.log(`  ${frame}/${total}`); }
+            },
+          });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(r.blob);
+          a.download = 'beep-1080p30.mp4';
+          a.click();
+          URL.revokeObjectURL(a.href);
+          console.log(`recorded ${r.frames} frames, ${(r.blob.size / 1e6).toFixed(1)} MB, `
+            + `${(r.encodeMs / 1000).toFixed(1)}s wall`);
+        } catch (err) {
+          console.error('recording failed', err);
+        } finally {
+          recording = false;
+          if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
+        }
+      });
     } else if (k === 'g') {
       e.preventDefault();
       if (gui) { gui.destroy(); gui = null; return; }

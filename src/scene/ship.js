@@ -90,6 +90,8 @@ export class Ship {
     /** Cosmetic lean, and the engine states the jets read. */
     this.bank = 0;
     this.throttle = 0;
+    // Set once the player takes over; see `update`.
+    this._flown = false;
     this.reverse = 0;
 
     /** Orientation, world <- body; body +Z nose, +Y up. Derived every frame. */
@@ -165,8 +167,17 @@ export class Ship {
 
     // ---- thrust: forward and reverse along the nose ----------------------
     // cmd.pitch is the up/down axis: up accelerates, down accelerates backwards.
-    const fwdCmd = Math.max(0, cmd.pitch) + cmd.thrust;
+    var fwdCmd = Math.max(0, cmd.pitch) + cmd.thrust;
     const revCmd = Math.max(0, -cmd.pitch);
+
+    // CRUISE UNTIL FLOWN. With no input the ship used to sit still, which meant the contrails —
+    // the whole reason it is here — only existed if someone was holding a key. It now runs at full
+    // throttle until the player actually flies it, and then never again.
+    //
+    // Latched on FLIGHT input specifically, not on `input.everUsed`: that also latches on a drag,
+    // so merely orbiting the camera to look at the thing would have stopped it.
+    if (fwdCmd > 0 || revCmd > 0 || cmd.yaw !== 0) { this._flown = true; }
+    if (!this._flown) { fwdCmd = 1; }
     this.throttle += (Math.min(1, fwdCmd) - this.throttle) * Math.min(1, dt * T.throttleRate);
     this.reverse += (revCmd - this.reverse) * Math.min(1, dt * T.throttleRate);
 

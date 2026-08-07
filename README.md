@@ -86,6 +86,8 @@ behind `g` rather than anything automatic — see the dynamic-resolution idea be
   nothing, so hammer it.
 - **C** — toggle between the chase camera and the free orbit camera.
 - **F** — fullscreen.
+- **R** — record 15 s of 1080p at a constant 30 fps to an MP4, then download it. The render is
+  OFFLINE, so it takes about 50 s of wall time and the result is smooth regardless — see below.
 - **G** — the tuning panel: exposure and the whole film grade, glow, camera, auroras, and the
   temporal knobs. Loaded on first press, so it costs nothing until you want it.
 
@@ -206,6 +208,31 @@ queue depth. It stalls, so its frame time is not a throughput figure.
 WebGPU canvas any other way: `drawImage` returns transparent black, since the swapchain texture is
 released the moment it is presented. The frame has to be copied out during the frame that drew it,
 which needs the renderer's cooperation. Pass a scale to downsize — `beep.shot(0.5)`.
+
+### Recording it
+
+Press `r`. Fifteen seconds, 1920x1080, constant 30 fps, downloaded as an MP4.
+
+It is an OFFLINE render, which is the whole point. Frames are driven on a synthetic clock at exactly
+1/fps and each is stamped with the time it REPRESENTS, so a frame that takes 90 ms to march still
+occupies 33.3 ms of video. Constant frame rate by construction, however slow the renderer is — about
+50 s of wall time for 15 s of footage.
+
+That is cheap to build only because `renderer.frame(time, input)` already takes its clock as an
+argument, the same property every instrument here relies on. The recorder is that loop with an
+encoder attached, and it borrows the instruments' neutral input rather than defining a second one.
+
+Two things it deliberately does not do. It does not use `MediaRecorder` with `captureStream()`,
+which is the obvious route and the wrong one: that is a realtime pipeline that timestamps by wall
+clock, so a 25 fps render gives dropped and duplicated frames and a variable rate, and
+`requestFrame()` does not fix the timestamps. WebCodecs hands you the timestamp, which is the
+control this needs. And it does not build the `VideoFrame` from the canvas, because a WebGPU canvas
+cannot be read as an image source — the swapchain texture is released at present time, so
+`drawImage` and anything like it return transparent black. The frame is copied out of the swapchain
+during the frame that drew it and handed over as a raw buffer, which also lets the surface's native
+BGRA pass through with no channel swizzle.
+
+`mp4-muxer` (MIT) is vendored beside lil-gui: WebCodecs emits raw encoded chunks, not a container.
 
 ### The headless checks
 
