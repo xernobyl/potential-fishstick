@@ -15,6 +15,7 @@ import { benchmark, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, match
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
 const keysEl = document.getElementById('keys');
+const viewEl = document.getElementById('view');
 const fatalEl = document.getElementById('fatal');
 
 function fatal(title, detail) {
@@ -106,9 +107,7 @@ async function boot() {
       e.preventDefault();
       // -1 is the normal composite, then each buffer in turn, then back.
       renderer.debugView = renderer.debugView + 1 >= VIEWS.length ? -1 : renderer.debugView + 1;
-      const v = renderer.debugView;
-      console.log(`[buffer] ${v < 0 ? 'off — normal composite' : VIEWS[v].name}`);
-      if (overlay === 1) keysEl.textContent = controlsText();
+      syncViewLabel();
     } else if (k === 'j') {
       e.preventDefault();
       setJitter(!jitterOn);
@@ -529,6 +528,23 @@ async function boot() {
     return overlay;
   }
 
+  /**
+   * Name the buffer on screen, and keep the controls list in step.
+   *
+   * Called from the key handler for an immediate response, and from the HUD tick so a change made in
+   * the panel instead of by keypress is picked up too — within half a second, which is the panel's
+   * own cadence and imperceptible for a dropdown you just clicked.
+   */
+  function syncViewLabel() {
+    const v = renderer.debugView;
+    const name = v < 0 ? '' : VIEWS[v].name;
+    viewEl.style.display = v < 0 ? 'none' : 'block';
+    // The mode matters as much as the buffer: the same accumulation texture appears twice in the
+    // cycle, once as colour and once as its depth tag.
+    if (v >= 0) viewEl.textContent = `buffer ${v + 1}/${VIEWS.length}  ${name}`;
+    if (overlay === 1) keysEl.textContent = controlsText();
+  }
+
   function loop(now) {
     if (!running) return;
     // FROZEN holds the clock AND the input. The clock alone stops the world - the camera drift, the
@@ -553,7 +569,7 @@ async function boot() {
       frames = 0;
       lastHud = now;
       updateHud(renderer, gpu, fps);
-      if (overlay === 1) keysEl.textContent = controlsText();
+      syncViewLabel();
     }
 
     requestAnimationFrame(loop);

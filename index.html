@@ -18,6 +18,12 @@
   #perf { right:16px; top:14px; text-align:right; white-space:pre; opacity:.75; display:none; }
   /* Controls, bottom-left. Same treatment as the perf readout so the two read as one HUD. */
   #keys { left:16px; bottom:14px; white-space:pre; opacity:.72; display:none; }
+  /* The buffer viewer's label. Independent of the `g` cycle on purpose: if you are looking at a
+     motion-vector buffer you need to know that is what it is, whether or not the controls are up. */
+  #view {
+    left:16px; top:14px; display:none;
+    color:#ffd7a8; background:#1a1020cc; padding:3px 8px; border-radius:3px;
+  }
 
   #fatal {
     position:fixed; inset:0; z-index:9; display:none; place-content:center;
@@ -31,6 +37,7 @@
   <div id="stage"><canvas id="gpu"></canvas></div>
   <pre class="hud" id="perf"></pre>
   <pre class="hud" id="keys"></pre>
+  <pre class="hud" id="view"></pre>
 
   <div id="fatal"></div>
 

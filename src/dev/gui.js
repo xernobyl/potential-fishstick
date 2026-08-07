@@ -17,6 +17,7 @@
  */
 
 import GUI from '../../vendor/lil-gui.esm.js';
+import { VIEWS } from '../passes/debugview.js';
 import { FILM, GLOW, FLARE, CAMERA, AURORA, VOLUME, TEMPORAL, QUALITY } from '../scene/tuning.js';
 
 const STORE = 'beep.presets';
@@ -165,6 +166,12 @@ export function buildGui(renderer, live = {}) {
     mon.additive = size(t.addWidth, t.addHeight);
     mon.converged = renderer.accumFrames;
     for (const c of monCtrls) c.updateDisplay();
+    // The `b` key writes renderer.debugView directly, so pull it back in rather than assuming the
+    // dropdown is the only writer.
+    if (viewState.buffer !== renderer.debugView) {
+      viewState.buffer = renderer.debugView;
+      viewCtrl.updateDisplay();
+    }
   };
   // ---- traces ----
   //
@@ -233,6 +240,17 @@ export function buildGui(renderer, live = {}) {
   // Each button runs one and leaves its headline here; the full report still goes to the console,
   // because a single number is a summary and the reports exist to stop it being read alone.
   const result = { last: 'idle' };
+  // ---- the buffer viewer ----
+  //
+  // A control rather than a readout, so the panel can select as well as report - and kept in step
+  // with the `b` key by `refresh` below, because either can change it. The list comes from
+  // passes/debugview.js so the panel cannot drift from what the pass can actually show.
+  const viewNames = { 'off (composite)': -1 };
+  VIEWS.forEach((v, i) => { viewNames[v.name] = i; });
+  const viewState = { buffer: -1 };
+  const viewCtrl = gui.add(viewState, 'buffer', viewNames).name('show buffer')
+    .onChange((v) => { renderer.debugView = v; });
+
   const measure = gui.addFolder('Measure').close();
   const resultCtrl = measure.add(result, 'last').name('result').disable();
   const run = (label, fn, headline) => measure.add({

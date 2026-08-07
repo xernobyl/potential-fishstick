@@ -102,6 +102,14 @@ Press **`g`** to put this list on screen; `g` again for the tuning panel, again 
   resolution. Worth knowing: this is *not* where jitter comes from, and turning it off makes a
   frozen frame slightly less stable, because native resolution is sharper and carries four times
   the independent samples.
+- **B** — cycle the intermediate buffers onto the screen: scene before the resolve, the
+  accumulation, its depth tag, the motion vectors, the additive layer, the rings' solid target, off.
+  The name of what you are looking at appears top-left, whether or not the controls are up, and the
+  tuning panel has the same list as a dropdown. It REPLACES the composite rather than drawing over
+  it — the point is to see the buffer, not the buffer under a film grade — and every pass upstream
+  still runs, so the timings stay comparable to a normal frame. The motion-vector view is the most
+  useful of them: it shows at a glance which things can say where they were last frame (the rings,
+  the ship, the satellites) and which fall back to camera reprojection (the body, the sky).
 - **J** — the pixel jitter on/off. Off means no antialiasing; with it off and the scene frozen the
   frame is bit-exact, which is the baseline every stability figure here is measured against.
 - **F** — fullscreen.
