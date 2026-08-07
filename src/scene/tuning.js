@@ -1074,12 +1074,13 @@ export const VOLUME = {
   /**
    * Samples along the ray, inside the shell.
    *
-   * Low on purpose. The step offset moves every frame and the pass runs upstream of the temporal
-   * resolve, so a handful of accumulated frames converge these 12 into a smooth integral. Raising
-   * it trades frame time for a shorter convergence, which is the wrong way round in a renderer
-   * that already accumulates — the same argument as one lens sample per frame rather than sixteen.
+   * The step count now carries the quality on its own, because the sample offset is frame-STATIC.
+   * It used to advance every frame and lean on the accumulation to converge it, which was wrong:
+   * feeding per-frame noise to a variance-clipped accumulator widens its clip box and admits stale
+   * history across the whole image, and measured, that tripled the marched image's high-frequency
+   * wobble. See volStepOffset. So these steps buy smoothness directly rather than borrowing it.
    */
-  steps: 12,
+  steps: 20,
   /** Samples for the EXTINCTION-only integral the additive layer uses. Fewer, because there are no
    *  shadows in it to resolve and it runs per vertex — see `volTransmittance`. */
   trSteps: 6,

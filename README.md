@@ -659,6 +659,24 @@ the full reasoning; these are the ones worth knowing up front:
   The five things that DO keep state already store it as parallel typed arrays, which is the layout
   an ECS exists to produce. A registry over them would add indirection and a scheduler to a problem
   that has neither dynamic composition nor a mix of behaviours to dispatch between.
+- **Feeding per-frame noise to a variance-clipped accumulator poisons the WHOLE image.** The
+  volumetric march jittered its sample offset every frame and leaned on the resolve to converge the
+  integral — the same trade this renderer makes everywhere else, and here it was wrong.
+  A variance clip builds its box from the 3x3 neighbourhood of the CURRENT sample. A noisier sample
+  is a wider box, and a wider box admits more stale history — everywhere, not only where the noise
+  was. The atmosphere covers most of the screen, so one deliberately-noisy term degraded everything.
+  Measured with `beep.subpixel()`, which is what found it: the accumulation buffer's high-frequency
+  wobble under sub-pixel camera motion read 2.37%, against 0.33% for the additive layer that has no
+  antialiasing at all. Seven times worse in the part of the pipeline that is supposed to be filtered.
+  Making the dither frame-STATIC — spatial interleaved-gradient noise, no temporal term — took it to
+  1.274%, and the step count went 12 to 20 to carry the quality directly instead of borrowing it
+  from the accumulation. The residual above the pre-atmosphere 0.80% is the integral's genuine
+  reprojection error: a view-ray integral has no motion vector, so some disagreement with the
+  history is inherent to computing it upstream of the resolve, which is a deliberate trade.
+  It also removed the THIRD independent source of per-frame randomness. There should be one — the
+  shared `frame.jitter`, expressed as a ray offset by the compute passes and a clip offset by the
+  raster ones. Two expressions of one number is inherent to having both; a third number of its own
+  was not, and it was the one causing the damage.
 - **CLOSED: the "lag regression" was the metric's denominator, not lag.** `beep.lag()` reports
   `lag / noiseFloor`, and reading that ratio as a regression signal is wrong because the floor moves
   far more than the numerator does. Measured across render scales and aperture settings, absolute

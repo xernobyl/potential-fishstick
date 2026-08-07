@@ -128,21 +128,30 @@ fn ringShadow(rings : array<RingOccluder, RING_COUNT>, p : vec3f, L : vec3f) -> 
   return sh;
 }
 
-/// Where in its step each sample sits: interleaved gradient noise, advanced by the golden ratio
-/// every frame.
+/// Where in its step each sample sits: interleaved gradient noise (Jimenez), spatial only.
 ///
-/// Both halves matter. The spatial term (Jimenez) decorrelates neighbouring pixels so a 12-step
-/// march reads as dither rather than as twelve visible shells. The temporal term makes the
-/// sequence low-discrepancy in time, so the accumulation converges on the true integral quickly
-/// instead of wandering — the same reason the camera's own jitter uses a low-discrepancy sequence
-/// rather than white noise.
+/// FRAME-STATIC, and the first version was not — it advanced by the golden ratio every frame so
+/// the accumulation would converge the integral. That reasoning was wrong, and measurably so.
 ///
-/// Deliberately independent of `frame.jitter`. That offset moves the RAY, and it is not applied by
-/// the raster passes at all, so reusing it would leave the rings' volumetrics unjittered and
-/// banded while the body's converged.
-fn volStepOffset(px : vec2f, fi : f32) -> f32 {
-  let ign = fract(52.9829189 * fract(dot(px, vec2f(0.06711056, 0.00583715))));
-  return fract(ign + fi * 0.61803398875);
+/// Injecting per-frame noise into a VARIANCE-CLIPPED accumulator does not just add noise that
+/// averages away. The clip box is built from the 3x3 neighbourhood of the CURRENT sample, so a
+/// noisier sample means a wider box, and a wider box admits more stale history — everywhere, not
+/// only where the noise was. Measured: the accumulation buffer's high-frequency wobble under
+/// sub-pixel camera motion went from 0.80% before this pass existed to 2.37% with the temporal
+/// term, against 0.33% for the un-antialiased additive layer. The atmosphere covers most of the
+/// screen, so this was the dominant shimmer in the whole image.
+///
+/// Static, the integral is a deterministic function of pixel and camera. It changes between frames
+/// only by as much as the view genuinely changed, which is exactly what the resolve is built to
+/// reproject — the same contract every other part of this renderer honours. The step count carries
+/// the quality instead, and the spatial dither keeps it from reading as shells.
+///
+/// This also removes the THIRD independent source of per-frame randomness. There should be one: the
+/// shared `frame.jitter`, expressed as a ray offset by the compute passes and as a clip offset by
+/// the raster ones (see `jitterClip`). Two expressions of one number is inherent; a third number of
+/// its own was not.
+fn volStepOffset(px : vec2f) -> f32 {
+  return fract(52.9829189 * fract(dot(px, vec2f(0.06711056, 0.00583715))));
 }
 
 /**
@@ -200,7 +209,7 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
   if (t1 <= t0) { return out; }
 
   let dt = (t1 - t0) / f32(VOL_STEPS);
-  let jit = volStepOffset(px, frame.misc.z);
+  let jit = volStepOffset(px);
 
   // The phase function is constant along the ray — the suns are directional — so it is evaluated
   // once rather than per step. CORNETTE-SHANKS rather than Henyey-Greenstein: same forward lobe
