@@ -688,6 +688,76 @@ export const RAIL = {
   gain: 2.6,
   hot: [1.1, 0.85, 1.35],
   cold: [0.32, 0.55, 1.15],
+
+  // ---- the POWER SHOT ----
+  //
+  // Hold the trigger, let go, and something much bigger leaves the gun. The charge is integrated on
+  // the renderer's own clock rather than a wall clock, so freezing or pausing the scene freezes the
+  // charge with it — one clock, and the instruments keep working.
+
+  /** Seconds of holding to reach a full charge. Long enough to feel like a commitment. */
+  chargeTime: 1.6,
+  /**
+   * How far in you have to be before a release counts as a power shot rather than a tap.
+   *
+   * Not zero, and not close to it: every ordinary shot ends with a release too, so this is the whole
+   * boundary between "I fired" and "I charged". A quarter of the way in is past any accidental hold.
+   */
+  chargeMin: 0.25,
+  /** Multipliers at FULL charge. A power shot is the same beam, drawn much harder. */
+  powerLength: 2.6,
+  powerRadius: 9.0,
+  powerWidth: 2.4,
+  /**
+   * Brightness multiplier at full charge.
+   *
+   * MODEST, because the bloom does the drama. Driven at 2.6 the core clipped to white, the pyramid
+   * spread it across a third of the frame, and the spirals — the thing that makes the shot read as a
+   * power shot rather than a bright line — disappeared inside their own glow. The beam should be the
+   * brightest thing on screen without being the only thing on screen.
+   */
+  powerGain: 1.45,
+  powerLife: 2.1,
+  /** Strands in the helix. Two for a normal shot; the rest spiral in with charge. */
+  strands: 6,
+  /**
+   * Turns, relative to an ordinary shot's.
+   *
+   * BELOW ONE, and that is the opposite of the first guess. A power shot is nearly three times longer,
+   * so keeping the same turns-per-unit wound thirteen turns into it and the spiral aliased into a
+   * bright tube. Fewer, slower turns over a longer beam is what actually reads as a spiral.
+   */
+  powerTurns: 0.42,
+
+  // ---- sparks ----
+  /** Spark billboards per shot. They cost one collapsed vertex each when unused. */
+  sparks: 28,
+  sparkLife: 0.9,
+  sparkSpeed: 3.4,
+  /**
+   * Billboard radius, world units.
+   *
+   * SMALL. The first pass had these at 0.055 growing to 0.107 on a power shot, which is a third of the
+   * hull's radius — they read as floating orbs rather than as sparks, and a spark that is not small is
+   * just a light. A tenth of the hull is about right: individually tiny, collectively a burst.
+   */
+  sparkSize: 0.018,
+  /** Sideways spread of the burst, as a fraction of the forward speed. */
+  sparkSpread: 0.85,
+  sparkGain: 3.6,
+  /** Sparks drawn while CHARGING, spiralling inward to the muzzle. */
+  chargeSparks: 20,
+  chargeRadius: 0.45,
+  chargeGain: 2.2,
+
+  /**
+   * Peak angular kick at full charge, radians. Small: a camera that swings reads as a bug.
+   *
+   * Only the SIZE of the kick lives here, because that is a property of the weapon. How the camera
+   * responds to being kicked — how fast it settles, how quickly it wobbles — is the camera's, and sits
+   * in CAMERA beside the rest of its behaviour.
+   */
+  shake: 0.035,
 };
 
 export const MEDIUM = {
@@ -849,6 +919,10 @@ export const CAMERA = {
   /** Time constant in SECONDS, not a per-frame fraction — see camera.js. Larger is
    *  lazier; this is the lag that makes a follow camera readable rather than rigid. */
   chaseTau: 0.28,
+  /** How fast a shake settles. A time constant in seconds, never a per-frame fraction. */
+  shakeDecay: 0.13,
+  /** Shake frequency, radians per second. Fast enough to read as an impact rather than a wobble. */
+  shakeFreq: 47.0,
 
   /** Slight roll, so the frame is never quite level — handheld, not bolted down. */
   roll: 0.16,
@@ -1569,6 +1643,29 @@ export function wgslDefines() {
     RAIL_GAIN: RAIL.gain,
     RAIL_HOT: `vec3f(${RAIL.hot.map(f).join(', ')})`,
     RAIL_COLD: `vec3f(${RAIL.cold.map(f).join(', ')})`,
+    // The muzzle, needed by the charge swarm — it gathers at the wing tips the shots leave from, and
+    // reading them from the same constants is what keeps the two in the same place.
+    RAIL_SPREAD: RAIL.spread,
+    RAIL_UP: RAIL.up,
+    RAIL_FORWARD: RAIL.forward,
+    RAIL_POOL: int(RAIL.pool),
+    // the power shot
+    RAIL_STRANDS: f(RAIL.strands),
+    RAIL_POWER_LENGTH: RAIL.powerLength,
+    RAIL_POWER_RADIUS: RAIL.powerRadius,
+    RAIL_POWER_WIDTH: RAIL.powerWidth,
+    RAIL_POWER_GAIN: RAIL.powerGain,
+    RAIL_POWER_LIFE: RAIL.powerLife,
+    RAIL_POWER_TURNS: RAIL.powerTurns,
+    // sparks
+    RAIL_SPARKS: f(RAIL.sparks),
+    RAIL_SPARK_LIFE: RAIL.sparkLife,
+    RAIL_SPARK_SPEED: RAIL.sparkSpeed,
+    RAIL_SPARK_SIZE: RAIL.sparkSize,
+    RAIL_SPARK_SPREAD: RAIL.sparkSpread,
+    RAIL_SPARK_GAIN: RAIL.sparkGain,
+    RAIL_CHARGE_SPARKS: f(RAIL.chargeSparks),
+    RAIL_CHARGE_RADIUS: RAIL.chargeRadius,
     // contrail
     TRAIL_COUNT: int(CONTRAIL.samples),
     TRAIL_W0: CONTRAIL.width,

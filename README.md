@@ -20,7 +20,7 @@ it from the dropdown under `g`, which also reports what the active scene is actu
 triangles, vertices, draw calls after culling, and which LOD level was selected.
 
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
-**space** to shoot.
+**space** to shoot — or hold it, and let go.
 
 **[ARCHITECTURE.md](ARCHITECTURE.md)** is the shorter read: the layers, the frame graph, and the
 temporal contract that most of this renderer's bugs have lived in. Start there if you are going to
@@ -95,8 +95,11 @@ Press **`g`** to put this list on screen; `g` again for the tuning panel, again 
 - **drag** — orbit the camera. Releasing keeps your angle; the slow dolly and roll
   continue underneath.
 - **arrows / A,D** — turn the ship. **up / W** thrusts, **down / S** reverses.
-- **space** — fire the rail guns. One shot per press, alternating wings; holding does
-  nothing, so hammer it.
+- **space** — fire the rail guns. Tap for an ordinary shot, alternating wings.
+  **HOLD IT** and the guns charge: sparks spiral in to the muzzles, the colour of the shot you are
+  winding up, and letting go fires a POWER SHOT — a fat white-hot core with counter-rotating spirals
+  whipping round it, three times the length, its own colour, a burst of sparks, and a kick that shakes
+  the camera. About a second and a half to full charge; anything past a quarter of the way counts.
 - **C** — toggle between the chase camera and the free orbit camera.
 - **G** — cycle: the control list → the tuning panel → nothing. The panel is loaded on first use,
   so it costs nothing until you want it.
@@ -667,7 +670,8 @@ shaders/
   satmesh.wgsl       satellites as instanced boxes
   contrail.wgsl      camera-facing ribbons through past positions
   aurora.wgsl        field-aligned ribbon, curl-noise paths, emission palette
-  railgun.wgsl       double-helix beams, everything derived from age
+  railgun.wgsl       double-helix beams, and the power shot's core + spirals
+  sparks.wgsl        the burst a shot throws off, and the swarm a charge pulls in
   explosion.wgsl     surface detonations
   satellite.wgsl     satellite orbits and the two satellite materials
   sky.wgsl           stars, nebula, suns, limb glow
@@ -745,6 +749,23 @@ the full reasoning; these are the ones worth knowing up front:
   detonations and the ship's hull are closed-form functions of time, so they need no
   memory and cannot desync. A CONTRAIL is a history by definition, and a RAIL SHOT is an
   event with a birth time — those two get real buffers, and the comments say why.
+- **A charge is integrated on the RENDERER's clock, never `performance.now()`.** The obvious way to
+  time a held trigger is a wall-clock timestamp at keydown, and it is wrong here for a reason the
+  input layer cannot see: `freeze` and `pause` set `dt` to exactly zero, so a wall-clock charge keeps
+  filling through a stopped scene and fires the instant you unfreeze it. Integrating `dt` instead
+  means the charge stops when the world does, and every instrument keeps working on a scene that has
+  a weapon half-wound.
+
+  The same argument put the state machine in the rail gun rather than in `input.js`. Input reports
+  EVENTS — the trigger is down, the trigger went down — and the thing that owns shots decides what a
+  hold means. Input has no clock and should not acquire one.
+
+- **The weapon says how hard to kick; the camera says how it responds.** `RAIL.shake` is the impulse a
+  full-charge shot delivers, and `CAMERA.shakeDecay` / `shakeFreq` are how the camera settles after
+  being hit. Splitting them along ownership rather than by subject means a second thing that shakes
+  the camera adds one constant instead of a second copy of the response. The kick is `max`, not `+=`,
+  so a burst of shots cannot stack into a seizure: the biggest impact wins and the rest ride its decay.
+
 - **A rail gun's muzzle is stored in SHIP-LOCAL space.** Frozen in world space at fire
   time it drifts 2.5 hull-radii behind the ship over one shot's life (measured), which
   reads as beams floating in the void. The shader rebuilds the origin from the ship's live

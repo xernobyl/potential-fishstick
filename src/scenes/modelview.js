@@ -155,6 +155,8 @@ export class ModelViewScene extends Scene {
 
   writeState(st) {
     st.modelView = true;
+    // No weapon in the studio; the charge swarm reads this and would otherwise draw the planetoid's.
+    st.charge = 0;
     st.modelSpin = this.spin;
     st.modelPrevSpin = this.prevSpin;
 

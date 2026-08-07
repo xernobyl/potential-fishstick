@@ -83,6 +83,8 @@ struct Frame {
   /// The model viewer: x turntable angle, y the same one frame ago, z spare, w 1 when it is active.
   /// Zero in every other scene, which is what lets `w` gate the studio backdrop and the model layout.
   model     : vec4f,
+  /// The trigger: x charge 0..1, y the hue the charged shot will fire as, zw spare.
+  weapon    : vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame : Frame;

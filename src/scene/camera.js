@@ -54,6 +54,9 @@ export class Camera {
     this.distance = CAMERA.distance;
     /** Distance to the subject — where the focal plane sits. See `focusDistance`. */
     this.focus = CAMERA.distance - CAMERA.focusPull;
+    /** Decaying shake amplitude, and the angles it currently resolves to. See `stepShake`. */
+    this.shakeAmp = 0;
+    this._shake = [0, 0, 0];
     this.target = V();
     this._tmp = V();
     this._tmp2 = V();
@@ -114,6 +117,65 @@ export class Camera {
   }
 
   /**
+   * Kick the camera. Something just went off.
+   *
+   * `max` rather than `+=`, so a burst of shots does not stack into a seizure — the biggest impact
+   * wins and the rest ride its decay. That is also what makes the power shot feel bigger than the
+   * ordinary ones rather than merely more frequent.
+   */
+  kick(amount) {
+    this.shakeAmp = Math.max(this.shakeAmp, amount);
+  }
+
+  /**
+   * Advance the shake. Once per frame, before whichever path places the camera.
+   *
+   * Separated from applying it because the two paths — orbit and place — both need the result and
+   * only one of them is handed a dt. Decaying inside each would double-decay on any frame that called
+   * both, and diverge silently on frames that called neither.
+   *
+   * The angles are a pure function of TIME rather than an accumulator: three incommensurate
+   * frequencies so the wobble never repeats over the fraction of a second it lasts, and no state to
+   * drift. Exponential decay with a time constant, never a per-frame fraction — see the note on
+   * smoothing in the README.
+   */
+  stepShake(dt, time) {
+    if (this.shakeAmp <= 1e-4) {
+      this.shakeAmp = 0;
+      this._shake[0] = 0; this._shake[1] = 0; this._shake[2] = 0;
+      return;
+    }
+    this.shakeAmp *= Math.exp(-dt / Math.max(CAMERA.shakeDecay, 1e-3));
+    const w = CAMERA.shakeFreq;
+    const a = this.shakeAmp;
+    this._shake[0] = a * Math.sin(time * w);
+    this._shake[1] = a * Math.sin(time * w * 1.37 + 1.7);
+    // Roll is deliberately weaker: a rolling horizon reads as the camera being broken rather than hit.
+    this._shake[2] = a * 0.45 * Math.sin(time * w * 0.83 + 3.1);
+  }
+
+  /**
+   * Perturb an already-built basis by the current shake.
+   *
+   * Applied to the ORIENTATION, not the position. Translating the camera by a few millimetres is
+   * invisible at these distances; rotating it by the same angle moves the whole frame, which is what
+   * an impact looks like. Re-orthonormalised afterwards, because nudging `fwd` alone would leave the
+   * basis skewed and the projection sheared.
+   */
+  #applyShake() {
+    const [sx, sy, sr] = this._shake;
+    if (sx === 0 && sy === 0 && sr === 0) return;
+    const c = this.current;
+    for (let i = 0; i < 3; i++) c.fwd[i] += c.right[i] * sx + c.up[i] * sy;
+    normalize(c.fwd, c.fwd[0], c.fwd[1], c.fwd[2]);
+    // Roll about the view axis, then re-orthogonalise `right` against the new `fwd`; `up` follows.
+    for (let i = 0; i < 3; i++) c.right[i] += c.up[i] * sr;
+    const d = c.right[0] * c.fwd[0] + c.right[1] * c.fwd[1] + c.right[2] * c.fwd[2];
+    normalize(c.right, c.right[0] - c.fwd[0] * d, c.right[1] - c.fwd[1] * d, c.right[2] - c.fwd[2] * d);
+    cross(c.up, c.right, c.fwd);
+  }
+
+  /**
    * Place the camera explicitly, for a scene that positions rather than orbits.
    *
    * The model viewer needs a fixed studio camera, and driving `update` toward one would mean teaching
@@ -153,6 +215,7 @@ export class Camera {
     const r = cross(this._tmp2, c.fwd, upRef);
     normalize(c.right, r[0], r[1], r[2]);
     cross(c.up, c.right, c.fwd);
+    this.#applyShake();
 
     m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
     m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
@@ -262,6 +325,7 @@ export class Camera {
 
     // The orbit radius is not the subject distance: the body's near surface is `focusPull` closer.
     this.focus = this.distance - CAMERA.focusPull;
+    this.#applyShake();
 
     m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
     m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);

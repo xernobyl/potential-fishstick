@@ -191,7 +191,19 @@ export class PlanetoidScene extends Scene {
         label: 'railgun',
         shader: 'railgun.wgsl',
         vertices: RAIL.segments * 6,
-        instances: RAIL.pool * 2,             // two strands per shot
+        // Always the maximum strand count. A normal shot runs two and collapses the rest, which costs
+        // one degenerate vertex each and keeps this a single instanced draw whatever is in flight.
+        instances: RAIL.pool * RAIL.strands,
+        source: () => this.railgun.buffer,
+      }),
+      // The burst a shot throws off, and the swarm a charge pulls in — see sparks.wgsl for why those
+      // are one pass. ONE SLOT PAST THE POOL: the extra shot's worth of instances is the charge
+      // swarm, which is drawn from the live trigger rather than from a stored record.
+      sparks: new AdditivePass(gpu, targets, shaders, {
+        label: 'sparks',
+        shader: 'sparks.wgsl',
+        vertices: 6,
+        instances: (RAIL.pool + 1) * RAIL.sparks,
         source: () => this.railgun.buffer,
       }),
       aurora: new AdditivePass(gpu, targets, shaders, {
@@ -215,6 +227,7 @@ export class PlanetoidScene extends Scene {
       ...this._solid.map((m) => m.init(rc.frameBGL, wgslDefines())),
       this.passes.contrail.init(rc.frameBGL, wgslDefines()),
       this.passes.railgun.init(rc.frameBGL, wgslDefines()),
+      this.passes.sparks.init(rc.frameBGL, wgslDefines()),
       this.passes.aurora.init(rc.frameBGL, wgslDefines()),
     ]);
   }
@@ -231,7 +244,12 @@ export class PlanetoidScene extends Scene {
       const slot = Math.floor(time / SHIP.autoFireEvery);
       if (slot !== this._fireSlot) { this._fireSlot = slot; fire = true; }
     }
-    this.railgun.update(time, this.ship, fire);
+    this.railgun.update(time, dt, this.ship, !!input.cmd.trigger, fire);
+    // The shake decays on this frame's dt and is applied by whichever path places the camera, so it
+    // has to step BEFORE the camera moves — see Camera.stepShake.
+    const kick = this.railgun.takeKick();
+    if (kick > 0) camera.kick(kick * RAIL.shake);
+    camera.stepShake(dt, time);
     this.aurora.update(dt, time);
     camera.update(time, dt, input, this.ship);
   }
@@ -240,6 +258,9 @@ export class PlanetoidScene extends Scene {
     st.ship = this.ship;
     st.auroraPhase = this.aurora.emitPhase;
     st.modelView = false;
+    // The trigger's live state, for the charge swarm at the muzzles.
+    st.charge = this.railgun.chargeFrac;
+    st.chargeHue = this.railgun.chargeHue;
   }
 
   recordWorld(encoder, frameBG, p, rc) {
@@ -255,6 +276,7 @@ export class PlanetoidScene extends Scene {
     // Into the same additive target, right after the particles.
     this.passes.contrail.record(encoder, frameBG, p);
     this.passes.railgun.record(encoder, frameBG, p);
+    this.passes.sparks.record(encoder, frameBG, p);
     this.passes.aurora.record(encoder, frameBG, p);
   }
 

@@ -26,7 +26,7 @@ import { whiteBalanceGains } from '../scene/tuning.js';
 // distance. Neither failed loudly - one silently changed the culling whenever the buffer viewer was
 // open, the other degenerated to a constant colour rim on every highlight. A slot is not free just
 // because the feature that named it is gone.
-export const FRAME_FLOATS = 168;                // 3 mat4x4 + 30 vec4
+export const FRAME_FLOATS = 172;                // 3 mat4x4 + 31 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
 /** Field offsets, in floats. Kept next to the WGSL struct in common.wgsl. */
@@ -93,6 +93,9 @@ const O = {
   // x: turntable angle now, y: the same one frame ago (so the spin gets an exact motion vector),
   // z: unused, w: 1 while the model-viewer scene is active. See scenes/modelview.js.
   model: 164,
+  // The trigger's live state, for the muzzle glow the charge draws. x: charge 0..1, y: the hue the
+  // shot will come out as, so the glow previews it, z/w spare.
+  weapon: 168,
 };
 
 export class FrameUniforms {
@@ -215,6 +218,10 @@ export class FrameUniforms {
     a[O.model + 1] = s.modelPrevSpin ?? 0;
     a[O.model + 2] = 0;
     a[O.model + 3] = s.modelView ? 1 : 0;
+    a[O.weapon] = s.charge ?? 0;
+    a[O.weapon + 1] = s.chargeHue ?? 0;
+    a[O.weapon + 2] = 0;
+    a[O.weapon + 3] = 0;
 
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;

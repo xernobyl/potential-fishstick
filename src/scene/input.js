@@ -26,7 +26,7 @@ export class Input {
     this._px = 0;
     this._py = 0;
     // Reused: this is read exactly once per frame, forever.
-    this._cmd = { pitch: 0, yaw: 0, roll: 0, thrust: 0, fire: false };
+    this._cmd = { pitch: 0, yaw: 0, roll: 0, thrust: 0, fire: false, trigger: false };
     this._state = {
       dragging: false, everUsed: false, x: 0, y: 0, width: 0, height: 0,
       // The flight command rides along on the frame state, because that object is
@@ -84,8 +84,9 @@ export class Input {
         // C toggles between chasing the ship and the free orbit camera. On keydown
         // only, so holding it does not strobe.
         if (k === 'c' && !this._cHeld) { this.chase = !this.chase; this._cHeld = true; }
-        // Space fires on the EDGE only. Auto-fire while held would empty the pool in a
-        // fraction of a second and hide the left/right alternation entirely.
+        // Space is a TRIGGER now, not a button: holding it charges and releasing it fires. The edge
+        // is still latched, but only so a tap cannot be missed by a frame that lands between the
+        // keydown and the keyup — the shot itself leaves on release, where the charge is known.
         if (k === ' ' && !this._spaceHeld) { this._fireEdge = true; this._spaceHeld = true; }
       } else {
         this.keys.delete(k);
@@ -128,10 +129,12 @@ export class Input {
     // Thrust is up/W only now: space is the trigger. `pitch` already carries the
     // accelerate axis, so this stays at zero rather than double-counting it.
     c.thrust = 0;
-    // Consumed on read, so exactly one shot leaves per press however many frames the
-    // key is down for.
+    // Consumed on read, so one press is one event however many frames the key is down for. The
+    // railgun turns these two into shots: `trigger` integrates the charge, `fire` only guarantees a
+    // press shorter than a frame is still seen.
     c.fire = this._fireEdge;
     this._fireEdge = false;
+    c.trigger = this._spaceHeld;
     c.pitch = Math.max(-1, Math.min(1, c.pitch));
     c.yaw = Math.max(-1, Math.min(1, c.yaw));
     return c;
