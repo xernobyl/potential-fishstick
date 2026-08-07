@@ -350,11 +350,25 @@ the method, not of a knob that can be turned off.
 
 ## Ideas not yet done
 
-- **An art pass on the new world scale.** The planet is twice the size relative to everything else
-  now, and while every coefficient that needed it was rescaled, the LOOK moved: it reads cooler and
-  flatter than it did. The atmosphere's blue in-scattering integrates over twice the depth, and the
-  suns want re-balancing against it. All of it is on sliders — Film, Atmosphere — so this is taste,
-  not engineering.
+- **An art pass, and the tools for it are now in place.** The planet is twice the size relative to
+  everything else, and while every coefficient that needed it was rescaled, the LOOK moved: the
+  atmosphere's blue in-scattering integrates over twice the depth, so the cold reads as a broad wash
+  over the whole silhouette rather than as a key. That is the part that flattens it, and it is a SCENE
+  problem — `VOLUME.sigma` and the blue weight in `VOLUME.albedo`, not the grade.
+
+  What changed since this was written: `FILM.temperature` is a real white-balance control derived from
+  the Planckian locus (green-normalised, so it never moves exposure), and the display transform is
+  AgX with Hable on a dropdown beside it. Between them the grade no longer fights itself — moving
+  contrast and saturation used to be a negotiation with the tone curve.
+
+  One consequence worth knowing before touching anything: under AgX the planet reads pinker and
+  lighter than it did, because the body is bright enough to sit in the region AgX desaturates. That is
+  the same mechanism keeping the rail guns and sun cores from clipping to hue-shifted mush. Measured,
+  midtones gained 9% saturation while the brightest 1% lost 7%, so there is room to push `saturation`
+  (0.94, set for the flat 5251 look on top of Hable) and room to recover blue in the body with
+  `temperature` without touching the highlights at all.
+
+  Still taste, not engineering — all of it is on sliders under `g`.
 
 - **CLOSED: motion vectors for the body's own animation.** Two attempts, the second with the maths
   corrected, and the approach is closed rather than unproven. The gap it targeted is real — camera
