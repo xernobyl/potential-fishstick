@@ -329,10 +329,6 @@ the method, not of a knob that can be turned off.
 
 ## Ideas not yet done
 
-- **Graphs, rather than numbers, in the panel.** The Monitor folder shows current values and the
-  Measure folder runs each instrument on demand, but neither plots anything over time. A frame-time
-  or residual sparkline would show a regression that a single number hides.
-
 - **An art pass on the new world scale.** The planet is twice the size relative to everything else
   now, and while every coefficient that needed it was rescaled, the LOOK moved: it reads cooler and
   flatter than it did. The atmosphere's blue in-scattering integrates over twice the depth, and the
@@ -381,13 +377,18 @@ the method, not of a knob that can be turned off.
   one mechanism instead of two and would let `starField` drop back from 9 lattice candidates to 5 on
   every background pixel.
 
-  Two things kill it. Tested, bloom does not pick the stars up at all — it thresholds and then
-  downsamples, and a one-to-four-pixel bright feature loses most of its energy in the reduction, so
-  the stars come out as bare dots with no halo. And more fundamentally, the analytic glow is not
-  compensating for that: it is what gives a feature that would otherwise be near sub-pixel enough
-  SPATIAL EXTENT to be temporally stable. A bare dot on a lattice crawls under jitter and under any
-  downsample, whatever post does with it afterwards. The glow is doing antialiasing work, not just
-  art, so it belongs in the shading where its size is known analytically.
+  Two things kill it. Tested, the stars come out as bare dots with no visible halo — and the reason
+  is NOT that the prefilter loses their energy, which is what this section claimed first time round.
+  `prefilterOne` is applied per TAP before averaging, precisely so an isolated highlight is not
+  averaged into the sky below the threshold, and the footprint is tiled exactly even when the step is
+  4x. Energy is conserved. The halo is faint because a two-pixel feature has very little total energy
+  to begin with, and conserving it across a wide kernel necessarily spreads it thin. That is the
+  filter working, not failing, and there is nothing to fix in it.
+
+  The second reason is the real one: the analytic glow is what gives a feature that would otherwise be
+  near sub-pixel enough SPATIAL EXTENT to be temporally stable. A bare dot on a lattice crawls under
+  jitter and under any downsample, whatever post does with it afterwards. The glow is doing
+  antialiasing work, not just art, so it belongs in the shading where its size is known analytically.
 
   Which also settles the candidate count: 9 is required rather than a preference. A wide analytic
   tail needs the true nearest star, and a truncated search bites wedges out of it.
