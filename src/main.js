@@ -9,7 +9,7 @@ import { Gpu } from './core/device.js';
 import { Renderer, LENS_DISK } from './renderer.js';
 import { Input } from './scene/input.js';
 import * as TUNING from './scene/tuning.js';
-import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, grabFrame } from './dev/benchmark.js';
+import { benchmark, lensResidual, dumpFrames, lagMetric, compareConfigs, fieldEvalCount, matchedSharpness, detailSnr, additiveAliasing, subPixelStability, temporalShake, grabFrame } from './dev/benchmark.js';
 
 const canvas = document.getElementById('gpu');
 const perfEl = document.getElementById('perf');
@@ -184,6 +184,30 @@ async function boot() {
     }
   }
 
+  /**
+   * Does the SETTLED image sit still while the camera moves? Reports the pipeline's noise floor
+   * (frozen), the ambient camera, and the chase camera, so the ratio says where the shimmer is.
+   */
+  async function shake(opts) {
+    const wasRunning = running;
+    running = false;
+    try {
+      const r = await temporalShake(renderer, gpu, {
+        quality: TUNING.QUALITY, camera: TUNING.CAMERA, film: TUNING.FILM, probe: TUNING.PROBE,
+      }, opts);
+      console.log('[shake] flicker in the resolved image, % of each pixel\'s own level');
+      console.log('  flick = |second difference| in time, which cancels smooth motion; mad is the');
+      console.log('  plain frame-to-frame change, motion-dominated and only meaningful vs frozen.');
+      for (const c of r) {
+        console.log(`  ${c.name.padEnd(8)} flick ${c.flick.toFixed(3)}%  p95 ${c.flick95.toFixed(3)}%`
+          + `   mad ${c.mad.toFixed(3)}%`);
+      }
+      return r;
+    } finally {
+      if (wasRunning) { running = true; renderer.resetHistory(); requestAnimationFrame(loop); }
+    }
+  }
+
   /** Does drawing the additive layer at render resolution change what you see, and at what cost? */
   async function additive(opts) {
     const wasRunning = running;
@@ -238,7 +262,7 @@ async function boot() {
   // A handle for poking at the scene from the console. Tuning values are read
   // per frame, so most of them can be changed live.
   window.beep = {
-    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shot,
+    renderer, gpu, input, tuning: TUNING, bench, lag, compare, evals, detail, additive, subpixel, shake, shot,
     /** Sharpness of several configs on one display-resolution grid. */
     sharp: async (configs, opts) => {
       const wasRunning = running;

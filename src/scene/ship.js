@@ -121,6 +121,10 @@ export class Ship {
    *  on its own. Latched on FLIGHT input only, so orbiting the camera does not end the show. */
   get flown() { return this._flown; }
 
+  /** End the autopilot from outside. The instruments need a ship that is not rolling and not
+   *  firing, because both are events and they measure steady state. */
+  markFlown() { this._flown = true; }
+
   /**
    * @param {number} dt seconds
    * @param {{pitch:number, yaw:number, roll:number, thrust:number}} cmd each -1..1

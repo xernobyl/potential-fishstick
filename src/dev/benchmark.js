@@ -1418,3 +1418,171 @@ export async function dumpFrames(renderer, gpu, opts = {}) {
     peakAt,
   };
 }
+
+/**
+ * TEMPORAL stability of the resolved image, under camera motion.
+ *
+ * Every other probe here holds the world still, which is the right call for measuring aliasing but
+ * makes them blind to the thing that actually looks wrong: shimmer that only appears once the
+ * camera moves. `subPixelStability` slides the frame across a pixel with a frozen clock;
+ * `lagMetric` measures how fast the history converges. Neither answers "does the settled image sit
+ * still while flying", and that is the complaint this exists to quantify.
+ *
+ * It reads the ACCUMULATION buffer, not the canvas: post-process grain and the additive layers are
+ * downstream of the resolve, so including them would measure noise the TAA never sees. Grain is
+ * zeroed anyway, and the aperture with it.
+ *
+ * THE METRIC IS A SECOND DIFFERENCE IN TIME, and the first version of this got it wrong in a way
+ * worth recording. A plain frame-to-frame difference under a moving camera is dominated by the
+ * motion itself: an edge sweeping across a pixel changes it a lot, legitimately. Because that term
+ * scales with image GRADIENT, the first version scored native resolution 8x worse than half
+ * resolution — it was measuring sharpness, not stability, and a blurrier image always wins.
+ *
+ * |L(t+1) - 2L(t) + L(t-1)| cancels any value that is RAMPING linearly, which is what a smooth
+ * translation looks like per pixel, while flicker and crawl survive it intact. Normalised per pixel
+ * against that pixel's own temporal mean — floored at a fraction of the frame mean, so the near-
+ * black sky cannot divide a small absolute wobble into a huge relative one — and reduced with a
+ * MEDIAN over pixels, because a handful of specular pixels are not what "everything is shaking"
+ * means.
+ *
+ * The three conditions are a diagnosis rather than a score, and the whole point is the RATIO
+ * between them:
+ *
+ *   frozen  same clock every frame, so nothing moves and every reprojection is the identity.
+ *           This is the pipeline's own noise floor. It should be near zero; whatever is here is
+ *           per-frame randomness that the resolve is not converging.
+ *   drift   the ambient camera, clock advancing. Slow motion, mostly rotation about the subject.
+ *   chase   the follow camera behind a flying ship. Fast translation, and the reason the report
+ *           came in.
+ *
+ * frozen high      => something reseeds per frame and TAA cannot average it out.
+ * chase >> drift   => the cost is in reprojection or in history rejection, not in the shading.
+ *
+ * THE SCENE MUST BE STATIONARY or the numbers are not comparable, and this is easy to get wrong.
+ * The ship auto-fires every few seconds while cruising, and a rail gun going off mid-run moves the
+ * figure by several multiples — enough that one run read 10.7% where the run before it read 1.8%
+ * with nothing changed. The ship is marked as flown here, which is exactly what suppresses the
+ * autopilot's fire (see Ship#flown), so a run measures the steady state rather than an event.
+ *
+ * Even so: trust comparisons made WITHIN one call, in one ordering, and distrust them across
+ * calls. The particle and ribbon simulations carry state forward from whatever ran before, and
+ * nothing here rewinds them.
+ *
+ * @param {object} knobs { quality, camera, film, probe }
+ */
+export async function temporalShake(renderer, gpu, knobs, opts = {}) {
+  const { quality, camera: cam, film } = knobs;
+  const settle = opts.settle ?? 48;
+  const frames = opts.frames ?? 60;
+  const time = opts.time ?? 6.0;
+  const dt = opts.dt ?? 1 / 60;
+  const gridW = opts.gridW ?? 320;
+  const gridH = opts.gridH ?? 180;
+  await ensureSize(renderer);
+
+  const saved = { aperture: cam.aperture, grain: film.grain, dyn: quality.dynamicRes,
+                  zoom: cam.zoom, roll: cam.roll };
+  cam.aperture = 0;
+  film.grain = 0;
+  quality.dynamicRes = false;      // a rung change mid-run would be measured as shake
+
+  // `animated` is the one that splits the diagnosis. `drift` moves the camera AND advances the
+  // world, so on its own it cannot say which of the two the resolve is failing on. Pinning the
+  // camera while the clock runs isolates the animated geometry: reprojection assumes the world is
+  // static, and this planet pulses.
+  const conditions = opts.conditions ?? [
+    { name: 'frozen', advance: false, chase: false },
+    { name: 'animated', advance: true, chase: false, pin: true },
+    { name: 'drift', advance: true, chase: false },
+    { name: 'chase', advance: true, chase: true },
+  ];
+
+  const out = [];
+  try {
+    const t = renderer.targets;
+    const sampler = new FrameSampler(gpu.device, t.accumWidth, t.accumHeight, gridW, gridH);
+    try {
+      for (const c of conditions) {
+        // `chase` needs a ship that has been flown, or the camera stays on its ambient path and
+        // the condition silently measures `drift` twice.
+        const input = benchInput(opts.cmd);
+        input.chase = c.chase;
+        if (c.chase) { input.cmd.thrust = 1; }
+        // Autopilot fire OFF for the duration: a shot during the window is worth several multiples
+        // of the figure being measured. Marking the ship flown is the switch for it, and it also
+        // stops the barrel roll, which is a second event the metric would otherwise pick up.
+        renderer.ship.markFlown();
+        input.cmd.fire = false;
+        if (c.pin) {
+          // The arcball branch takes yaw and pitch straight from the pointer, so a fixed pointer
+          // is a fixed camera — except for the dolly and roll, which breathe on the clock and
+          // would smuggle camera motion back into the condition that exists to exclude it.
+          input.everUsed = true;
+          input.x = input.width * 0.5;
+          input.y = input.height * 0.5;
+          cam.zoom = 0;
+          cam.roll = 0;
+        } else {
+          cam.zoom = saved.zoom;
+          cam.roll = saved.roll;
+        }
+
+        renderer.resetHistory();
+        for (let f = 0; f < settle; f++) renderer.frame(time + (c.advance ? f * dt : 0), input);
+
+        // Two frames of history, because the metric needs three samples in time.
+        let m2 = null, m1 = null;
+        const n = sampler.w * sampler.h;
+        const d2sum = new Float64Array(n);     // per-pixel sum of |second difference|
+        const dsum = new Float64Array(n);      // per-pixel sum of |first difference|, for context
+        const lsum = new Float64Array(n);      // per-pixel temporal mean, the normaliser
+        let counted = 0;
+        for (let f = 0; f < frames; f++) {
+          renderer.frame(time + (c.advance ? (settle + f) * dt : 0), input);
+          const enc = gpu.device.createCommandEncoder({ label: 'shake-copy' });
+          sampler.record(enc, renderer.targets.accumRead, t.accumWidth, t.accumHeight);
+          gpu.device.queue.submit([enc.finish()]);
+          await gpu.device.queue.onSubmittedWorkDone();
+          const L = lumaPlane(decodeHalf(await sampler.read()), sampler.w, sampler.h);
+          for (let i = 0; i < n; i++) lsum[i] += L[i];
+          if (m1) for (let i = 0; i < n; i++) dsum[i] += Math.abs(L[i] - m1[i]);
+          if (m2) {
+            for (let i = 0; i < n; i++) d2sum[i] += Math.abs(L[i] - 2 * m1[i] + m2[i]);
+            counted++;
+          }
+          m2 = m1; m1 = L;
+        }
+
+        let frameMean = 0;
+        for (let i = 0; i < n; i++) frameMean += lsum[i];
+        frameMean /= n * frames;
+        // The floor is what keeps the sky out of it: a pixel at 1% of the frame mean has no
+        // business reporting a 300% relative wobble off a rounding-sized absolute one.
+        const floor = Math.max(frameMean * 0.25, 1e-6);
+        const flick = new Array(n);
+        const rel = new Array(n);
+        for (let i = 0; i < n; i++) {
+          const den = Math.max(lsum[i] / frames, floor);
+          flick[i] = (d2sum[i] / Math.max(counted, 1)) / den;
+          rel[i] = (dsum[i] / Math.max(frames - 1, 1)) / den;
+        }
+        out.push({
+          name: c.name,
+          // The one that means shimmer.
+          flick: median(flick) * 100,
+          flick95: percentile(flick, 95) * 100,
+          // Motion-dominated once the camera moves; useful only against `frozen`.
+          mad: median(rel) * 100,
+        });
+      }
+    } finally { sampler.destroy?.(); }
+  } finally {
+    cam.aperture = saved.aperture;
+    film.grain = saved.grain;
+    quality.dynamicRes = saved.dyn;
+    cam.zoom = saved.zoom;
+    cam.roll = saved.roll;
+    renderer.resetHistory();
+  }
+  return out;
+}
