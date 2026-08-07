@@ -263,5 +263,6 @@ export class PlanetoidScene extends Scene {
     this.railgun.destroy();
     this.aurora.destroy();
     this.passes.embers.destroy?.();
+    for (const m of this._solid) m.destroy();
   }
 }

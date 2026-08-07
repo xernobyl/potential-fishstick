@@ -52,6 +52,8 @@ export class Camera {
     this.current = new Basis();
     this.previous = new Basis();
     this.distance = CAMERA.distance;
+    /** Distance to the subject — where the focal plane sits. See `focusDistance`. */
+    this.focus = CAMERA.distance - CAMERA.focusPull;
     this.target = V();
     this._tmp = V();
     this._tmp2 = V();
@@ -120,11 +122,21 @@ export class Camera {
    * matrices after — so the temporal resolve cannot tell the difference between a camera that was
    * orbited and one that was placed.
    *
+   * `focus` is not decoration. Two things read `camera.distance` and neither goes through the orbit
+   * path: `focusDistance()` places the composite's spherochromatism, and the renderer falls back to it
+   * when choosing an LOD level. Leaving it at whatever the previous scene set meant the model viewer
+   * picked its level from the planetoid's camera — measured, 8.45 units instead of 0.97, so the viewer
+   * whose whole job is inspecting a mesh was showing LOD 2 of 4.
+   *
    * @param {ArrayLike<number>} pos world position
    * @param {ArrayLike<number>} fwd unit forward direction
+   * @param {number} focus distance to whatever this camera is looking at
    * @param {number} [roll] radians about the view axis
    */
-  lookAt(pos, fwd, roll = 0) {
+  lookAt(pos, fwd, focus, roll = 0) {
+    this.distance = focus;
+    // The caller measured the distance to what it is looking at, so that IS the focal plane.
+    this.focus = focus;
     this.previous.copyFrom(this.current);
     this.prevViewProj.set(this.viewProj);
 
@@ -248,6 +260,9 @@ export class Camera {
     normalize(c.right, r[0], r[1], r[2]);
     cross(c.up, c.right, c.fwd);
 
+    // The orbit radius is not the subject distance: the body's near surface is `focusPull` closer.
+    this.focus = this.distance - CAMERA.focusPull;
+
     m4.mul(this.viewProj, this._proj, m4.view(this._view, c));
     m4.mul(this.invViewProj, m4.viewInverse(this._invView, c), this._invProj);
 
@@ -260,10 +275,18 @@ export class Camera {
     }
   }
 
-  /** World-space focus distance. Consumed by the composite's spherochromatism, not by any lens:
-   *  the colour rim it draws flips sign across the focal plane, so it needs to know where that is. */
+  /**
+   * World-space focus distance. Consumed by the composite's spherochromatism, not by any lens: the
+   * colour rim it draws flips sign across the focal plane, so it needs to know where that is.
+   *
+   * `distance` and `focus` are NOT the same quantity, and conflating them was a real bug. On the orbit
+   * path `distance` is the radius of the orbit while the subject — the body's near surface — is
+   * `focusPull` closer, so the pull is a correction from one to the other. A camera that was PLACED
+   * already knows the distance to its subject and needs no correction; applying one put the model
+   * viewer's focal plane at the 0.5 clamp with the model at 0.97, so the rim never changed sign.
+   */
   focusDistance() {
-    return Math.max(this.distance - CAMERA.focusPull, 0.5);
+    return Math.max(this.focus, 0.5);
   }
 
   /**

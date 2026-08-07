@@ -85,7 +85,12 @@ export class SolidMeshPass {
       // triangles in the dual contourer - both of which are now fixed and asserted rather than
       // tolerated. Roughly half the fragments of a closed mesh are back faces, so this is the cheapest
       // fragment saving available, and from here on a winding mistake is visible instead of latent.
-      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      // `frontFace` is spelled out rather than left to the default. It IS 'ccw' by default, so this
+      // changes nothing — but back-face culling only removes the right half of the geometry if the
+      // generators wind counter-clockwise seen from outside, and that is asserted in dev/meshgen.mjs
+      // and dev/octree.mjs. Writing it here puts the convention next to the thing that depends on it
+      // instead of in the spec.
+      primitive: { topology: 'triangle-list', frontFace: 'ccw', cullMode: 'back' },
       depthStencil: {
         format: 'depth24plus',
         depthWriteEnabled: true,
@@ -147,6 +152,20 @@ export class SolidMeshPass {
     this.colourView = this.targets.solid.createView();
     this.motionView = this.targets.motion.createView();
     this.depthView = this.targets.solidDepth.createView();
+  }
+
+  /**
+   * Release the GPU buffers this pass owns.
+   *
+   * A pass owns its meshes, so it is the one that can free them. Without this `renderer.destroy()`
+   * looked complete while leaving every vertex, index and wireframe-edge buffer behind — the ship's
+   * LOD chain alone is four of each. Pipelines and bind groups are not destroyable in WebGPU and are
+   * collected with the device, so meshes are the whole of it.
+   */
+  destroy() {
+    for (const m of this.meshes ?? []) m.destroy();
+    this.meshes = [];
+    this.mesh = null;
   }
 
   /**

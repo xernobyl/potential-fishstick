@@ -243,6 +243,10 @@ export class Renderer {
     rc.time = time;
     rc.dt = dt;
     rc.input = input;
+    // Cleared before `update`, filled before `recordWorld`. The planes are extracted from the camera
+    // this update is about to move, so anything reading them here would be a frame behind — and a
+    // frame-behind frustum culls what just came on screen. Null makes that a crash, not a flicker.
+    rc.frustum = null;
     this.scene.update(rc);
 
     // Sun screen positions, for the flare pass to anchor its streaks. 1e3 is the
@@ -330,12 +334,12 @@ export class Renderer {
       // The distance is to the object's bounding sphere CENTRE, which the sphere-based culling already
       // knows how to place — so selection and culling share one fact about where an object is.
       const s0 = m.spec.worldSphere?.(0, m.mesh.ranges[0]);
+      // NO SPHERE MEANS NO DISTANCE, so draw the finest level rather than guess one. Substituting
+      // `camera.distance` looked reasonable and was not: it is maintained by whichever code last
+      // placed the camera, so a scene that places its own inherited the previous scene's value.
+      if (!s0) { m.lod = 0; continue; }
       const c = this.camera.current.pos;
-      const dist = s0
-        ? Math.hypot(s0[0] - c[0], s0[1] - c[1], s0[2] - c[2])
-        // No sphere: the object is wherever the scene put it, and the only distance available is to
-        // whatever the camera is looking at. Good enough for a model on a turntable.
-        : this.camera.distance;
+      const dist = Math.hypot(s0[0] - c[0], s0[1] - c[1], s0[2] - c[2]);
       m.lod = selectLod(m.meshes, dist, 1.2, Math.hypot(t.width, t.height), SHIP_MESH.lodErrorPx);
     }
 

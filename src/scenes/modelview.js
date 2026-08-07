@@ -33,11 +33,12 @@ import { box, concatMeshes } from '../scene/meshgen.js';
 import { MODELVIEW, SATELLITES, wgslDefines } from '../scene/tuning.js';
 
 /**
- * The models on offer.
+ * The models on offer. `key` selects the pass, `label` names it in the dropdown.
  *
- * `radius` is what the camera frames against, so a satellite and a ship both fill the view rather than
- * one being a speck. Taken from the mesh's own bounding sphere where there is one, and from the
- * satellite's reach where the geometry is instanced and has no single sphere.
+ * Framing is NOT listed here: the camera stands off a multiple of the model's bounding radius, and
+ * that radius comes from the mesh itself where there is one and from the satellite's boom reach where
+ * the geometry is instanced and has no single sphere. See `#radius`. A number copied into this table
+ * would be a second source of truth for something the mesh already knows.
  */
 export const MODELS = [
   { key: 'ship', label: 'ship' },
@@ -79,6 +80,12 @@ export class ModelViewScene extends Scene {
           m.errorWorld = data.errorWorld;
           return m;
         }),
+        // The hull has an LOD chain, so it needs a sphere for the level to be chosen from a real
+        // distance. It is not used for culling here — a single object dead centre is always
+        // visible — but the two questions share the one fact about where the object is.
+        worldSphere: (_id, r) => [
+          MODELVIEW.origin[0], MODELVIEW.origin[1], MODELVIEW.origin[2], r.radius,
+        ],
       }),
       satellite: new SolidMeshPass(gpu, targets, shaders, {
         label: 'model-satellite',
@@ -143,7 +150,7 @@ export class ModelViewScene extends Scene {
     const fwd = [o[0] - pos[0], o[1] - pos[1], o[2] - pos[2]];
     const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
     for (let i = 0; i < 3; i++) fwd[i] /= len;
-    camera.lookAt(pos, fwd);
+    camera.lookAt(pos, fwd, dist);
   }
 
   writeState(st) {
@@ -170,6 +177,12 @@ export class ModelViewScene extends Scene {
     // No frustum planes: one object, dead centre, always visible. Passing them would only spend a
     // sphere test to reach the same conclusion.
     this.#active().record(encoder, frameBG, p, null);
+  }
+
+  destroy() {
+    // Both models, not just the visible one — the pass built its buffers at init either way.
+    this.passes.ship.destroy();
+    this.passes.satellite.destroy();
   }
 
   recordAdditive(encoder) {
