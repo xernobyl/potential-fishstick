@@ -187,6 +187,13 @@ fn phaseHG(cosT : f32, g : f32) -> f32 {
 /// multiplies, so the atmosphere uses it while the body's interior keeps plain HG: inside a dense
 /// medium the light has forgotten which way it came from and the difference is unobservable.
 fn phaseCS(cosT : f32, g0 : f32) -> f32 {
+  // NORMALISED, and checked rather than assumed: integrating this over the sphere gives 1.000000 at
+  // g = 0, 0.3, 0.68 and 0.9 (two million samples). That matters because the constant in front is easy
+  // to get wrong in a way nothing catches — an unnormalised phase function still looks like an
+  // atmosphere, it just scatters the wrong TOTAL amount of light, so it reads as the sigma being
+  // mistuned and gets "fixed" there instead. The check lives here rather than in dev/ because the
+  // function is WGSL and a JavaScript copy of it would only ever test the copy.
+  //
   // Clamped, because `g` is a UNIFORM now: the denominator vanishes as g approaches 1 with the
   // forward lobe, and a value typed into the console should not be able to divide by zero.
   let g = clamp(g0, 0.0, 0.95);

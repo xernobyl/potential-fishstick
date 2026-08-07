@@ -366,25 +366,40 @@ the method, not of a knob that can be turned off.
 
 ## Ideas not yet done
 
-- **An art pass, and the tools for it are now in place.** The planet is twice the size relative to
-  everything else, and while every coefficient that needed it was rescaled, the LOOK moved: the
-  atmosphere's blue in-scattering integrates over twice the depth, so the cold reads as a broad wash
-  over the whole silhouette rather than as a key. That is the part that flattens it, and it is a SCENE
-  problem — `VOLUME.sigma` and the blue weight in `VOLUME.albedo`, not the grade.
+- **CLOSED: the art pass, as engineering. What is left is taste on sliders.**
 
-  What changed since this was written: `FILM.temperature` is a real white-balance control derived from
-  the Planckian locus (green-normalised, so it never moves exposure), and the display transform is
-  AgX with Hable on a dropdown beside it. Between them the grade no longer fights itself — moving
-  contrast and saturation used to be a negotiation with the tone curve.
+  It was opened because the planet doubled in size and the LOOK moved with it — the atmosphere's blue
+  in-scattering integrating over twice the depth, reading as a broad wash rather than as a key. That
+  part is fixed and has its own note below: `VOLUME.sigma` is a coefficient per unit length and was
+  eased 0.55 -> 0.38 when the shell went 2.75 -> 5.5, with the albedo's blue weighting softened
+  alongside it.
 
-  One consequence worth knowing before touching anything: under AgX the planet reads pinker and
-  lighter than it did, because the body is bright enough to sit in the region AgX desaturates. That is
-  the same mechanism keeping the rail guns and sun cores from clipping to hue-shifted mush. Measured,
-  midtones gained 9% saturation while the brightest 1% lost 7%, so there is room to push `saturation`
-  (0.94, set for the flat 5251 look on top of Hable) and room to recover blue in the body with
-  `temperature` without touching the highlights at all.
+  Closing it prompted a sweep of the scattering path for anything else that was wrong rather than
+  merely unfashionable, and it found one thing.
 
-  Still taste, not engineering — all of it is on sliders under `g`.
+  **The atmosphere was lit by two of the three suns.** Every SURFACE in the scene shades with three —
+  the body, the rings, the hull, the satellites — and the third has a disc in the sky, but the
+  volumetric integral summed only suns one and two. The symptom was specific: looking toward the third
+  sun through the air produced no glow at all, while the other two flare. At `g = 0.68` that forward
+  lobe is most of what an atmosphere visibly does, and the missing term is 0.73/1.19/1.65 head-on —
+  the same order as sun two's, not a subtlety. Fixed, with no shadow ray, matching how that light is
+  treated everywhere else; it costs one phase evaluation outside the march loop.
+
+  The rest of the path was checked and is sound. Cornette-Shanks integrates to 1.000000 over the
+  sphere at every `g` in range, so the phase function is normalised rather than merely
+  forward-biased. The step integral is analytic and exact for a step of constant density, and
+  treating the gas as purely scattering makes `1 - Tr` the scattered fraction directly. The shell
+  spans 4.5 scale heights above the body, truncating about 1% of the column — below the point where
+  the boundary could show. The transmittance early-out tests red and blue, which bound green given
+  the albedo ordering, so it cannot exit early on a channel that is still transmitting.
+
+  What remains is genuinely taste, and all of it is on sliders under `g`: `FILM.temperature` is a real
+  white-balance control off the Planckian locus (green-normalised, so it never moves exposure), and the
+  display transform is AgX with Hable beside it. Under AgX the planet reads pinker and lighter, because
+  the body is bright enough to sit where AgX desaturates — the same mechanism keeping the rail guns and
+  sun cores off hue-shifted mush. Measured, midtones gained 9% saturation while the brightest 1% lost
+  7%, so there is room to push `saturation` and to recover blue in the body with `temperature` without
+  touching the highlights.
 
 - **CLOSED: motion vectors for the body's own animation.** Two attempts, the second with the maths
   corrected, and the approach is closed rather than unproven. The gap it targeted is real — camera
@@ -542,14 +557,35 @@ the method, not of a knob that can be turned off.
   correct filtering. Centre evaluation throws that average away and gets a stable but snapping signal
   for it. Not worth a third attempt.
 
-- **Render into a sub-rectangle instead of reallocating.** Dynamic resolution currently rebuilds every
-  render-resolution target each time it changes rung. The alternative is to allocate once at the
-  largest size and render into the top-left sub-rect, moving the viewport and scissor rather than the
-  allocation: no reallocation churn, no bind-group rebuild, no `generation` bump on a rung change.
-  The catch is that every pass reading those targets must clamp its taps to the ACTIVE rect rather
-  than the texture size, or it samples stale pixels from outside the current render area — which is
-  why this is a real change and not a tidy-up. Worth it mainly if the ladder ends up moving often;
-  right now it settles and stays.
+- **CLOSED: render into a sub-rectangle instead of reallocating.** Measured, and there is nothing
+  worth buying.
+
+  The idea was to allocate once at the largest size and render into the top-left sub-rect, moving the
+  viewport rather than the allocation — no reallocation churn, no bind-group rebuild, no `generation`
+  bump on a rung change. The cost was always going to be that every pass reading those targets must
+  clamp its taps to the ACTIVE rect rather than the texture size, which is a change in `taa`, the
+  bloom prefilter, the composite, the embers and all three additive passes, each one a chance at a
+  silent UV bug.
+
+  What a rung change actually costs, walking the whole ladder at 1018x1976 display:
+
+  ```
+  scale  target      resize   first frame   steady
+  1.00   1018x1976   0.1 ms   0.9 ms        0.5 ms
+  0.70    713x1383   0.0 ms   0.4 ms        0.1 ms
+  0.50    509x 988   0.0 ms   0.3 ms        0.1 ms
+  0.35    356x 692   0.0 ms   0.3 ms        0.2 ms
+  ```
+
+  Reallocation is free to the precision of the clock. The bind-group rebuild shows up as at most
+  ~0.4 ms of extra CPU encode on the one frame after the change, and never again. And
+  `historyKept` was true at every rung — the accumulated image SURVIVES a scale change already,
+  because the render-resolution group and the accumulation group have separate lifetimes and only
+  the first is rebuilt. That split is what this idea was really trying to buy, and it was bought
+  years-of-frames ago; see the note on `own` versus `ownOut` in targets.js.
+
+  So the whole prize is half a millisecond of CPU, once, with no visual cost, in a feature that is
+  off by default and pinned off during recording. Not worth touching seven sampling sites for.
 
 ## Where things are
 

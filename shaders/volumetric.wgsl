@@ -235,6 +235,17 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
   // aerosol has. It is the standard improvement for Mie scattering and costs two multiplies.
   let ph1 = phaseCS(dot(rd, SUN1_DIR), frame.volume.z);
   let ph2 = phaseCS(dot(rd, SUN2_DIR), frame.volume.z);
+  // THE THIRD SUN LIGHTS THE AIR TOO, and its absence here was visible in one specific way: it has a
+  // disc in the sky and every SURFACE in the scene is lit by it, but looking toward it through the
+  // atmosphere produced no glow at all, while the other two flare. At g = 0.68 the forward lobe is
+  // most of what an atmosphere does — 0.73/1.19/1.65 head-on, the same order as sun two — so what was
+  // missing was not a subtlety.
+  //
+  // NO SHADOW RAY, matching how this light is treated everywhere else: it is a dim fill from below and
+  // a soft shadow is sixteen march steps. That exemption is what makes a third light affordable, and it
+  // is the reason adding it here costs one phase evaluation outside the loop and one multiply-add
+  // inside it rather than another set of rays.
+  let ph3 = phaseCS(dot(rd, SUN3_DIR), frame.volume.z);
 
   // Once, not per sample per sun. See ringShadowSetup.
   let rings = ringShadowSetup(frame.camPos.w);
@@ -247,6 +258,7 @@ fn volumetric(ro : vec3f, rd : vec3f, tMax : f32, px : vec2f) -> Scatter {
 
     let lit = SUN1_COL * (ph1 * bodyShadow(p, SUN1_DIR) * ringShadow(rings, p, SUN1_DIR))
             + SUN2_COL * (ph2 * bodyShadow(p, SUN2_DIR) * ringShadow(rings, p, SUN2_DIR))
+            + SUN3_COL * ph3
             + VOL_AMBIENT;
 
     // ANALYTIC integration of the step rather than a midpoint sum. Over a step of constant density
