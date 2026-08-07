@@ -523,9 +523,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       //
       // The MOTION-VECTOR path was assumed correct here and was not: it subtracted the bare pixel
       // centre from a reprojection of a jittered hit, leaving exactly this error in the only two
-      // things that use it - the ship and the satellites, which were the two that visibly crawled.
-      // Fixed at the producer (see motionFor), so `rp = opc + motionPx` above needs no correction:
-      // the delta now carries the -jitter itself.
+      // things that used it then - the ship and the satellites, which were the two that visibly
+      // crawled. Fixed at the PRODUCER, so `rp = opc + motionPx` above needs no correction: the delta
+      // carries the -jitter itself. Every producer is a rasterised mesh now, and each adds the jitter
+      // back to its own fragment centre - see the fragment stages of rings/shipmesh/satmesh.wgsl.
       rp = reprojectPrevAt(hitP, 1.0, outRes);
       rp = vec3f(rp.xy - frame.jitter.xy / toIn, rp.z);
     } else {

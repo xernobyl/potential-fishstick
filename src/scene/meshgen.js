@@ -134,6 +134,57 @@ export function rectTube({ segments, radius, halfW, halfH }) {
 }
 
 /**
+ * A closed box with FLAT faces: 24 vertices, 12 triangles.
+ *
+ * TWENTY-FOUR VERTICES, NOT EIGHT, and that is the whole reason this is a generator rather than a
+ * literal. A cube corner has three different normals and a vertex carries one; sharing the eight corners
+ * would average the three into a diagonal and shade the box like a rounded blob. Hard-surface geometry
+ * loses its edges exactly here, and it loses them silently — the silhouette stays right, so it reads as
+ * "the lighting looks off" rather than as a geometry bug.
+ *
+ * UNIT BY DEFAULT so one buffer can serve differently-shaped boxes: an instanced draw scales the unit
+ * cube per instance, which is what the satellites do. Because both the box and the scale are
+ * axis-aligned, a face normal along an axis stays along that axis under the scale, so the instance
+ * scaling needs no inverse-transpose — the one case where the shortcut is exact rather than close.
+ *
+ * @param {number[]} [halfExtents] half-size on each axis
+ */
+export function box(halfExtents = [1, 1, 1]) {
+  const positions = new Float32Array(24 * 3);
+  const normals = new Float32Array(24 * 3);
+  const extra = new Float32Array(24 * 4);
+  const indices = new Uint32Array(36);
+
+  let v = 0;
+  let i = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    for (const sign of [1, -1]) {
+      // (u, v, n) right-handed, so the quad below comes out counter-clockwise seen from OUTSIDE —
+      // which is what `frontFace: 'ccw'` plus back-face culling requires. Swapping u and v for the
+      // negative face is what keeps the handedness rather than mirroring it.
+      const n = [0, 0, 0];
+      n[axis] = sign;
+      const uAxis = sign > 0 ? (axis + 1) % 3 : (axis + 2) % 3;
+      const vAxis = sign > 0 ? (axis + 2) % 3 : (axis + 1) % 3;
+
+      const base = v;
+      for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const p = [0, 0, 0];
+        p[axis] = sign * halfExtents[axis];
+        p[uAxis] = su * halfExtents[uAxis];
+        p[vAxis] = sv * halfExtents[vAxis];
+        positions.set(p, v * 3);
+        normals.set(n, v * 3);
+        v++;
+      }
+      indices.set([base, base + 1, base + 2, base, base + 2, base + 3], i);
+      i += 6;
+    }
+  }
+  return { positions, normals, extra, indices, vertexCount: 24, triangleCount: 12 };
+}
+
+/**
  * Concatenate meshes into one buffer set, tagging each vertex with the index of the object it came
  * from. One draw call, one pipeline, N analytic transforms.
  *
@@ -154,6 +205,13 @@ export function concatMeshes(parts) {
   const ids = new Float32Array(nv);
   const indices = new Uint32Array(ni);
 
+  // PER-OBJECT INDEX RANGES and an object-space bounding sphere each.
+  //
+  // One buffer and one draw is right while everything in it is always visible; the moment an object can
+  // be culled, or wants a different level of detail, it needs to be drawable on its own. Recording the
+  // ranges at build time costs nothing and is what makes both possible — see core/frustum.js.
+  const ranges = [];
+
   let vOff = 0;
   let iOff = 0;
   for (let k = 0; k < parts.length; k++) {
@@ -165,10 +223,33 @@ export function concatMeshes(parts) {
     ids.fill(k, vOff, vOff + count);
     // Indices are per-part, so they shift by the running vertex offset.
     for (let i = 0; i < p.indices.length; i++) indices[iOff + i] = p.indices[i] + vOff;
+    // Bounding sphere in OBJECT space: centroid of the extremes, then the true farthest vertex from it.
+    // A sphere rather than a box because everything cullable here rotates, and a sphere is
+    // rotation-invariant — so this radius stays correct for every orientation the object will ever have.
+    let lo = [Infinity, Infinity, Infinity];
+    let hi = [-Infinity, -Infinity, -Infinity];
+    for (let v = 0; v < count; v++) {
+      for (let a = 0; a < 3; a++) {
+        const val = p.positions[v * 3 + a];
+        if (val < lo[a]) lo[a] = val;
+        if (val > hi[a]) hi[a] = val;
+      }
+    }
+    const centre = [0, 1, 2].map((a) => (lo[a] + hi[a]) * 0.5);
+    let r2 = 0;
+    for (let v = 0; v < count; v++) {
+      const dx = p.positions[v * 3] - centre[0];
+      const dy = p.positions[v * 3 + 1] - centre[1];
+      const dz = p.positions[v * 3 + 2] - centre[2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > r2) r2 = d2;
+    }
+    ranges.push({ id: k, start: iOff, count: p.indices.length, centre, radius: Math.sqrt(r2) });
+
     vOff += count;
     iOff += p.indices.length;
   }
-  return { positions, normals, extra, ids, indices, vertexCount: nv, indexCount: ni };
+  return { positions, normals, extra, ids, indices, ranges, vertexCount: nv, indexCount: ni };
 }
 
 /**

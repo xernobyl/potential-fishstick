@@ -12,6 +12,8 @@
 
 import { rectTube, revolveProfile, concatMeshes, interleave, MESH_FIELDS, MESH_STRIDE_FLOATS }
   from '../src/scene/meshgen.js';
+import { extractFrustum, sphereVisible } from '../src/core/frustum.js';
+import * as m4 from '../src/scene/mat4.js';
 
 const TAU = Math.PI * 2;
 let failed = 0;
@@ -160,6 +162,20 @@ const indicesPerRing = 4 * 16 * 2 * 3;
 const secondTri = three.indices.slice(indicesPerRing, indicesPerRing + 3);
 check(secondTri.every((i) => i >= perRing && i < perRing * 2),
       'the second object\'s triangles reference the second object\'s vertices', `${secondTri}`);
+
+// ---- per-object ranges and bounding spheres ----
+{
+  const r = three.ranges;
+  check(r.length === 3, 'concat records one range per object', `${r.length}`);
+  check(r[0].start === 0 && r[1].start === indicesPerRing && r[2].start === indicesPerRing * 2,
+        'ranges start at the right index offsets', r.map((x) => x.start).join());
+  check(r.every((x) => x.count === indicesPerRing), 'and cover their own indices');
+  // A ring of radius 2 with a 0.2 half-width: the farthest vertex is at about 2.2 from the centre.
+  check(Math.abs(r[1].radius - 2.2) < 0.05, 'the bounding sphere fits the object',
+        `radius ${r[1].radius.toFixed(3)}`);
+  check(r.every((x) => Math.hypot(...x.centre) < 1e-6),
+        'and a hoop is centred on its own origin, so rotation cannot move it');
+}
 
 const inter = interleave(three);
 check(inter.length === three.vertexCount * MESH_STRIDE_FLOATS,

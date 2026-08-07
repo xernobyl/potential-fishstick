@@ -9,6 +9,8 @@ import { layerRotations, wgslMat3, LAYER_SLOTS, SCHEDULE } from './lattice.js';
  * there is never a copy of a constant that can drift out of sync with the JS.
  */
 
+import { SHIP_MESH } from './ship_sdf.js';
+
 export const QUALITY = {
   /** Internal render scale. Temporal accumulation carries the anti-aliasing, so
    *  half res is a genuine win rather than a visible downgrade. */
@@ -373,14 +375,18 @@ export const SHIP = {
   /** Scales turn acceleration into what the RCS puffs show. */
   rcsFromAccel: 0.5,
 
-  /** Overall size. The hull is authored at scale 1 in ship.wgsl; this divides the
-   *  local point before evaluating the field, so the whole thing shrinks together —
-   *  geometry, panel lines and jet positions alike. */
-  scale: 0.6,
-  /** Bounding sphere, in AUTHORED units (scaled by `scale` at use). Must contain the
-   *  wingtips (x ~ 0.62) with margin. */
-  bound: 0.95,
-  steps: 48,
+  /**
+   * Overall size: body units per world unit.
+   *
+   * OWNED BY `ship_sdf.js`, not written here. The hull is authored at scale 1 and the mesher applies
+   * this once; the plumes below are authored in the same units and divide it out the same way. Two
+   * copies of this number is two ships — the hull one size and the exhaust another — and the drift
+   * only shows up as plumes that no longer start at the nozzles. So there is one.
+   *
+   * The bounding sphere and step count that used to sit here went with the marched hull: a mesh is
+   * bounded by the sphere `concatMeshes` measures from its own vertices, which cannot be wrong.
+   */
+  scale: SHIP_MESH.scale,
   panel: 9.0,
   hull: [0.30, 0.32, 0.36],
   glass: [0.03, 0.05, 0.09],
@@ -1565,9 +1571,7 @@ export function wgslDefines() {
     AURORA_PALETTE: `array<vec3f, ${AURORA.palette.length}>(`
       + AURORA.palette.map((c) => `vec3f(${c.map(f).join(', ')})`).join(', ') + ')',
     // ship
-    SHIP_BOUND: SHIP.bound * SHIP.scale,
     SHIP_SCALE: SHIP.scale,
-    SHIP_STEPS: int(SHIP.steps),
     SHIP_PANEL: SHIP.panel,
     SHIP_HULL: `vec3f(${SHIP.hull.map(f).join(', ')})`,
     SHIP_GLASS: `vec3f(${SHIP.glass.map(f).join(', ')})`,
@@ -1608,11 +1612,14 @@ export function wgslDefines() {
     // Only the look CONSTANTS remain compile-time; every level is a uniform now.
     // 2^agxEv, folded in at the shader so the branch stays one multiply.
     AGX_GAIN: f(Math.pow(2, FILM.agxEv)),
-    // The meshed hull's material. Constant across the whole surface for now, which is the brief and
-    // also what isolates the geometry: anything odd is the mesh rather than a texture.
-    SHIPM_ALBEDO: `vec3f(${[0.62, 0.64, 0.69].map(f).join(', ')})`,
-    SHIPM_ROUGH: f(0.38),
-    SHIPM_METAL: f(0.85),
+    // The meshed hull. It is PAINTED, not bare metal: the palette below is the same SHIP_HULL /
+    // SHIP_GLASS / SHIP_TRIM the marched hull used, reused rather than re-picked, so the mesh reads as
+    // the same ship rather than as a different one that happens to be the same shape.
+    //
+    // The flat constant material that briefly lived here was a deliberate scaffold — it isolated the
+    // geometry while the mesher was being trusted, on the grounds that anything odd had to be the mesh
+    // rather than a texture. That job is done and the scaffold comes out.
+    //
     SHIPM_ENV: f(0.55),
     SHIPM_CORE: `vec3f(${[0.36, 0.16, 0.30].map(f).join(', ')})`,
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,

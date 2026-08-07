@@ -50,10 +50,11 @@ import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
 import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL, SHIP,
-         TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
+         SATELLITES, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { SolidMeshPass } from './passes/solidmesh.js';
 import { Mesh } from './core/mesh.js';
-import { rectTube, concatMeshes } from './scene/meshgen.js';
+import { extractFrustum } from './core/frustum.js';
+import { rectTube, box, concatMeshes } from './scene/meshgen.js';
 import { shipTree, SHIP_MESH } from './scene/ship_sdf.js';
 import { compile, bounds } from './scene/sdf/nodes.js';
 import { dualContour, resolutionForScreen } from './scene/sdf/dualcontour.js';
@@ -101,22 +102,22 @@ function buildShipMesh() {
   );
   const mesh = dualContour(compile(tree), { bounds: b, resolution: res });
 
-  // Body units -> world units, and one object, so every vertex carries id 0.
+  // Body units -> world units, in place. A uniform scale leaves normals unchanged, which is the whole
+  // reason `scale` is uniform-only.
   const positions = new Float32Array(mesh.positions.length);
   for (let i = 0; i < positions.length; i++) positions[i] = mesh.positions[i] * SHIP_MESH.scale;
-  const extra = new Float32Array(mesh.vertexCount * 4);
-  const ids = new Float32Array(mesh.vertexCount);
 
-  return {
+  // Through `concatMeshes` even though there is one object, rather than hand-rolling the ids and the
+  // empty `extra`. It is the same three lines either way until it is not: the first version wrote them by
+  // hand and silently skipped the per-object RANGE, so the ship fell back to a bounding sphere of
+  // Infinity and was never culled. One code path produces the ids, the extra data and the bounds
+  // together, so a mesh cannot arrive half-described.
+  return concatMeshes([{
     positions,
-    normals: mesh.normals,          // a uniform scale leaves normals unchanged
-    extra,
-    ids,
+    normals: mesh.normals,
+    extra: new Float32Array(mesh.vertexCount * 4),
     indices: mesh.indices,
-    vertexCount: mesh.vertexCount,
-    indexCount: mesh.indices.length,
-    triangleCount: mesh.triangleCount,
-  };
+  }]);
 }
 
 export class Renderer {
@@ -140,6 +141,8 @@ export class Renderer {
     this.held = false;
     /** Index into VIEWS, or -1 for the normal composite. See passes/debugview.js. */
     this.debugView = -1;
+    /** Five frustum planes, reused every frame. See core/frustum.js for why five. */
+    this._frustum = new Float32Array(20);
     // The controller is FED, not polling: one genuine sample per resolved frame — see dynres.js.
     this.profiler.onFrame = (ms) => { if (QUALITY.dynamicRes) this.dynres.sample(ms); };
     this.accumFrames = 0;
@@ -183,6 +186,12 @@ export class Renderer {
         shader: 'shipmesh.wgsl',
         clear: false,
         mesh: () => new Mesh(gpu.device, buildShipMesh(), 'ship'),
+        // The hull's sphere rides with the ship. Object-space radius times the mesh scale, centred on
+        // the ship's position — the orientation cannot change a sphere.
+        worldSphere: (_id, r) => [
+          this.ship.pos[0], this.ship.pos[1], this.ship.pos[2],
+          r.radius * SHIP_MESH.scale,
+        ],
       }),
       rings: new SolidMeshPass(gpu, this.targets, this.shaders, {
         label: 'rings',
@@ -195,6 +204,24 @@ export class Renderer {
           Array.from({ length: RINGS.count }, (_, i) => rectTube({
             segments: RINGS.segments, ...ringDims(i),
           }))), 'rings'),
+        // A hoop's sphere is centred on the world origin and its radius does not depend on the
+        // precessing basis, so this needs nothing the CPU does not already have. The object-space radius
+        // from the mesh is already exactly that.
+        worldSphere: (_id, r) => [0, 0, 0, r.radius],
+      }),
+      // Fifteen boxes - five satellites, a bus and two array wings each - as ONE unit cube drawn fifteen
+      // times, each instance scaled and placed by the orbital frame its own instance index selects. They
+      // were analytic boxes intersected inside the scene march, which every ray in the frame paid for
+      // whether or not it went near one; see satmesh.wgsl for the rest of that trade.
+      //
+      // No `worldSphere`, so nothing is culled: the orbits are evaluated in WGSL and never reach the CPU,
+      // and a second copy of them in JavaScript to reject 180 triangles would cost more than it saves.
+      satellites: new SolidMeshPass(gpu, this.targets, this.shaders, {
+        label: 'satellites',
+        shader: 'satmesh.wgsl',
+        clear: false,
+        mesh: () => new Mesh(gpu.device, concatMeshes([box()]), 'satellites'),
+        instances: SATELLITES.count * 3,
       }),
       // Three instanced additive draws that differ only in their data — see AdditivePass. The
       // `source` thunks are called when bind groups are built rather than captured now, so an
@@ -221,6 +248,14 @@ export class Renderer {
         source: () => this.aurora.buffer,
       }),
     };
+
+    // THE SOLID MESH PASSES, IN DRAW ORDER, as one list.
+    //
+    // Three things need this order and this membership: init, recording, and the wireframe flag. Listing
+    // them once means adding a fourth generated mesh cannot half-land — which it could when the order
+    // was spelled out three times, and did: the first solid to draw is the one that CLEARS the layer, so
+    // getting the list right in one place and wrong in another is a cleared buffer, not an error.
+    this.solidPasses = [this.passes.rings, this.passes.shipmesh, this.passes.satellites];
   }
 
   async init() {
@@ -238,8 +273,7 @@ export class Renderer {
       this.passes.flare.init(this.frameBGL),
       this.passes.composite.init(this.frameBGL, this.gpu.format),
       this.passes.debugview.init(this.frameBGL, this.gpu.format, wgslDefines()),
-      this.passes.rings.init(this.frameBGL, wgslDefines()),
-      this.passes.shipmesh.init(this.frameBGL, wgslDefines()),
+      ...this.solidPasses.map((m) => m.init(this.frameBGL, wgslDefines())),
       this.passes.contrail.init(this.frameBGL, wgslDefines()),
       this.passes.railgun.init(this.frameBGL, wgslDefines()),
       this.passes.aurora.init(this.frameBGL, wgslDefines()),
@@ -383,14 +417,26 @@ export class Renderer {
     // cannot infer is the STRUCTURE - which passes belong to the same phase, and therefore which of
     // them a change should be expected to move. These four names are the frame graph's own phases, so
     // a capture reads the way the file above documents it. Free when no tool is attached.
+    // Frustum planes once per frame, from the same matrix the vertex stages use, into a buffer that is
+    // reused rather than reallocated.
+    extractFrustum(this.camera.viewProj, this._frustum);
+
     encoder.pushDebugGroup('scene');
     scene.record(encoder, this.frameBG, p);
     // Solids BEFORE taa: they carry exact motion vectors, so TAA can accumulate
     // them, which is what anti-aliases their silhouettes and puts them in the bloom.
-    this.passes.rings.record(encoder, this.frameBG, p);
+    // The wireframe view swaps every solid mesh onto its line-list pipeline. Built on demand the first
+    // time the view is selected, and the flag only takes effect once it exists, so selecting it never
+    // stalls the frame waiting on a pipeline compile.
+    const view = this.debugView >= 0 ? VIEWS[this.debugView] : null;
+    const wire = !!view?.wireframe;
+    for (const m of this.solidPasses) {
+      m.wireframe = wire;
+      if (wire) m.prepareWireframe(this.frameBGL, wgslDefines());
+    }
+    for (const m of this.solidPasses) m.record(encoder, this.frameBG, p, this._frustum);
     // After the rings, into the same layer and the same depth buffer, so the two occlude each other by
     // hardware depth rather than by anyone sorting them.
-    this.passes.shipmesh.record(encoder, this.frameBG, p);
     encoder.popDebugGroup();
 
     encoder.pushDebugGroup('resolve');

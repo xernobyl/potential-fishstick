@@ -16,7 +16,6 @@
 //!include "sdf.wgsl"
 //!include "sky.wgsl"
 //!include "shade.wgsl"
-//!include "satellite.wgsl"
 //!include "ship.wgsl"
 
 @group(1) @binding(0) var outTex : texture_storage_2d<rgba16float, write>;
@@ -105,28 +104,17 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
     }
   }
 
-  // ---- satellites, composited by depth ----
-  // Tested against the body's hit distance so they occlude and are occluded
-  // correctly without ever entering the marched field. They live outside the
-  // body's tiles, so this runs everywhere.
+  // How far this pass got: the body, or nothing.
   var nearT = 1e4;
   if (depthTag > 0.0) { nearT = depthTag; }
 
-  let sat = hitSatellites(ray.o, ray.d, nearT);
-  if (sat.hit) {
-    col = shadeSatellite(sat, ray.o, ray.d);
-    // A POSITIVE tag, as the ship writes: the motion vector below is exact for these too, so they
-    // take the reprojecting path instead of the dynamic tag's same-pixel history. That fallback is
-    // why they crawled while the rings - which do reproject along their own motion - sat still.
-    depthTag = sat.t;
-    nearT = sat.t;
-  }
-
-  // THE HULL IS NO LONGER MARCHED. It is a generated mesh now, rasterised into the solid layer with the
-  // rings and resolved against this pass by depth - see shipmesh.wgsl and scene/ship_sdf.js. What is left
-  // here is the plumes, which are volumetric and belong in a march.
+  // NEITHER THE HULL NOR THE SATELLITES ARE MARCHED ANY MORE. Both are generated meshes now, rasterised into the solid layer
+  // with the rings and resolved against this pass by depth - see shipmesh.wgsl, satmesh.wgsl and
+  // scene/ship_sdf.js. The satellites in particular were costing every ray in the frame a bounding-sphere
+  // test whether or not it went near one. What is left here is the plumes, which are volumetric and
+  // belong in a march.
   //
-  // `nearT` therefore no longer accounts for the hull, so a plume behind it is not clipped by it here.
+  // `nearT` therefore no longer accounts for either, so a plume behind them is not clipped by them here.
   // The resolve fixes that anyway: the hull is nearer in the depth tag, so it wins the pixel. What is
   // lost is only self-occlusion WITHIN the plume, which is additive and has none to lose.
   col += shipJets(ray.o, ray.d, nearT);
@@ -135,8 +123,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   //
   // LAST, and after `nearT` is final. It integrates only as far as the nearest thing this pass
   // resolved, so it has to run once every candidate for that has been considered — the body, the
-  // satellites and the ship all set it, and putting this before them would have drawn air through
-  // whichever of them was in front.
+  // only the body sets it now that the ship and the satellites are rasterised, and putting this before
+  // it would have drawn air through the body.
   //
   // Here rather than in the composite so the temporal resolve averages it: every sample is a world
   // position and the step offset moves every frame, so 12 steps converge into a smooth integral
@@ -149,22 +137,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
     col = col * vol.transmittance + vol.inScatter;
   }
 
-  // Motion. The sentinel goes everywhere by default — the body and the sky are handled by camera
-  // reprojection, which is exact for them and needs nothing stored. Only the satellites override it here
-  // now: the hull used to, and moved to the mesh pass along with the rest of it, where its motion comes
-  // from a rigid transform instead of a per-pixel hit point.
-  var motion = vec4f(MOTION_NONE, 0.0, 0.0, 0.0);
-  // `px` ITSELF - the jittered ray position, not the pixel centre. Both writers below hit their
-  // surface along that ray, so that is where the surface they are describing currently is. Using the
-  // bare centre drops the jitter out of the delta and makes the history fetch wander by up to a
-  // pixel every frame, which is what the ship and the satellites were doing. See motionFor.
-  let motionPx = px;
-  if (sat.hit && frame.probe.z <= 0.5) {
-    // Also exact, and for the same reason by a different route: the orbits are analytic, so the
-    // previous transform is the same evaluation one frame back. `misc.w` is dt.
-    motion = motionFor(satPrevWorld(sat, frame.camPos.w - frame.misc.w), motionPx, sat.t);
-  }
-  textureStore(motionTex, vec2i(gid.xy), motion);
+  // Motion: the sentinel, everywhere. What this pass draws - the body and the sky - is handled by
+  // CAMERA reprojection, which is exact for them and needs nothing stored.
+  //
+  // Nothing overrides it any more. The ship and the satellites both used to, and both moved to the mesh
+  // passes, where the motion vector comes from a rigid transform rather than from a per-pixel hit point.
+  // That is a strictly better answer for the same pixels, and it is why this is now unconditional.
+  textureStore(motionTex, vec2i(gid.xy), vec4f(MOTION_NONE, 0.0, 0.0, 0.0));
 
   // Replace only the COLOUR: the depth tags, motion vectors and everything the temporal
   // gates key off stay exactly as the real scene produced them, so this measures the resolve

@@ -1,4 +1,5 @@
 import { MESH_VERTEX_LAYOUT } from '../core/mesh.js';
+import { sphereVisible } from '../core/frustum.js';
 
 /**
  * The project's one pass for RASTERISED OPAQUE geometry: a generated mesh into the solid target.
@@ -32,6 +33,13 @@ export class SolidMeshPass {
    * @param {string} spec.shader  WGSL module exposing `vs` and `fs`
    * @param {() => import('../core/mesh.js').Mesh} spec.mesh  resolved at init, so the caller can
    *        build the geometry lazily rather than before the device exists
+   * @param {number} [spec.instances]  draw the mesh this many times, the vertex stage placing each
+   *        from `@builtin(instance_index)`. For a shape repeated with different transforms — the
+   *        satellites — this beats baking copies into the buffer.
+   * @param {(id: number, range: object) => number[]} [spec.worldSphere]  where this object's bounding
+   *        sphere is in the world, as [x, y, z, r]. Supplying it is what opts an object into frustum
+   *        culling: only the caller knows the transform, and some transforms (the satellites' orbits)
+   *        live in WGSL and never reach the CPU at all.
    */
   constructor(gpu, targets, shaders, spec) {
     this.gpu = gpu;
@@ -83,6 +91,46 @@ export class SolidMeshPass {
     });
   }
 
+  /**
+   * The wireframe pipeline, built on first use.
+   *
+   * SAME SHADERS, SAME LAYOUT, only the topology differs — so the wireframe shows the real material at
+   * the real vertices, and a mesh whose vertex stage is wrong looks wrong here in exactly the way it
+   * looks wrong shaded. A dedicated flat-colour wire shader would have hidden that, which is the
+   * opposite of what a debug view is for.
+   *
+   * Depth writes OFF and the test relaxed to `greater-equal`: the lines sit exactly on the surface they
+   * came from, so the strict `greater` of the solid pass would z-fight them away almost everywhere.
+   */
+  async #wirePipelineFor(frameBGL, defines) {
+    if (this.wirePipeline) return this.wirePipeline;
+    const d = this.gpu.device;
+    const module = await this.shaders.module(this.spec.shader, defines);
+    this.wirePipeline = await d.createRenderPipelineAsync({
+      label: `${this.spec.label}-wire`,
+      layout: d.createPipelineLayout({ bindGroupLayouts: [frameBGL] }),
+      vertex: { module, entryPoint: 'vs', buffers: [MESH_VERTEX_LAYOUT] },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [{ format: 'rgba16float' }, { format: 'rgba16float' }],
+      },
+      // No culling: a line has no facing, and half a wireframe is not a wireframe.
+      primitive: { topology: 'line-list', cullMode: 'none' },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: false,
+        depthCompare: 'greater-equal',
+      },
+    });
+    return this.wirePipeline;
+  }
+
+  /** Build the wireframe pipeline ahead of the frame that needs it, so the view does not stutter on. */
+  prepareWireframe(frameBGL, defines) {
+    return this.#wirePipelineFor(frameBGL, defines);
+  }
+
   #sync() {
     if (this.generation === this.targets.generation) return;
     this.generation = this.targets.generation;
@@ -91,7 +139,10 @@ export class SolidMeshPass {
     this.depthView = this.targets.solidDepth.createView();
   }
 
-  record(encoder, frameBG, profiler) {
+  /**
+   * @param {Float32Array} [planes] frustum planes; without them nothing is culled
+   */
+  record(encoder, frameBG, profiler, planes) {
     if (!this.pipeline) return;
     this.#sync();
     // FIRST SOLID CLEARS, THE REST LOAD. Two passes both clearing would wipe the first, and the target
@@ -126,9 +177,47 @@ export class SolidMeshPass {
       },
       ...profiler.scope(this.spec.label),
     });
-    pass.setPipeline(this.pipeline);
+    const instances = this.spec.instances ?? 1;
     pass.setBindGroup(0, frameBG);
-    this.mesh.draw(pass);
+
+    // WIREFRAME, when the debug view asks for it and its pipeline is ready. Everything is drawn,
+    // unculled: the point of the view is to see the triangles, and an object that culling removed is
+    // exactly the thing you would want to notice was missing.
+    if (this.wireframe && this.wirePipeline) {
+      pass.setPipeline(this.wirePipeline);
+      this.mesh.drawWireframe(pass, this.gpu.device, instances);
+      this.drawn = this.mesh.ranges.length;
+      pass.end();
+      return;
+    }
+
+    pass.setPipeline(this.pipeline);
+
+    // PER-OBJECT FRUSTUM CULLING, when the caller supplies both the planes and a way to place each
+    // object's sphere in the world. Without either it draws everything, which is what a mesh with no
+    // meaningful per-object transform wants.
+    //
+    // The sphere is asked for rather than derived here because only the caller knows the transform: the
+    // rings' basis is evaluated in WGSL and never reaches the CPU, but their sphere is origin-centred and
+    // rotation-invariant, so the CPU needs no basis at all to place it. That is the payoff of choosing
+    // spheres.
+    this.mesh.bind(pass);
+    const sphereOf = this.spec.worldSphere;
+    // Whether to cull is decided by whether a sphere is available, which needs no separate flag and no
+    // instancing special case: a mesh drawn many times from GPU-side transforms cannot offer one, so it
+    // falls through to drawing everything, which is the right answer for it.
+    if (planes && sphereOf) {
+      this.drawn = 0;
+      for (const r of this.mesh.ranges) {
+        const s = sphereOf(r.id, r);
+        if (s && !sphereVisible(planes, s[0], s[1], s[2], s[3])) continue;
+        this.mesh.drawRange(pass, r, instances);
+        this.drawn++;
+      }
+    } else {
+      pass.drawIndexed(this.mesh.indexCount, instances);
+      this.drawn = this.mesh.ranges.length;
+    }
     pass.end();
   }
 }

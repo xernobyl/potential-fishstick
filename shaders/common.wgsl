@@ -89,16 +89,16 @@ struct Frame {
 // Here rather than in ship.wgsl and railgun.wgsl, which each carried an identical copy — and neither of
 // which the mesh vertex front end could include, since it has no business depending on either. One
 // definition, in the header everything already includes.
+//
+// The inverse rotation used to live here too. Its only caller was the marched hull, which rotated the
+// RAY into the ship's local frame rather than rotating the field; a mesh transforms the other way, so
+// when the hull became geometry the inverse had nothing left to do.
 
 /// Rotate a vector by a unit quaternion. The two-cross-product form: no matrix, no trig.
 fn qrotate(q : vec4f, v : vec3f) -> vec3f {
   return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
 
-/// The inverse rotation. A unit quaternion's inverse is its conjugate, so this is one negation.
-fn qrotateInv(q : vec4f, v : vec3f) -> vec3f {
-  return qrotate(vec4f(-q.xyz, q.w), v);
-}
 
 fn beatPhase() -> f32 { return frame.misc.x; }
 fn lifePhase() -> f32 { return frame.misc.y; }
@@ -251,34 +251,15 @@ fn jitterClip(clip : vec4f) -> vec4f {
 /// Clip-space NDC (from a projection matrix) -> shared screen space.
 fn ndcToUV(ndc : vec2f) -> vec2f { return ndc * frame.screen.zw; }
 
-/// A finished motion vector for a world point that MOVED, given where it was last frame.
-///
-/// Project through the previous view-projection, convert to previous-frame pixels, measure the
-/// distance from the PREVIOUS camera - which is the only depth the history can be compared against
-/// without mixing up two camera positions - and carry the owner's hit distance so the consumer can
-/// tell whose motion this is. Every exact motion vector needs exactly these steps, so the ship and
-/// the satellites share this rather than each doing it slightly differently.
-///
-/// `px` MUST BE WHERE THE SAMPLE WAS ACTUALLY TAKEN, jitter included - not the bare pixel centre.
-///
-/// This is the whole subtlety, and getting it wrong is invisible in a still frame. `prevWp` is the
-/// previous position of the surface this sample HIT, and a marched sample hits along the JITTERED
-/// ray, so the surface's current position is the jittered one. The consumer adds the delta to the
-/// unjittered pixel centre (`rp = opc + motionPx`), which means the delta itself has to carry the
-/// -jitter: it is what turns "where the surface I sampled used to be" into "where the surface now at
-/// this pixel centre used to be". The history is indexed by pixel centres, so that is the frame the
-/// answer has to be in.
-///
-/// Omit it and the fetch position wanders with the jitter sequence every frame, so the history is
-/// re-filtered along a path that never settles - the same failure the body's reprojection path
-/// documents, measured there at 0.2389 output pixels against a jitter of 0.2361. The rings do this
-/// correctly by adding the jitter back to their fragment centre; see rings.wgsl.
-fn motionFor(prevWp : vec3f, px : vec2f, owner : f32) -> vec4f {
-  let clip = frame.prevViewProj * vec4f(prevWp, 1.0);
-  if (clip.w <= 1e-4) { return vec4f(MOTION_NONE, 0.0, 0.0, 0.0); }
-  let prevPx = uvToPixel(ndcToUV(clip.xy / clip.w));
-  return vec4f(prevPx - px, length(prevWp - frame.prevCamPos.xyz), owner);
-}
+// The shared MOTION-VECTOR helper that used to sit here is gone, and where it went is the point.
+//
+// `motionFor` existed because the marched ship and the marched satellites each needed the same five
+// steps — project through the previous view-projection, convert to previous-frame pixels, measure
+// against the PREVIOUS camera, keep the jitter inside the delta, tag the owner — and doing that twice
+// slightly differently is how one of them ends up crawling. Both are rasterised meshes now, and they
+// get the same five steps from `meshXform` in mesh_vertex.wgsl instead, which is a better place for
+// them: a vertex stage knows the previous transform exactly, where a marched sample could only
+// reconstruct it from a hit point. When the last caller went, so did the helper.
 
 /// A pixel coordinate in the RENDER grid, expressed in the ACCUMULATION grid.
 ///

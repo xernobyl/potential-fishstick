@@ -103,13 +103,21 @@ Press **`g`** to put this list on screen; `g` again for the tuning panel, again 
   frozen frame slightly less stable, because native resolution is sharper and carries four times
   the independent samples.
 - **B** — cycle the intermediate buffers onto the screen: scene before the resolve, the
-  accumulation, its depth tag, the motion vectors, the additive layer, the rings' solid target, off.
+  accumulation, its depth tag, the motion vectors, the additive layer, the solid mesh target, that
+  same target as a **wireframe**, off.
   The name of what you are looking at appears top-left, whether or not the controls are up, and the
   tuning panel has the same list as a dropdown. It REPLACES the composite rather than drawing over
   it — the point is to see the buffer, not the buffer under a film grade — and every pass upstream
   still runs, so the timings stay comparable to a normal frame. The motion-vector view is the most
-  useful of them: it shows at a glance which things can say where they were last frame (the rings,
-  the ship, the satellites) and which fall back to camera reprojection (the body, the sky).
+  useful of them: it shows at a glance which things can say where they were last frame (every
+  rasterised mesh — rings, hull, satellites) and which fall back to camera reprojection (the body,
+  the sky).
+
+  The **wireframe** view draws every triangle edge exactly once, through the objects' own material
+  shaders rather than a flat wire colour — so a vertex stage that is wrong looks wrong there in the
+  same way it looks wrong shaded. It is also the quickest read on whether a generated mesh is the
+  right density for the size it appears at: edges you cannot resolve are triangles you paid for and
+  cannot see.
 - **J** — the pixel jitter on/off. Off means no antialiasing; with it off and the scene frozen the
   frame is bit-exact, which is the baseline every stability figure here is measured against.
 - **F** — fullscreen.
@@ -525,6 +533,8 @@ src/
     uniforms.js      the per-frame uniform block (camera matrices + vec4s)
     targets.js       every render target, allocated together
     profiler.js      timestamp queries
+    mesh.js          a generated mesh on the GPU: one layout, one buffer pair
+    frustum.js       view-frustum planes (five, not six) and sphere culling
   scene/
     tuning.js        >>> every art-direction number lives here <<<
     camera.js        drift / arcball, and the view-projection matrices
@@ -534,8 +544,14 @@ src/
     railgun.js       a ring of shots, each an event with a birth time
     mat4.js          column-major 4x4, closed-form inverses
     input.js         mouse, touch, and the flight keys
+    meshgen.js       CPU mesh generators: revolved profiles, boxes, concatenation
+    ship_sdf.js      the hull as an SDF tree, and its mesh budget
+    sdf/
+      nodes.js       the shape language: primitives, booleans, blends, transforms
+      dualcontour.js SDF -> triangles, sharp features preserved (QEF)
   passes/            one file per pass, each records itself
     additive.js      ONE pass for the contrail, auroras and rail guns — see below
+    solidmesh.js     ONE pass for every rasterised opaque mesh, for the same reason
   dev/
     benchmark.js     the deterministic benchmark and the GPU instruments
     gui.js           the tuning panel (press g); loaded on demand
@@ -550,12 +566,14 @@ shaders/
   shade.wgsl         the translucent material
   reflect.wgsl       cheap marched reflections, for any metal surface
   rings.wgsl         the three metal hoops
-  ship.wgsl          the ship's hull, and its engine and RCS plumes
+  ship.wgsl          the ship's engine and RCS plumes (the hull is a mesh now)
+  shipmesh.wgsl      the meshed hull: procedural paint over the generated geometry
+  satmesh.wgsl       satellites as instanced boxes
   contrail.wgsl      camera-facing ribbons through past positions
   aurora.wgsl        field-aligned ribbon, curl-noise paths, emission palette
   railgun.wgsl       double-helix beams, everything derived from age
   explosion.wgsl     surface detonations
-  satellite.wgsl     analytic box satellites
+  satellite.wgsl     satellite orbits and the two satellite materials
   sky.wgsl           stars, nebula, suns, limb glow
   ...                taa, bloom, lensflare, composite, embers, tilecull
 ```

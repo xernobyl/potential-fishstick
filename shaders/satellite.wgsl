@@ -1,23 +1,24 @@
 // ---------------------------------------------------------------------------
-// Satellites: three boxes each, analytically intersected.
+// Satellites: the orbital mechanics and the surface materials.
 //
-//   1 central cube  - the bus, wrapped in metallised film
-//   2 flat cubes    - the solar array, one either side on a boom
+// This file no longer intersects anything. The three boxes each satellite is made of are now REAL
+// GEOMETRY - one unit cube, instanced fifteen times and scaled per instance - rasterised into the solid
+// layer by satmesh.wgsl. What stays here is the part that is genuinely about satellites rather than
+// about drawing: where each one is at a given time, and what its two materials look like.
 //
-// Analytic boxes rather than SDF boxes folded into the marched field, for the
-// same reason the moon and debris are analytic: they are rigid bodies on their
-// own orbits, the field is already the frame's whole cost, and an exact slab test
-// gives a perfect edge and an exact normal for a fraction of one march step.
+// WHY THE SPLIT AND NOT ONE FILE. `satFrameAt` is needed by the vertex stage (to place the boxes now and
+// one frame ago) and the materials by the fragment stage, so they would be separated anyway; keeping them
+// together here means the ONE definition of a satellite's orbit is the one both stages read, which is
+// what makes the motion vector exact instead of merely consistent.
 //
-// The greeble is procedural SURFACE detail, not more geometry. Detail that only
-// perturbs the normal and the material costs a few hashes on the pixels that hit
-// a satellite, where the same detail as real boxes would multiply the ray tests.
-// At the size these sit on screen, nothing is lost.
+// The greeble is procedural SURFACE detail, not more geometry, and that was true when the boxes were
+// analytic and stays true now: detail that only perturbs the normal and the material costs a few hashes
+// on the pixels that hit a satellite, where the same detail as real triangles would multiply them. At the
+// size these sit on screen, nothing is lost.
 //
-// Orientation is how a real bird flies: the bus is nadir-pointing (one face kept
-// toward the planet) and the array rotates about its boom to track the sun. That
-// is why the panels catch the light together and swing as the camera drifts,
-// which is most of what makes them read as satellites rather than as debris.
+// Orientation is how a real bird flies: the bus is nadir-pointing (one face kept toward the planet) and
+// the array rotates about its boom to track the sun. That is why the panels catch the light together and
+// swing as the camera drifts, which is most of what makes them read as satellites rather than as debris.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -28,38 +29,6 @@
 
 const SAT_MAT_BUS   : i32 = 0;
 const SAT_MAT_PANEL : i32 = 1;
-
-struct SatHit {
-  hit   : bool,
-  t     : f32,
-  nor   : vec3f,   // world space
-  local : vec3f,   // box space, for the greeble
-  mat   : i32,
-  seed  : f32,
-  // Signed offset along the boom of the box that was hit: 0 for the bus, +-(boom + panel) for the
-  // two arrays. Stored rather than re-derived because `local` is in the hit box's OWN space and so
-  // cannot say which side of the bus that box was on - and the previous-frame transform needs it.
-  boom  : f32,
-};
-
-/// Slab test against a box of half-extents `rad`, centred at the origin of the
-/// space `ro`/`rd` are given in. Returns (tNear, normal); tNear < 0 is a miss.
-/// The normal falls out of which slab was entered last, so it is exact.
-fn boxIntersect(ro : vec3f, rd : vec3f, rad : vec3f) -> vec4f {
-  // A component of exactly zero would make 1/rd infinite and 0*inf a NaN, and a
-  // NaN here would survive into the accumulation buffer as a stuck pixel.
-  let safe = select(rd, vec3f(1e-9), abs(rd) < vec3f(1e-9));
-  let m = 1.0 / safe;
-  let n = m * ro;
-  let k = abs(m) * rad;
-  let t1 = -n - k;
-  let t2 = -n + k;
-  let tN = max(max(t1.x, t1.y), t1.z);
-  let tF = min(min(t2.x, t2.y), t2.z);
-  if (tN > tF || tF < 0.0) { return vec4f(-1.0, 0.0, 0.0, 0.0); }
-  let nor = -sign(safe) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
-  return vec4f(tN, nor);
-}
 
 /// One satellite's rigid frame: an orthonormal basis plus the array's own axis.
 struct SatFrame {
@@ -107,79 +76,42 @@ fn satFrameAt(i : f32, t : f32) -> SatFrame {
   return f;
 }
 
-fn satFrame(i : f32) -> SatFrame { return satFrameAt(i, frame.camPos.w); }
+/// One drawable box of one satellite: an oriented frame, a half-extent and a material.
+///
+/// Three parts per satellite - the bus and the two array wings - indexed the way an instanced draw
+/// indexes them, so `satPart(i / 3, i % 3, t)` turns a flat instance number into a placement. Taking the
+/// time as a parameter is what lets the vertex stage ask the same question about the PREVIOUS frame and
+/// get an exact answer rather than an estimate.
+struct SatPart {
+  centre : vec3f,
+  ax     : vec3f,   // the box's own x, y, z in world space
+  ay     : vec3f,
+  az     : vec3f,
+  rad    : vec3f,   // half-extents along those axes
+  mat    : i32,
+};
 
-/// Where a satellite hit was ONE FRAME AGO, exactly. The orbits are analytic, so the previous
-/// transform is the same evaluation at the previous time: no stored velocities, no extra buffer,
-/// no estimate. This is what lets satellites carry a real motion vector instead of falling back to
-/// same-pixel screen-space history, which is what made them crawl while the rings sat still.
-fn satPrevWorld(h : SatHit, tPrev : f32) -> vec3f {
-  let f  = satFrameAt(h.seed, frame.camPos.w);
-  let pf = satFrameAt(h.seed, tPrev);
-  if (h.mat == SAT_MAT_PANEL) {
-    // The arrays rotate about the boom to track the sun, so their basis has to be mapped through
-    // as well. Using the bus basis for them would leave that rotation uncompensated, which is a
-    // slow error but exactly the kind that never averages out.
-    let cNow  = f.pos  + f.by  * h.boom;
-    let cPrev = pf.pos + pf.by * h.boom;
-    return cPrev + pf.pn * h.local.x + pf.by * h.local.y + pf.pw * h.local.z;
+fn satPart(sat : f32, part : u32, t : f32) -> SatPart {
+  let f = satFrameAt(sat, t);
+  var o : SatPart;
+  if (part == 0u) {
+    // The bus, on the orbital frame itself.
+    o.centre = f.pos;
+    o.ax = f.bx; o.ay = f.by; o.az = f.bz;
+    o.rad = vec3f(SAT_BUS);
+    o.mat = SAT_MAT_BUS;
+  } else {
+    // An array wing, out along the boom either side. Panel space is x thin (the face normal), y along
+    // the boom, z across the width - and it rides the sun-tracking basis, not the bus one, which is the
+    // rotation that has to be carried into the previous frame as well or the panels shear in the
+    // history.
+    let boom = select(-(SAT_BOOM + SAT_PANEL_LEN), SAT_BOOM + SAT_PANEL_LEN, part == 1u);
+    o.centre = f.pos + f.by * boom;
+    o.ax = f.pn; o.ay = f.by; o.az = f.pw;
+    o.rad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
+    o.mat = SAT_MAT_PANEL;
   }
-  return pf.pos + pf.bx * h.local.x + pf.by * h.local.y + pf.bz * h.local.z;
-}
-
-/// Test one box given its basis as rows, narrowing `out` when it is closer.
-fn satBox(out : ptr<function, SatHit>, ro : vec3f, rd : vec3f,
-          centre : vec3f, ax : vec3f, ay : vec3f, az : vec3f,
-          rad : vec3f, mat : i32, seed : f32, boom : f32) {
-  // Into box space. The basis is orthonormal, so the inverse is the transpose,
-  // i.e. three dot products.
-  let rel = ro - centre;
-  let lo = vec3f(dot(rel, ax), dot(rel, ay), dot(rel, az));
-  let ld = vec3f(dot(rd, ax), dot(rd, ay), dot(rd, az));
-  let h = boxIntersect(lo, ld, rad);
-  if (h.x < 0.0 || h.x >= (*out).t) { return; }
-  (*out).t = h.x;
-  (*out).nor = ax * h.y + ay * h.z + az * h.w;   // basis * localNormal
-  (*out).local = lo + ld * h.x;
-  (*out).mat = mat;
-  (*out).seed = seed;
-  (*out).boom = boom;
-  (*out).hit = true;
-}
-
-fn hitSatellites(ro : vec3f, rd : vec3f, tmax : f32) -> SatHit {
-  var out : SatHit;
-  out.hit = false;
-  out.t = tmax;
-  out.nor = vec3f(0.0, 1.0, 0.0);
-  out.local = vec3f(0.0);
-  out.mat = SAT_MAT_BUS;
-  out.seed = 0.0;
-  out.boom = 0.0;
-
-  for (var i = 0; i < SAT_COUNT; i++) {
-    let fi = f32(i);
-    let f = satFrame(fi);
-
-    // Cheap reject: one sphere around the whole assembly. The array makes this
-    // much wider than the bus, so it is worth the test before three slab tests.
-    let reach = SAT_BOOM + SAT_PANEL_LEN;
-    let bs = iSphere(ro - f.pos, rd, reach * 1.45);
-    if (bs.y < 0.0 || bs.x > out.t) { continue; }
-
-    satBox(&out, ro, rd, f.pos, f.bx, f.by, f.bz,
-           vec3f(SAT_BUS), SAT_MAT_BUS, fi, 0.0);
-
-    let panelRad = vec3f(SAT_PANEL_THICK, SAT_PANEL_LEN, SAT_PANEL_WIDE);
-    let boom = SAT_BOOM + SAT_PANEL_LEN;
-    let off = f.by * boom;
-    // Panel space: x is the thin axis (its face normal), y the boom, z the width.
-    satBox(&out, ro, rd, f.pos + off, f.pn, f.by, f.pw,
-           panelRad, SAT_MAT_PANEL, fi, boom);
-    satBox(&out, ro, rd, f.pos - off, f.pn, f.by, f.pw,
-           panelRad, SAT_MAT_PANEL, fi, -boom);
-  }
-  return out;
+  return o;
 }
 
 // ---- shading -----------------------------------------------------------
@@ -195,22 +127,26 @@ fn satEnv(p : vec3f, N : vec3f, V : vec3f, f0 : vec3f, rough : f32) -> vec3f {
   return traceReflection(p + N * 0.004, R) * fresnelSchlickRough(NoV, f0, rough);
 }
 
-fn shadeSatellite(h : SatHit, ro : vec3f, rd : vec3f) -> vec3f {
-  let hitP = ro + rd * h.t;
-  let V = -rd;
-  var N = h.nor;
+/// The two satellite materials, given a point on a box.
+///
+/// Takes the surface rather than a hit record, so it is the same function whether the box was
+/// intersected or rasterised. `local` is the point in the BOX's own space in real units - which is what
+/// every feature below is authored against, and why the greeble does not swim when a satellite rotates.
+fn shadeSatSurface(local : vec3f, nor : vec3f, mat : i32, seed : f32,
+                   hitP : vec3f, V : vec3f) -> vec3f {
+  var N = nor;
   var alb : vec3f;
   var f0 : vec3f;
   var rough : f32;
   var emis = vec3f(0.0);
 
-  if (h.mat == SAT_MAT_PANEL) {
+  if (mat == SAT_MAT_PANEL) {
     // Solar cells: near-black silicon under a smooth cover glass, so almost
     // everything you see is the specular sheet. That is why real arrays read as
     // dark blue slabs face-on and as mirrors at a glance.
-    let g = h.local.yz * SAT_CELL_SCALE;
+    let g = local.yz * SAT_CELL_SCALE;
     let cell = floor(g);
-    let ch = hash21(cell + h.seed * 17.0);
+    let ch = hash21(cell + seed * 17.0);
 
     // Cell grid: the gaps between cells and the busbars crossing them.
     let e = abs(fract(g) - 0.5);
@@ -234,20 +170,20 @@ fn shadeSatellite(h : SatHit, ro : vec3f, rd : vec3f) -> vec3f {
     // crinkled, and the crinkle is most of what identifies it — so the normal is
     // perturbed by a tangent-space wobble, and the roughness rides along with it
     // because a crease scatters more than a flat span.
-    let q = h.local * SAT_WRINKLE_SCALE;
+    let q = local * SAT_WRINKLE_SCALE;
     let wob = vec3f(hash13(q + 1.7), hash13(q + 5.3), hash13(q + 9.1)) - 0.5;
-    let tang = wob - h.nor * dot(wob, h.nor);      // into the tangent plane
-    N = normalize(h.nor + tang * SAT_WRINKLE);
+    let tang = wob - nor * dot(wob, nor);      // into the tangent plane
+    N = normalize(nor + tang * SAT_WRINKLE);
 
     // Greeble. Hashing floor(local) gives per-face cells for free: the coordinate
     // along a face's own axis is constant across it, so it drops out of the cell
     // index without any face-selection logic.
-    let g = h.local * SAT_GREEBLE_SCALE;
-    let gh = hash13(floor(g) + h.seed * 31.0);
+    let g = local * SAT_GREEBLE_SCALE;
+    let gh = hash13(floor(g) + seed * 31.0);
 
     // Seams between panels. Weighting by (1 - |n|) excludes the face's own axis,
     // whose fract() is constant and would otherwise seam a whole face at once.
-    let w = 1.0 - abs(h.nor);
+    let w = 1.0 - abs(nor);
     let e = abs(fract(g) - 0.5) * w;
     let seam = smoothstep(0.40, 0.50, max(max(e.x, e.y), e.z));
 

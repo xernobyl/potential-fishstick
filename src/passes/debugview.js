@@ -27,7 +27,12 @@ export const VIEWS = [
   { name: 'depth tag', mode: 2, pick: (t) => t.accumRead },
   { name: 'motion vectors', mode: 1, pick: (t) => t.motion },
   { name: 'additive layer', mode: 0, pick: (t) => t.ember },
-  { name: 'solid (rings)', mode: 0, pick: (t) => t.solid },
+  // Renamed from 'solid (rings)': the layer holds the rings, the meshed hull and the satellites now.
+  { name: 'solid (meshes)', mode: 0, pick: (t) => t.solid },
+  // The same layer with the mesh passes switched to a line list — every triangle edge, once. Shares the
+  // material shaders rather than using a flat wire colour, so a vertex stage that is wrong looks wrong
+  // here in the same way it looks wrong shaded. See SolidMeshPass#prepareWireframe.
+  { name: 'mesh wireframe', mode: 0, pick: (t) => t.solid, wireframe: true },
 ];
 
 export class DebugViewPass {

@@ -50,8 +50,8 @@ surface or drawing a star does not pull in the marched body.
 ```mermaid
 flowchart TD
     tilecull[tilecull: which tiles can reach the body] --> raymarch
-    raymarch[raymarch: body, satellites, ship, atmosphere<br/>one jittered HDR sample + depth tag + motion vector] --> taa
-    rings[rings: rasterised opaque + exact motion vector<br/>hardware depth against itself] --> taa
+    raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag] --> taa
+    solid[solid meshes: rings, ship hull, satellites<br/>rasterised opaque + exact motion vectors<br/>frustum + back-face culled, shared depth] --> taa
     taa[TAA resolve: depth-sort solid vs body,<br/>reproject, variance-clip, accumulate]
     taa --> bloom
     taa --> composite
@@ -68,9 +68,15 @@ flowchart TD
     composite[composite: layers, limb glow, grade, grain] --> swap[(swapchain)]
 ```
 
-The ordering inside the raymarch is not arbitrary: body → satellites → ship, each narrowing the
-next one's `tmax`, so the set resolves front-to-back with no sorting. The atmosphere integrates
-**last**, once `tmax` is final, because it must stop at whatever ended up nearest.
+The march used to own three of those: the body, then the satellites, then the ship, each narrowing
+the next one's `tmax` so the set resolved front-to-back with no sorting. **Two of the three have
+since become triangle meshes** and moved to the solid layer, where hardware depth does that sorting
+for free — see *Generated geometry* below for what that bought and what it cost. What is left in the
+march is the body and the engine plumes, which are volumetric and belong there.
+
+The atmosphere still integrates **last**, once `tmax` is final, because it must stop at whatever
+ended up nearest — and `tmax` now accounts only for the body, with the resolve settling the rest by
+depth.
 
 ### The rule that sets the order
 
@@ -127,16 +133,18 @@ the history is indexed. They differ only in how they get there.
 | Content | Method | Jitter handling |
 |---|---|---|
 | Body, sky | reproject the world hit through `prevViewProj` | subtract `jitter/toIn` — the hit is on a jittered ray |
-| Rings (raster) | vertex shader emits `prevClip` | **add** jitter back to `in.pos.xy`, because `jitterClip` shifted the geometry |
-| Ship, satellites (march) | `motionFor(prevWorldPos, px, owner)` | pass the **jittered** `px`, so the `-jitter` is inside the delta |
+| Solid meshes (rings, hull, satellites) | vertex shader emits `prevClip` | **add** jitter back to `in.pos.xy`, because `jitterClip` shifted the geometry |
 
 The consumer does `rp = opc + motionPx` with no correction, so the correction has to be in the
-producer. Ship and satellites use one shared helper (`motionFor` in `common.wgsl`) specifically so
-there is one place to be right rather than three.
+producer. Every rasterised layer now takes the same route through `meshXform` in `mesh_vertex.wgsl`,
+so there is one place to be right rather than three. The `motionFor` helper the marched ship and
+satellites once shared lost its last caller in the move and was removed with them.
 
-Satellite previous positions come from `satFrameAt(i, t - dt)` — the same analytic orbit
-evaluated one frame back. No velocity buffer, no stored state. `ringDefAt(i, t)` is the same idea
-for the rings.
+**Every previous position is evaluated, not stored.** `ringDefAt(i, t)`, `satPart(i, part, t)` and the
+ship's own integrated pose are each asked the same question one frame back: no velocity buffer, no
+history texture, no extrapolation. That is the property that makes the vectors exact rather than
+approximately right, and it is why the transforms are all parameterised on time instead of reading
+the clock.
 
 ### 4. Depth tags
 
@@ -172,6 +180,66 @@ Two corollaries that explain otherwise-baffling tuning:
 - Depth of field could not converge through this at all, which is why the thin lens was removed
   rather than tuned. Any effect that needs several samples of one quantity must take them *within a
   frame*, not borrow them from previous frames.
+
+## Generated geometry
+
+Three of the scene's four solid objects are triangle meshes built on the CPU at startup. None of them
+is an asset: there is no file to load, and the shapes are code.
+
+| Object | Source | Built by | Triangles |
+|---|---|---|---|
+| Rings | `rectTube` — a revolved rectangular profile | `meshgen.js` | 3 × 768 |
+| Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/dualcontour.js` | ~4.9k |
+| Satellites | one unit `box`, instanced 15× | `meshgen.js` | 12 × 15 |
+
+### The SDF pipeline
+
+`sdf/nodes.js` is the shape language: primitives (sphere, box, rounded box, cylinder, cone, plane),
+booleans and smooth blends, and the transforms. It is **data**, not closures — a tree you can
+inspect, bound and mesh — and `compile()` turns it into nested closures once so that meshing is not
+paying a dispatch per node per sample.
+
+Two invariants make the rest work. Every primitive returns an **exact Euclidean distance**, not a
+bound, because dual contouring places vertices by root-finding along edges and a conservative bound
+puts them in the wrong place. And `scale` is **uniform only**: a non-uniform scale is not a distance
+field any more, and the failure is subtle enough that the operator refuses rather than approximates.
+
+`sdf/dualcontour.js` meshes it. Dual contouring rather than marching cubes for one reason that is
+visible in the result: it places one vertex per cell by minimising a **QEF** over the crossing
+planes, so a sharp edge is reconstructed as a sharp edge. Marching cubes bevels every one of them,
+which for a hard-surface hull is the whole silhouette. The QEF is Tikhonov-regularised toward the
+cell's mass point and the solution is clamped into its own cell, because an unregularised QEF on a
+nearly-flat cell is ill-conditioned and throws its vertex somewhere across the mesh.
+
+Resolution is **derived, not fixed**: `resolutionForScreen` takes the object's size, the distance it
+is usually seen from, the focal length and a screen-space error budget in pixels, and returns the
+grid resolution that meets it. So the mesh suits the window rather than the machine it was authored
+on, and the same call at other budgets is the LOD chain when one is wanted. `SHIP_MESH` in
+`ship_sdf.js` carries the measured triangle/time table the budget was calibrated against.
+
+### Drawing them
+
+One pass class, `SolidMeshPass`, draws all three: a mesh, a shader, and a spot in the draw order.
+One vertex layout (`MESH_VERTEX_LAYOUT`, derived from a field table so the offsets cannot drift from
+the stride) and one shared vertex front end (`mesh_vertex.wgsl`), so a fourth generated shape is a
+generator and a fragment stage, not a new pass, target and composite branch.
+
+**Culling.** Back faces always — roughly half the fragments of a closed mesh, and the cheapest saving
+available. Frustum culling per object, against **bounding spheres** rather than boxes, because
+everything here rotates and a sphere is rotation-invariant: one radius computed at build time stays
+correct in every orientation, where an AABB would need re-fitting every frame and would be looser
+afterwards. Planes come from the view-projection matrix by Gribb–Hartmann, and there are **five**, not
+six: the projection is reverse-Z infinite, so the far plane does not exist.
+
+An object opts in by offering a `worldSphere`; the satellites do not, because their orbits are
+evaluated in WGSL and never reach the CPU, and a second copy of the orbital mechanics in JavaScript
+to reject 180 triangles would cost more than it saves.
+
+**Verification.** The mesher is checked headlessly (`dev/dualcontour.mjs`): closed, manifold,
+genus-0 by Euler characteristic, every vertex on the field, unit outward normals, and zero inverted
+windings. Back-face culling was the only thing hiding two winding bugs before those checks existed —
+one in the ring generator, one in the contourer — so the assertions came first and the culling
+second. `dev/frustum.mjs` does the same for the planes.
 
 ## Resolution and resources
 
@@ -284,7 +352,7 @@ Break one of these and the failure will look like something else entirely.
 - **A new pass** — one class in `passes/` with `init()` and `record()`, one line in `renderer.js`.
   Decide first whether it goes before or after TAA, using the rule above; that choice is the whole design.
 - **New geometry in the march** — narrow `tmax` in the existing front-to-back chain, write a positive
-  depth tag, and emit a motion vector via `motionFor` if it moves.
+  depth tag, and emit a motion vector if it moves — via `meshXform` if it is a mesh.
 - **A new knob** — `tuning.js`. Runtime-tunable means a uniform slot; baked means a `wgslDefines`
   constant. If you might want to A/B it, it must be a uniform.
 - **A new quality claim** — build the instrument first. Every number in this repo has one behind it,
