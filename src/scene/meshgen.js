@@ -47,15 +47,27 @@ export function revolveProfile({ segments, radius, profile }) {
   if (!(segments >= 3)) throw new Error(`segments must be >= 3, got ${segments}`);
   if (!profile?.length) throw new Error('profile must have at least one edge');
 
-  // Closed sweep: segment `segments` is segment 0, so the ring joins itself exactly rather than
-  // leaving a seam whose two sides disagree by a rounding error.
-  const rings = segments;                 // distinct major angles
+  // THE SEAM RING IS DUPLICATED, and this is not laziness about wrapping.
+  //
+  // Wrapping the last quad back to vertex 0 gives a watertight sweep with fewer vertices, and it is
+  // wrong here: the shading reads `u` around the sweep, so the closing quad would interpolate from
+  // (segments-1)/segments back DOWN to 0 instead of up to 1, mirroring the detail across one segment.
+  // A hairline seam, in the one place a reader would assume is fine because the positions match.
+  //
+  // So there are `segments + 1` rings of vertices and `u` runs 0..1 continuously. The position uses
+  // the angle modulo the sweep, so the first and last rings are BIT-IDENTICAL rather than merely
+  // close - cos(TAU) and cos(0) are not guaranteed to agree, and a crack of one ulp is still a crack.
+  const rings = segments + 1;             // distinct major angles, last coincident with the first
   const perEdge = rings * 2;              // two vertices per edge per angle
   const vertCount = profile.length * perEdge;
   const triCount = profile.length * segments * 2;
 
   const positions = new Float32Array(vertCount * 3);
   const normals = new Float32Array(vertCount * 3);
+  // Per-vertex data whose meaning belongs to the SHAPE, not to the mesh system: (u along the sweep,
+  // v across the profile edge, which edge, spare). Any future generator uses these four however it
+  // likes, which is what keeps one vertex layout serving every generated mesh.
+  const extra = new Float32Array(vertCount * 4);
   const indices = new Uint32Array(triCount * 3);
 
   let vi = 0;
@@ -64,11 +76,14 @@ export function revolveProfile({ segments, radius, profile }) {
     const { from, to, normal } = profile[e];
     const base = vi;
     for (let s = 0; s < rings; s++) {
-      const a = (s / segments) * Math.PI * 2;
+      // Position from the angle MODULO the sweep, so ring `segments` is bit-identical to ring 0.
+      const a = ((s % segments) / segments) * Math.PI * 2;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
+      const u = s / segments;             // but `u` runs past it, to 1.0
       // The two profile ends at this angle. Radial offset scales the sweep circle; axial is along Z.
-      for (const p of [from, to]) {
+      for (let k = 0; k < 2; k++) {
+        const p = k === 0 ? from : to;
         const r = radius + p[0];
         positions[vi * 3] = ca * r;
         positions[vi * 3 + 1] = sa * r;
@@ -77,13 +92,17 @@ export function revolveProfile({ segments, radius, profile }) {
         normals[vi * 3] = ca * normal[0];
         normals[vi * 3 + 1] = sa * normal[0];
         normals[vi * 3 + 2] = normal[1];
+        extra[vi * 4] = u;
+        extra[vi * 4 + 1] = k;            // 0 at `from`, 1 at `to`
+        extra[vi * 4 + 2] = e;            // which profile edge, for per-face shading
         vi++;
       }
     }
     // Quads between consecutive angles, wrapping the last back to the first.
     for (let s = 0; s < segments; s++) {
       const a0 = base + s * 2;
-      const a1 = base + ((s + 1) % rings) * 2;
+      // No modulo: the seam ring exists, so the last quad reaches it rather than folding back.
+      const a1 = base + (s + 1) * 2;
       // Winding chosen so the face points along `normal`. The order matters and the obvious one is
       // wrong: sweeping anticlockwise, (a0, a0+1, a1+1) winds AGAINST the outward normal, which the
       // headless check caught on every one of 2304 triangles. Nothing culls today, so this would have
@@ -92,7 +111,7 @@ export function revolveProfile({ segments, radius, profile }) {
       indices[ii++] = a0; indices[ii++] = a1; indices[ii++] = a1 + 1;
     }
   }
-  return { positions, normals, indices };
+  return { positions, normals, extra, indices };
 }
 
 /**
@@ -129,6 +148,7 @@ export function concatMeshes(parts) {
 
   const positions = new Float32Array(nv * 3);
   const normals = new Float32Array(nv * 3);
+  const extra = new Float32Array(nv * 4);
   // A float rather than a u32: it rides in the same interleaved vertex buffer as the rest, and
   // mixing integer and float attributes in one stride buys nothing at three objects.
   const ids = new Float32Array(nv);
@@ -141,31 +161,41 @@ export function concatMeshes(parts) {
     const count = p.positions.length / 3;
     positions.set(p.positions, vOff * 3);
     normals.set(p.normals, vOff * 3);
+    extra.set(p.extra, vOff * 4);
     ids.fill(k, vOff, vOff + count);
     // Indices are per-part, so they shift by the running vertex offset.
     for (let i = 0; i < p.indices.length; i++) indices[iOff + i] = p.indices[i] + vOff;
     vOff += count;
     iOff += p.indices.length;
   }
-  return { positions, normals, ids, indices, vertexCount: nv, indexCount: ni };
+  return { positions, normals, extra, ids, indices, vertexCount: nv, indexCount: ni };
 }
 
-/** Interleave into one buffer: position, normal, object id. 7 floats, 28 bytes. */
-export function interleave({ positions, normals, ids, vertexCount }) {
-  const STRIDE = 7;
-  const out = new Float32Array(vertexCount * STRIDE);
+/**
+ * Interleave into one buffer: position, normal, shape data, object id. 11 floats, 44 bytes.
+ *
+ * One layout for every generated mesh, which is the point — a pipeline declares it once and any
+ * shape can be drawn through it. `extra` is the escape hatch that makes that possible without a
+ * per-shape layout: four floats whose meaning is the shape's business.
+ */
+export function interleave({ positions, normals, extra, ids, vertexCount }) {
+  const out = new Float32Array(vertexCount * MESH_STRIDE_FLOATS);
   for (let v = 0; v < vertexCount; v++) {
-    const o = v * STRIDE;
+    const o = v * MESH_STRIDE_FLOATS;
     out[o] = positions[v * 3];
     out[o + 1] = positions[v * 3 + 1];
     out[o + 2] = positions[v * 3 + 2];
     out[o + 3] = normals[v * 3];
     out[o + 4] = normals[v * 3 + 1];
     out[o + 5] = normals[v * 3 + 2];
-    out[o + 6] = ids[v];
+    out[o + 6] = extra[v * 4];
+    out[o + 7] = extra[v * 4 + 1];
+    out[o + 8] = extra[v * 4 + 2];
+    out[o + 9] = extra[v * 4 + 3];
+    out[o + 10] = ids[v];
   }
   return out;
 }
 
 /** Floats per interleaved vertex, shared by the generator and the pipeline's vertex layout. */
-export const MESH_STRIDE_FLOATS = 7;
+export const MESH_STRIDE_FLOATS = 11;

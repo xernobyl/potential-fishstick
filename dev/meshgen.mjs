@@ -45,8 +45,8 @@ const mesh = rectTube({ segments: SEGMENTS, radius: RADIUS, halfW: HW, halfH: HH
 
 // ---- counts ----
 const nv = mesh.positions.length / 3;
-check(nv === 4 * SEGMENTS * 2, 'vertex count is 4 faces x segments x 2',
-      `${nv} vs ${4 * SEGMENTS * 2}`);
+check(nv === 4 * (SEGMENTS + 1) * 2, 'vertex count is 4 faces x (segments+1) x 2, seam ring included',
+      `${nv} vs ${4 * (SEGMENTS + 1) * 2}`);
 check(mesh.indices.length === 4 * SEGMENTS * 2 * 3, 'index count is 4 faces x segments x 2 tris',
       `${mesh.indices.length}`);
 
@@ -115,13 +115,37 @@ for (let t = 0; t < mesh.indices.length; t += 3) {
 }
 check(backwards === 0, 'winding agrees with the profile normal on every triangle', `${backwards} flipped`);
 
+// ---- the seam carries u = 1, not a wrap back to 0 ----
+//
+// This is what the duplicated seam ring buys, and getting it wrong would mirror the shading detail
+// across one segment - a hairline artefact in the one place a reader assumes is safe because the
+// positions match. Checked on positions AND on u.
+{
+  const perEdgeVerts = (SEGMENTS + 1) * 2;
+  const first = 0;                       // edge 0, ring 0, `from`
+  const seam = SEGMENTS * 2;             // edge 0, ring `segments`, `from`
+  const same = [0, 1, 2].every((k) =>
+    mesh.positions[first * 3 + k] === mesh.positions[seam * 3 + k]);
+  check(same, 'the seam ring is BIT-identical in position to the first ring');
+  check(mesh.extra[first * 4] === 0 && mesh.extra[seam * 4] === 1,
+        'and u runs 0 -> 1 across the sweep rather than wrapping',
+        `u ${mesh.extra[first * 4]} -> ${mesh.extra[seam * 4]}`);
+  check(perEdgeVerts * 4 === nv, 'four profile edges, each with its own seam ring');
+  // v and the edge index are what the fragment shader reads as `side`.
+  check(mesh.extra[1] === 0 && mesh.extra[5] === 1, 'v is 0 at `from` and 1 at `to`');
+  const edges = new Set();
+  for (let v = 0; v < nv; v++) edges.add(mesh.extra[v * 4 + 2]);
+  check(edges.size === 4 && [...edges].sort().join() === '0,1,2,3',
+        'every vertex carries its profile edge index', `${[...edges].sort().join()}`);
+}
+
 // ---- concatenation tags and offsets ----
 const three = concatMeshes([
   rectTube({ segments: 16, radius: 1, halfW: 0.2, halfH: 0.05 }),
   rectTube({ segments: 16, radius: 2, halfW: 0.2, halfH: 0.05 }),
   rectTube({ segments: 16, radius: 3, halfW: 0.2, halfH: 0.05 }),
 ]);
-const perRing = 4 * 16 * 2;
+const perRing = 4 * (16 + 1) * 2;
 check(three.vertexCount === perRing * 3, 'concat sums the vertices', `${three.vertexCount}`);
 check(three.ids[0] === 0 && three.ids[perRing] === 1 && three.ids[perRing * 2] === 2,
       'each vertex carries its object index');
@@ -137,12 +161,12 @@ check(secondTri.every((i) => i >= perRing && i < perRing * 2),
       'the second object\'s triangles reference the second object\'s vertices', `${secondTri}`);
 
 const inter = interleave(three);
-check(inter.length === three.vertexCount * 7, 'interleave packs 7 floats per vertex');
-check(inter[6] === 0 && inter[perRing * 7 + 6] === 1, 'the id survives interleaving');
+check(inter.length === three.vertexCount * 11, 'interleave packs 11 floats per vertex');
+check(inter[10] === 0 && inter[perRing * 11 + 10] === 1, 'the id survives interleaving');
 
 // ---- density is a knob, and the profile primitive generalises ----
 const dense = rectTube({ segments: 512, radius: 3.4, halfW: HW, halfH: HH });
-check(dense.positions.length / 3 === 4 * 512 * 2, 'density scales with `segments`');
+check(dense.positions.length / 3 === 4 * (512 + 1) * 2, 'density scales with `segments`');
 const tri = revolveProfile({
   segments: 8,
   radius: 1,
@@ -152,7 +176,7 @@ const tri = revolveProfile({
     { from: [-0.1, 0], to: [0.1, -0.1], normal: [0.4, -0.9] },
   ],
 });
-check(tri.positions.length / 3 === 3 * 8 * 2, 'revolveProfile takes an arbitrary profile',
+check(tri.positions.length / 3 === 3 * (8 + 1) * 2, 'revolveProfile takes an arbitrary profile',
       `${tri.positions.length / 3} vertices for a 3-edge profile`);
 
 process.exit(failed === 0 ? 0 : 1);
