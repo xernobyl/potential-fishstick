@@ -16,7 +16,6 @@
 //!include "sdf.wgsl"
 //!include "sky.wgsl"
 //!include "shade.wgsl"
-//!include "ship.wgsl"
 
 @group(1) @binding(0) var outTex : texture_storage_2d<rgba16float, write>;
 @group(1) @binding(1) var<storage, read> tileFlags : array<u32>;
@@ -113,7 +112,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   var nearT = 1e4;
   if (depthTag > 0.0) { nearT = depthTag; }
 
-  // NEITHER THE HULL NOR THE SATELLITES ARE MARCHED ANY MORE. Both are generated meshes now, rasterised into the solid layer
+  // NOTHING OF THE SHIP IS MARCHED ANY MORE — not the hull, not the satellites, and as of now not the
+  // plumes either. The plumes were the last thing here that was ADDITIVE, and additive light cannot
+  // live in a layer the resolve replaces wholesale: `readTap` swaps the marched colour for the solid
+  // one whenever a mesh is nearer, which took the exhaust with it. They are billboards in the additive
+  // layer now, beside the contrail they belong with — see shipjets.wgsl. Both are generated meshes now, rasterised into the solid layer
   // with the rings and resolved against this pass by depth - see shipmesh.wgsl, satmesh.wgsl and
   // scene/ship_sdf.js. The satellites in particular were costing every ray in the frame a bounding-sphere
   // test whether or not it went near one. What is left here is the plumes, which are volumetric and
@@ -122,7 +125,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   // `nearT` therefore no longer accounts for either, so a plume behind them is not clipped by them here.
   // The resolve fixes that anyway: the hull is nearer in the depth tag, so it wins the pixel. What is
   // lost is only self-occlusion WITHIN the plume, which is additive and has none to lose.
-  if (!studio) { col += shipJets(ray.o, ray.d, nearT); }
 
   // ---- the atmosphere ----
   //

@@ -374,6 +374,16 @@ export const SHIP = {
   bankRate: 5.0,
   /** Scales turn acceleration into what the RCS puffs show. */
   rcsFromAccel: 0.5,
+  /**
+   * Plume brightness, now that the plumes are billboards in the additive layer rather than glow
+   * summed inside the march.
+   *
+   * The two are not the same integral. The marched form accumulated its Gaussian along the ray and
+   * was attenuated by everything the march applies afterwards — the atmosphere's in-scattering, the
+   * resolve; a billboard is added straight onto the resolved image and keeps all of it. Same shape,
+   * more of it, so at 1.0 the nozzles read as two white spheres instead of two flames.
+   */
+  jetGain: 0.42,
 
   /**
    * Overall size: body units per world unit.
@@ -1722,6 +1732,7 @@ export function wgslDefines() {
     SHIP_JET_COL: `vec3f(${SHIP.jetColour.map(f).join(', ')})`,
     SHIP_RCS_COL: `vec3f(${SHIP.rcsColour.map(f).join(', ')})`,
     SHIP_RCS_GAIN: SHIP.rcsGain,
+    SHIP_JET_GAIN: SHIP.jetGain,
     SHIP_JET_LEN: int(SHIP.jetLength),
     // rings
     RING_SEGMENTS: RINGS.segments,

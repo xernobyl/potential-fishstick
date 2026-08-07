@@ -16,7 +16,10 @@
  *   vertices     vertices per instance
  *   instances    how many
  *   source       () => GPUBuffer, called at bind-group build time rather than stored, because
- *                the owner may reallocate and the indirection is what keeps that safe
+ *                the owner may reallocate and the indirection is what keeps that safe. OPTIONAL:
+ *                an effect whose whole state is already in the frame uniform — the engine plumes —
+ *                needs no buffer, and binding a borrowed one just to satisfy a layout is how a
+ *                dependency that does not exist gets written down as though it does.
  *
  * Everything the three had in common is here once: the additive blend, the load-not-clear so the
  * layer accumulates, the absent depth attachment, and the per-parity bind groups.
@@ -37,11 +40,16 @@ export class AdditivePass {
 
   async init(frameBGL, defines) {
     const d = this.gpu.device;
+    // Binding 0 exists only when there is something to put in it. The shader's own bindings have to
+    // agree, so a source-less effect declares only the scene texture.
+    this.hasSource = !!this.spec.source;
     this.bgl = d.createBindGroupLayout({
       label: `${this.spec.label}-bgl`,
       entries: [
         // The geometry's source: positions, shots, whatever the owner keeps.
-        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        ...(this.spec.source
+          ? [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }]
+          : []),
         // The resolved scene, for the soft depth occlusion every one of these does. Unfilterable
         // because the alpha channel is a depth TAG and interpolating two tags yields neither.
         {
@@ -84,7 +92,7 @@ export class AdditivePass {
       label: `${this.spec.label}-bg-${i}`,
       layout: this.bgl,
       entries: [
-        { binding: 0, resource: { buffer: this.spec.source() } },
+        ...(this.hasSource ? [{ binding: 0, resource: { buffer: this.spec.source() } }] : []),
         { binding: 1, resource: this.targets.accum[i].createView() },
       ],
     }));

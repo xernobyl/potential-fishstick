@@ -245,6 +245,16 @@ export class PlanetoidScene extends Scene {
         instances: (RAIL.pool + 1) * RAIL.sparks,
         source: () => this.railgun.buffer,
       }),
+      // The engine plumes and RCS puffs. NO `source`: everything they need — pose, throttle, the
+      // angular acceleration the physics produced — is already in the frame uniform, so this is the
+      // one additive effect with no buffer behind it.
+      shipjets: new AdditivePass(gpu, targets, shaders, {
+        label: 'ship-jets',
+        shader: 'shipjets.wgsl',
+        vertices: 6,
+        // Two plumes sampled down their length, two reverse nozzles, three RCS axes.
+        instances: SHIP.jetLength * 2 + 2 + 3,
+      }),
       aurora: new AdditivePass(gpu, targets, shaders, {
         label: 'aurora',
         shader: 'aurora.wgsl',
@@ -268,6 +278,7 @@ export class PlanetoidScene extends Scene {
       this.passes.railgun.init(rc.frameBGL, wgslDefines()),
       this.passes.sparks.init(rc.frameBGL, wgslDefines()),
       this.passes.aurora.init(rc.frameBGL, wgslDefines()),
+      this.passes.shipjets.init(rc.frameBGL, wgslDefines()),
     ]);
   }
 
@@ -320,6 +331,7 @@ export class PlanetoidScene extends Scene {
     this.passes.railgun.record(encoder, frameBG, p);
     this.passes.sparks.record(encoder, frameBG, p);
     this.passes.aurora.record(encoder, frameBG, p);
+    this.passes.shipjets.record(encoder, frameBG, p);
   }
 
   destroy() {
