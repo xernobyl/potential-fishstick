@@ -44,12 +44,11 @@ import { ShaderCache } from './core/wgsl.js';
 import { Camera } from './scene/camera.js';
 import { Ship } from './scene/ship.js';
 import { Contrail } from './scene/contrail.js';
-import { ContrailPass } from './passes/contrail.js';
+import { AdditivePass } from './passes/additive.js';
 import { Railgun } from './scene/railgun.js';
 import { Aurora } from './scene/aurora.js';
-import { RailgunPass } from './passes/railgun.js';
-import { AuroraPass } from './passes/aurora.js';
-import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
+import { PULSE, QUALITY, CAMERA, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAIL, RAIL,
+         TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { RingsPass } from './passes/rings.js';
 import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
@@ -140,9 +139,30 @@ export class Renderer {
       flare: new LensFlarePass(gpu, this.targets, this.shaders),
       composite: new CompositePass(gpu, this.targets, this.shaders),
       rings: new RingsPass(gpu, this.targets, this.shaders, RINGS),
-      contrail: new ContrailPass(gpu, this.targets, this.shaders, this.contrail),
-      railgun: new RailgunPass(gpu, this.targets, this.shaders, this.railgun),
-      aurora: new AuroraPass(gpu, this.targets, this.shaders, this.aurora),
+      // Three instanced additive draws that differ only in their data — see AdditivePass. The
+      // `source` thunks are called when bind groups are built rather than captured now, so an
+      // owner is free to reallocate its buffer.
+      contrail: new AdditivePass(gpu, this.targets, this.shaders, {
+        label: 'contrail',
+        shader: 'contrail.wgsl',
+        vertices: (CONTRAIL.samples - 1) * 6,
+        instances: 2,                         // one per nacelle, selected by instance index
+        source: () => this.contrail.buffer,
+      }),
+      railgun: new AdditivePass(gpu, this.targets, this.shaders, {
+        label: 'railgun',
+        shader: 'railgun.wgsl',
+        vertices: RAIL.segments * 6,
+        instances: RAIL.pool * 2,             // two strands per shot
+        source: () => this.railgun.buffer,
+      }),
+      aurora: new AdditivePass(gpu, this.targets, this.shaders, {
+        label: 'aurora',
+        shader: 'aurora.wgsl',
+        vertices: (AURORA.samples - 1) * 6,
+        instances: AURORA.ribbons,
+        source: () => this.aurora.buffer,
+      }),
     };
   }
 

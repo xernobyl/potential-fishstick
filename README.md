@@ -303,6 +303,7 @@ src/
     mat4.js          column-major 4x4, closed-form inverses
     input.js         mouse, touch, and the flight keys
   passes/            one file per pass, each records itself
+    additive.js      ONE pass for the contrail, auroras and rail guns — see below
   dev/
     benchmark.js     the deterministic benchmark and the GPU instruments
     gui.js           the tuning panel (press g); loaded on demand
@@ -597,6 +598,21 @@ the full reasoning; these are the ones worth knowing up front:
   one, with the ember pass's own spread WITHIN a configuration wider than the gap between
   configurations. This frame is bound by the march, not by additive fill. On much weaker hardware
   that stops being true, and it is one toggle in the panel.
+- **Three passes were one pass with three names.** The contrail, the auroras and the rail guns each
+  had their own ~100-line class, and the aurora and contrail files were byte-identical modulo
+  identifiers and TWO lines — the shader name and where the instance count came from. That is not a
+  family, it is one pass with three parameter sets, and the duplication was actively harmful rather
+  than untidy: the per-parity bind-group bug was found in the contrail, and then found AGAIN in the
+  aurora, because the copy did not come with the reasoning. `AdditivePass` takes a label, a shader,
+  a vertex and instance count, and a thunk for the source buffer — data, not behaviour — and the
+  blend, the load-not-clear, the absent depth attachment and the parity handling exist once.
+  Worth being clear about what this is NOT: an entity-component system. The things in this scene
+  that look like entities — rings, satellites, detonations, stars, the sphere lobes — have no CPU
+  representation at all. They are closed-form functions of an index and the clock, evaluated in a
+  shader, and there is no per-entity state to lay out in component arrays because there is no state.
+  The five things that DO keep state already store it as parallel typed arrays, which is the layout
+  an ECS exists to produce. A registry over them would add indirection and a scheduler to a problem
+  that has neither dynamic composition nor a mix of behaviours to dispatch between.
 - **OPEN: temporal lag is worse than it was, and the cause is not identified.** `beep.lag()` reads
   4.9x noise against a historical 3.6x, and `stability` 2.2% against 1.26%. Both were measured after
   the world doubled, and the isolation so far RULES OUT the two changes that looked guilty:
