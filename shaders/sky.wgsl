@@ -46,6 +46,14 @@ fn nearestSF(dir : vec3f, n : f32, rotIdx : i32, nCand : i32) -> NearSF {
 /// invisible when three quarters of the slots are dark anyway. That holds for the CORE, which is
 /// two thousandths of a radian across: miss the cell and you simply do not draw a dot.
 ///
+/// AND THE GLOW HAS TO BE HERE, analytically, which is what forces the nine. It is tempting to make
+/// a star a bare dot and let the bloom pyramid do the glowing - one mechanism instead of two, and a
+/// dot would only need the nearest candidate. It does not work twice over: bloom thresholds and then
+/// downsamples, so a one-to-four-pixel feature loses most of its energy and the stars come out with
+/// no halo at all (tested); and more basically, the glow is what gives a near-sub-pixel feature the
+/// spatial extent it needs to be temporally STABLE. A bare dot crawls under jitter and under any
+/// downsample no matter what runs afterwards. This is antialiasing work, not decoration.
+///
 /// It does not hold for the GLOW. `exp(-ang / (sz * 1.4))` has a long tail, several times wider than
 /// the core, and a truncated candidate search does not fail randomly - the four omitted slots are
 /// particular DIRECTIONS in the lattice neighbourhood. So on those sides the search returns a
