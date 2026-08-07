@@ -609,6 +609,12 @@ the full reasoning; these are the ones worth knowing up front:
   The return value changed meaning too — it now says whether the HISTORY was lost, so a scale
   change no longer tells the caller to reset the accumulator. Verified by watching the
   accumulation texture's width stay constant while the render width walked 763 -> 534 -> 1526.
+  It took THREE lifetimes, not two, and the third only became necessary once the ladder existed.
+  The additive target's size depends on `additiveDisplayRes`, and the ladder's bottom rung flips
+  exactly that flag — so with the additive size folded into the accumulation group's test, taking
+  that rung destroyed the history, defeating the whole reason for the split at the one moment the
+  feature most needs it. Neither change was wrong alone, which is why it survived being written and
+  reviewed twice. The additive entry is retired on its own now.
   Two things had to move with it. The bloom pyramid and the flares were sized off the RENDER
   resolution, which made the glow's radius in display pixels a function of `renderScale` — halve
   the scale and the glow doubled in width, so under a controller it would visibly breathe. They are
