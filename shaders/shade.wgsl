@@ -119,8 +119,26 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   // clear, and a zero blows the thin tips out to white.
   let thick = clamp(aot.y * 1.15, 0.16, 1.0);
 
-  let fleck = vnoise(p * 34.0);
-  let dn = detailNoise(p);
+  // BAND-LIMIT THE FINE DETAIL BY THE PIXEL FOOTPRINT.
+  //
+  // `fleck` runs at 34 per unit and the grain at up to 15/R, which at any distance is finer than the
+  // sampling grid can carry. Sampling it anyway produces two costs at once: it aliases in space, and
+  // because the jitter moves the sample every frame it varies in time, which the resolve then has to
+  // admit into its variance clip. Fading each octave out as it approaches Nyquist removes both, and it
+  // is the correct filtering rather than a trade - the octave genuinely carries no information at that
+  // scale.
+  //
+  // The footprint is the world size of one pixel at this hit: screen space spans 2 over `diagPx`
+  // pixels, and a screen offset maps to a world offset of `t/focal` times that. Grazing angles are
+  // deliberately NOT folded in - the 1/dot(N,V) term is unbounded at the silhouette and would fade the
+  // grain to nothing along every limb, which is where the eye most expects it.
+  //
+  // The smooth fbm terms below are left alone: at 2 to 4.5 per unit they sit far below the pixel rate
+  // for any view that fills the frame with the body, so filtering them would cost detail and buy
+  // nothing. `frame.march.x` switches this, so both sides can be measured.
+  let fp = select(0.0, t * 2.0 * frame.screen.x / max(frame.camFwd.w, 1e-4), frame.march.x > 0.5);
+  let fleck = vnoiseBL(p * 34.0, 34.0, fp);
+  let dn = detailNoiseBL(p, fp);
 
   // Purple gummy: hue and value both wander on smooth noise. Deliberately NOT
   // keyed to the Fibonacci blob id — a per-blob step puts a hard Voronoi edge

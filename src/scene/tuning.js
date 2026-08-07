@@ -870,6 +870,8 @@ export const PROBE = {
    * made once, in the first version of the shake probe.
    */
   noSatMotion: 0,
+  /** 1 = band-limit the shading's fine detail by the pixel footprint. See the note in shadeBody. */
+  bandLimit: 1,
 };
 
 /** Zone-plate chirp rate. Chosen so the corners land near the sampling Nyquist while the

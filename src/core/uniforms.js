@@ -28,7 +28,7 @@ const O = {
   invViewProj: 16,  // clip  -> world, this frame (ray generation)
   prevViewProj: 32, // world -> clip, previous frame (reprojection)
   camRight: 48,     // xyz right,      w buffer-viewer display mode
-  camUp: 52,        // xyz up,         w spare (was the focus distance)
+  camUp: 52,        // xyz up,         w spare
   camFwd: 56,       // xyz forward,    w focal length (half-diagonal units)
   camPos: 60,       // xyz position,   w time
   res: 64,          // xy size,        zw 1/size
@@ -57,7 +57,7 @@ const O = {
   // depthBiasSlopeScale: a fixed tolerance is wrong on a steep surface, because there
   // one pixel of reprojection error is legitimately a large depth change.
   taa2: 116,        // x depthGradSlack (pixels), y depthGradMax, z historyFilter, w taauSigma
-  march: 120,       // x spare, y far, z near, w nearBand
+  march: 120,       // x bandLimit (probe), y far, z near, w nearBand
   probe: 124,       // x latticeTable, y showFieldEvals, z noSatMotion, w testPattern
   // Size of the ACCUMULATION buffer, which with temporal upsampling is the DISPLAY
   // resolution while frame.res stays the render resolution. Every accum consumer reads
@@ -157,7 +157,7 @@ export class FrameUniforms {
     a[O.taa2 + 2] = tw.historyFilter; a[O.taa2 + 3] = tw.taauSigma;
 
     const mr = s.march;
-    a[O.march] = 0.0; a[O.march + 1] = mr.far;
+    a[O.march] = s.probe.bandLimit; a[O.march + 1] = mr.far;
     a[O.march + 2] = mr.near; a[O.march + 3] = mr.nearBand;
 
     a[O.probe] = s.probe.latticeTable;
