@@ -356,42 +356,43 @@ the method, not of a knob that can be turned off.
   suns want re-balancing against it. All of it is on sliders — Film, Atmosphere — so this is taste,
   not engineering.
 
-- **Motion vectors for the body's own animation.** The last measured temporal gap: camera pinned,
-  world animating reads **0.60%** frame-to-frame flicker against a **0.24%** floor — 2.5x — because
-  reprojection assumes static geometry and the body pulses. The rings solve this analytically and the
-  ship and satellites now do too; the body is what is left. Gate any attempt on `beep.shake()`'s
-  `animated` condition, never on `drift`, which is contaminated by legitimate motion.
+- **CLOSED: motion vectors for the body's own animation.** Two attempts, the second with the maths
+  corrected, and the approach is closed rather than unproven. The gap it targeted is real — camera
+  pinned, world animating reads 0.73% against a 0.24% floor — but level-set surface tracking cannot
+  reach it here.
 
-  **First-order surface tracking was BUILT and MEASURED, and it made things slightly worse.** Written
-  up here so nobody spends the afternoon twice. For an implicit surface the normal velocity is
-  `-(dd/dt)/|grad d|`, and at a hit `d(p, t) = 0`, so `dd/dt ~ -d(p, t-dt)/dt`. Taking
-  `|grad d| ~ 1` for a signed distance field, that collapses to a one-line motion vector:
+  The method is the level-set advection relation, which is the standard way to move a point with an
+  implicit surface: for `d(p, t) = 0` the normal velocity is `-(dd/dt) / |grad d|`, and at a hit `d` is
+  zero, so `dd/dt ~ -d(p, t-dt) / dt`, the dt cancels, and
 
-      p_prev ~ p - N * mapBodyAt(p, prevBeatPhase)
+      p_prev = p - N * d(p, t - dt) / |grad d|
 
-  It cost exactly one extra field evaluation (the normal is free — `shadeBody` already computes it
-  and can hand it back), and the plumbing was small: thread a phase through `layerDist`, add
-  `mapImplAt`/`mapBodyAt` twins with the bare names as wrappers so the ~13 call sites stay untouched,
-  and put the previous phase in a uniform slot that fell spare with the lens.
+  Attempt one assumed `|grad d| = 1` and measured 4% worse. That assumption is wrong by about 30%
+  exactly where it is used — the march's own note measures the detail noise adding ~0.3 to the gradient
+  — so attempt two took the real magnitude, which is FREE: the tetrahedral estimator sums
+  `k_i * d(p + k_i)` and for that vertex set `sum(k_i k_i^T) = 4h^2 I`, so the sum is `4h^2 * grad d`
+  and its length over `4h^2` is the magnitude, from the four evaluations the normal already paid for.
 
-  A/B/A/B on the `animated` condition, one build, one resolution, switched live:
+      without the body motion vector   0.741%  0.731%  0.736%
+      with it, gradient-corrected      0.825%  0.824%  0.812%
 
-      without the body motion vector   0.612%   0.625%
-      with it                          0.637%   0.655%
+  11% worse, three pairs, no overlap — worse than attempt one, not better. So the gradient was not the
+  problem, and the reason is a magnitude comparison rather than a bug:
 
-  Consistently worse by ~4%, both pairs, no overlap. Two reasons, and the march's own comment names
-  the first: near the surface the DETAIL noise adds about 0.3 to `|grad d|`, so the `|grad d| ~ 1`
-  premise is off by ~30% exactly where it is being used — and the hit is not `d = 0` either, only
-  `d < MARCH_HIT_EPS * t`. Second, taking the motion-vector path costs the body the reprojection
-  path's jitter correction and its slope-scaled depth gate, which are tuned; the motion path uses a
-  different gate input.
+      pulse displacement per frame   ~0.0015 - 0.003 world units
+        (PULSE.radius 0.112 + offset 0.06, ~0.17 * rho per unit beat, steepest
+         beat slope ~3.5/s at 42 bpm, dt ~ 0.025 s)
+      march hit tolerance            ~0.0036 world units  (hitEps 0.0004 * t ~ 9)
 
-  The next variant worth trying, and it is nearly free: divide by the TRUE gradient length instead of
-  assuming 1. `calcNormal` computes the gradient and throws its magnitude away when it normalises, so
-  handing that back costs nothing, and `p_prev ~ p - N * d_prev / |grad d|` removes the 30% error
-  where it is largest. If that still does not beat plain reprojection, the honest conclusion is that
-  the pulse's per-frame displacement is simply below this field's noise floor, and the 2.5x gap is
-  not reachable this way.
+  The signal is at or below the tolerance of where the march decides it has hit, so `d(p, t - dt)` is
+  dominated by where the march stopped rather than by the pulse. No refinement of the formula helps,
+  and tightening `hitEps` was separately measured to buy nothing while costing march steps. Taking the
+  motion path also costs the body the reprojection path's jitter correction and slope-scaled depth
+  gate, both of which are tuned.
+
+  If this is ever worth another look, it needs a different mechanism, not a better derivative: store a
+  material coordinate — a rest-space position carried through the deformation, which is what skinned
+  and deforming meshes do — so the previous position is looked up rather than inferred.
 
 - **CLOSED: unifying the star glow into post.** Considered and rejected, with the reason worth
   keeping. The idea was to make a star a bright dot and let bloom do all the glowing, which would be
