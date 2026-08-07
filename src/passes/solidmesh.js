@@ -94,6 +94,10 @@ export class SolidMeshPass {
   record(encoder, frameBG, profiler) {
     if (!this.pipeline) return;
     this.#sync();
+    // FIRST SOLID CLEARS, THE REST LOAD. Two passes both clearing would wipe the first, and the target
+    // is a shared layer rather than one pass's private buffer — which is what the file header promised
+    // when it said another kind of solid means adding a draw rather than another target.
+    const load = this.spec.clear === false;
     const pass = encoder.beginRenderPass({
       label: this.spec.label,
       colorAttachments: [
@@ -101,7 +105,7 @@ export class SolidMeshPass {
           view: this.colourView,
           // Alpha 0 is the "nothing here" sentinel downstream.
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
+          loadOp: load ? 'load' : 'clear',
           storeOp: 'store',
         },
         {
@@ -115,8 +119,10 @@ export class SolidMeshPass {
       depthStencilAttachment: {
         view: this.depthView,
         depthClearValue: 0.0,          // reverse-Z: nothing is further than 0
-        depthLoadOp: 'clear',
-        depthStoreOp: 'discard',      // never read after this pass
+        depthLoadOp: load ? 'load' : 'clear',
+        // STORE, not discard, once more than one pass draws solids: the second needs the first's
+        // depth to occlude against. Discarding was correct while the rings were alone.
+        depthStoreOp: 'store',
       },
       ...profiler.scope(this.spec.label),
     });

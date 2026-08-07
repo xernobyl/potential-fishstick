@@ -19,9 +19,6 @@ struct Shot {
 };
 
 /// Rotate by a unit quaternion.
-fn qrotate(q : vec4f, v : vec3f) -> vec3f {
-  return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-}
 
 /// The muzzle, NOW. Rebuilt from the ship's live transform every frame so the beam stays
 /// welded to the wing tip rather than being left behind as the ship flies on.

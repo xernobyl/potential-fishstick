@@ -41,12 +41,6 @@ fn sdEllipsoid(p : vec3f, r : vec3f) -> f32 {
 }
 
 /// Rotate by a unit quaternion, and by its inverse (its conjugate).
-fn qrotate(q : vec4f, v : vec3f) -> vec3f {
-  return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-}
-fn qrotateInv(q : vec4f, v : vec3f) -> vec3f {
-  return qrotate(vec4f(-q.xyz, q.w), v);
-}
 
 /// The hull, in local space: nose along +Z, up along +Y.
 fn sdShip(p : vec3f) -> f32 {

@@ -84,6 +84,22 @@ struct Frame {
 
 @group(0) @binding(0) var<uniform> frame : Frame;
 
+// ---- quaternions -------------------------------------------------------
+//
+// Here rather than in ship.wgsl and railgun.wgsl, which each carried an identical copy — and neither of
+// which the mesh vertex front end could include, since it has no business depending on either. One
+// definition, in the header everything already includes.
+
+/// Rotate a vector by a unit quaternion. The two-cross-product form: no matrix, no trig.
+fn qrotate(q : vec4f, v : vec3f) -> vec3f {
+  return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+
+/// The inverse rotation. A unit quaternion's inverse is its conjugate, so this is one negation.
+fn qrotateInv(q : vec4f, v : vec3f) -> vec3f {
+  return qrotate(vec4f(-q.xyz, q.w), v);
+}
+
 fn beatPhase() -> f32 { return frame.misc.x; }
 fn lifePhase() -> f32 { return frame.misc.y; }
 fn frameIndex() -> f32 { return frame.misc.z; }

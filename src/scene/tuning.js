@@ -1608,6 +1608,13 @@ export function wgslDefines() {
     // Only the look CONSTANTS remain compile-time; every level is a uniform now.
     // 2^agxEv, folded in at the shader so the branch stays one multiply.
     AGX_GAIN: f(Math.pow(2, FILM.agxEv)),
+    // The meshed hull's material. Constant across the whole surface for now, which is the brief and
+    // also what isolates the geometry: anything odd is the mesh rather than a texture.
+    SHIPM_ALBEDO: `vec3f(${[0.62, 0.64, 0.69].map(f).join(', ')})`,
+    SHIPM_ROUGH: f(0.38),
+    SHIPM_METAL: f(0.85),
+    SHIPM_ENV: f(0.55),
+    SHIPM_CORE: `vec3f(${[0.36, 0.16, 0.30].map(f).join(', ')})`,
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
     FILM_PIVOT: FILM.pivot,
     // tiling

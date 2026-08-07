@@ -54,6 +54,9 @@ import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME, RINGS, CONTRAI
 import { SolidMeshPass } from './passes/solidmesh.js';
 import { Mesh } from './core/mesh.js';
 import { rectTube, concatMeshes } from './scene/meshgen.js';
+import { shipTree, SHIP_MESH } from './scene/ship_sdf.js';
+import { compile, bounds } from './scene/sdf/nodes.js';
+import { dualContour, resolutionForScreen } from './scene/sdf/dualcontour.js';
 import { ringDims } from './scene/tuning.js';
 import { ScenePass } from './passes/scene.js';
 import { TaaPass } from './passes/taa.js';
@@ -69,6 +72,52 @@ function radicalInverse(bits) {
   return r;
 }
 
+
+/**
+ * Mesh the ship's SDF, once, at a resolution derived from how large a cell may look on screen.
+ *
+ * RESOLUTION IS DERIVED, NOT FIXED, so the mesh suits the window rather than the machine it was authored
+ * on — and because the same call at other resolutions is the LOD chain, whenever that is wanted. Capped
+ * because this runs at startup: measured on the ship's tree, 40 cells is 3540 triangles in 43 ms and 64
+ * cells is 8836 in 101 ms, and a hull that is usually 40 px across does not need the second one.
+ *
+ * The mesh is scaled AFTER contouring rather than by scaling the tree: a uniform scale of a distance
+ * field is exact, but scaling the tree would also scale every blend width and fillet, which are authored
+ * in body units on purpose.
+ */
+function buildShipMesh() {
+  const tree = shipTree();
+  const b = bounds(tree);
+  const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) * SHIP_MESH.scale;
+  const res = Math.min(
+    SHIP_MESH.maxResolution,
+    resolutionForScreen({
+      size,
+      distance: SHIP_MESH.viewDistance,
+      focal: 1.2,
+      diagonalPx: 2500,
+      errorPx: SHIP_MESH.errorPx,
+    }),
+  );
+  const mesh = dualContour(compile(tree), { bounds: b, resolution: res });
+
+  // Body units -> world units, and one object, so every vertex carries id 0.
+  const positions = new Float32Array(mesh.positions.length);
+  for (let i = 0; i < positions.length; i++) positions[i] = mesh.positions[i] * SHIP_MESH.scale;
+  const extra = new Float32Array(mesh.vertexCount * 4);
+  const ids = new Float32Array(mesh.vertexCount);
+
+  return {
+    positions,
+    normals: mesh.normals,          // a uniform scale leaves normals unchanged
+    extra,
+    ids,
+    indices: mesh.indices,
+    vertexCount: mesh.vertexCount,
+    indexCount: mesh.indices.length,
+    triangleCount: mesh.triangleCount,
+  };
+}
 
 export class Renderer {
   constructor(gpu) {
@@ -126,6 +175,15 @@ export class Renderer {
       flare: new LensFlarePass(gpu, this.targets, this.shaders),
       composite: new CompositePass(gpu, this.targets, this.shaders),
       debugview: new DebugViewPass(gpu, this.targets, this.shaders),
+      // THE SHIP, meshed from its SDF. Drawn after the rings and appending rather than clearing, which
+      // is what the solid layer was always meant to support - the pass header promised that another
+      // kind of solid would be a draw rather than another target, and this is that promise being cashed.
+      shipmesh: new SolidMeshPass(gpu, this.targets, this.shaders, {
+        label: 'ship-mesh',
+        shader: 'shipmesh.wgsl',
+        clear: false,
+        mesh: () => new Mesh(gpu.device, buildShipMesh(), 'ship'),
+      }),
       rings: new SolidMeshPass(gpu, this.targets, this.shaders, {
         label: 'rings',
         shader: 'rings.wgsl',
@@ -181,6 +239,7 @@ export class Renderer {
       this.passes.composite.init(this.frameBGL, this.gpu.format),
       this.passes.debugview.init(this.frameBGL, this.gpu.format, wgslDefines()),
       this.passes.rings.init(this.frameBGL, wgslDefines()),
+      this.passes.shipmesh.init(this.frameBGL, wgslDefines()),
       this.passes.contrail.init(this.frameBGL, wgslDefines()),
       this.passes.railgun.init(this.frameBGL, wgslDefines()),
       this.passes.aurora.init(this.frameBGL, wgslDefines()),
@@ -329,6 +388,9 @@ export class Renderer {
     // Solids BEFORE taa: they carry exact motion vectors, so TAA can accumulate
     // them, which is what anti-aliases their silhouettes and puts them in the bloom.
     this.passes.rings.record(encoder, this.frameBG, p);
+    // After the rings, into the same layer and the same depth buffer, so the two occlude each other by
+    // hardware depth rather than by anyone sorting them.
+    this.passes.shipmesh.record(encoder, this.frameBG, p);
     encoder.popDebugGroup();
 
     encoder.pushDebugGroup('resolve');

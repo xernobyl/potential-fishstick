@@ -122,17 +122,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
     nearT = sat.t;
   }
 
-  let ship = hitShip(ray.o, ray.d, nearT);
-  if (ship.hit) {
-    col = shadeShip(ship, ray.o, ray.d);
-    // A POSITIVE depth tag, not the dynamic one. The ship writes an exact motion
-    // vector below, so TAA can follow it properly instead of falling back to
-    // fresh-sample-heavy screen-space history.
-    depthTag = ship.t;
-    nearT = ship.t;
-  }
-
-  // Plumes and thruster puffs, occluded by whatever ended up in front.
+  // THE HULL IS NO LONGER MARCHED. It is a generated mesh now, rasterised into the solid layer with the
+  // rings and resolved against this pass by depth - see shipmesh.wgsl and scene/ship_sdf.js. What is left
+  // here is the plumes, which are volumetric and belong in a march.
+  //
+  // `nearT` therefore no longer accounts for the hull, so a plume behind it is not clipped by it here.
+  // The resolve fixes that anyway: the hull is nearer in the depth tag, so it wins the pixel. What is
+  // lost is only self-occlusion WITHIN the plume, which is additive and has none to lose.
   col += shipJets(ray.o, ray.d, nearT);
 
   // ---- the atmosphere ----
@@ -153,23 +149,17 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
     col = col * vol.transmittance + vol.inScatter;
   }
 
-  // Motion. The sentinel goes everywhere by default — the body and the sky are handled
-  // by camera reprojection, which is exact for them and needs nothing stored. Only the
-  // ship overrides it, and its motion is EXACT rather than estimated: `lp` is the hit
-  // point in the hull's own space, so the same piece of hull can be found in last
-  // frame's transform directly.
+  // Motion. The sentinel goes everywhere by default — the body and the sky are handled by camera
+  // reprojection, which is exact for them and needs nothing stored. Only the satellites override it here
+  // now: the hull used to, and moved to the mesh pass along with the rest of it, where its motion comes
+  // from a rigid transform instead of a per-pixel hit point.
   var motion = vec4f(MOTION_NONE, 0.0, 0.0, 0.0);
   // `px` ITSELF - the jittered ray position, not the pixel centre. Both writers below hit their
   // surface along that ray, so that is where the surface they are describing currently is. Using the
   // bare centre drops the jitter out of the delta and makes the history fetch wander by up to a
   // pixel every frame, which is what the ship and the satellites were doing. See motionFor.
   let motionPx = px;
-  if (ship.hit) {
-    // Exact: `lp` is the hit point in the hull's own space, so the same piece of hull is found
-    // directly in last frame's transform.
-    motion = motionFor(frame.prevShipPos.xyz + qrotate(frame.prevShipRot, ship.lp),
-                       motionPx, ship.t);
-  } else if (sat.hit && frame.probe.z <= 0.5) {
+  if (sat.hit && frame.probe.z <= 0.5) {
     // Also exact, and for the same reason by a different route: the orbits are analytic, so the
     // previous transform is the same evaluation one frame back. `misc.w` is dt.
     motion = motionFor(satPrevWorld(sat, frame.camPos.w - frame.misc.w), motionPx, sat.t);

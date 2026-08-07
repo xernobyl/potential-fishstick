@@ -66,7 +66,9 @@ fn vs(v : MeshVertex) -> VOut {
   let ii = u32(v.objId + 0.5);
   let r = ringDefAt(ii, frame.camPos.w);
   let rp = ringDefAt(ii, frame.camPos.w - frame.misc.w);
-  let x = meshXform(v, MeshBasis(r.ax, r.ay, r.az), MeshBasis(rp.ax, rp.ay, rp.az));
+  // Origin zero: the hoops are centred on the world origin, so their transform is pure rotation.
+  let x = meshXform(v, MeshRigid(r.ax, r.ay, r.az, vec3f(0.0)),
+                    MeshRigid(rp.ax, rp.ay, rp.az, vec3f(0.0)));
 
   var out : VOut;
   out.pos = x.clip;
