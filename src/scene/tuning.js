@@ -1775,7 +1775,7 @@ export function wgslDefines() {
     SHIPM_CORE: `vec3f(${[0.36, 0.16, 0.30].map(f).join(', ')})`,
     FILM_BLACK: `vec3f(${FILM.black.map(f).join(', ')})`,
     FILM_PIVOT: FILM.pivot,
-    // Nacelle hardpoint, so the engine plumes in ship.wgsl start at the nozzles the hull actually has
+    // Nacelle hardpoint, so the engine plumes in shipjets.wgsl start at the nozzles the hull actually has
     // rather than at a literal that has to be kept in step by hand.
     SHIP_NACELLE_X: f(SHIP_HARDPOINTS.nacelle[0]),
     SHIP_NACELLE_Y: f(SHIP_HARDPOINTS.nacelle[1]),

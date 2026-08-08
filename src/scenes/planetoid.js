@@ -122,12 +122,8 @@ export function buildSatelliteMesh() {
     [satellitePanelTree(), SAT_MESH.panelResolution],
   ].map(([tree, resolution]) => {
     const b = bounds(tree);
-    // THE FINE BUDGET, and the coarse one was a mistake worth naming. Simplification error is a
-    // LENGTH, and it has to be small against the thinnest thing being simplified — not against the
-    // object's size. At 0.0025 it was 16% of the panel's 0.016 thickness, which is enough to collapse
-    // the sheet's two faces into each other: 24 boundary edges, a holed array, at any resolution.
     const m = dualContourAdaptive(compile(tree), {
-      bounds: b, resolution, error: SAT_MESH.error[0],
+      bounds: b, resolution, error: SAT_MESH.error,
     });
     return {
       positions: m.positions,

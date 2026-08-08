@@ -98,11 +98,12 @@ in `dev/scenes.mjs` rather than left as a comment.
 flowchart TD
     subgraph world["THE SCENE — swapped wholesale; planetoid shown"]
       tilecull[tilecull: which tiles can reach the body] --> raymarch
-      raymarch[raymarch: body, engine plumes, atmosphere<br/>one jittered HDR sample + depth tag<br/>sky only in the model viewer]
+      raymarch[raymarch: body + atmosphere<br/>one jittered HDR sample + depth tag<br/>sky only in the model viewer]
       solid[solid meshes: rings, ship hull, satellites<br/>rasterised opaque + exact motion vectors<br/>frustum + back-face culled, shared depth]
       sim[ember sim: particle state + compacted draw args] --> embers
       embers[ember draw: additive billboards]
       contrail[contrail]
+      shipjets[engine plumes]
       railgun[railgun]
       aurora[aurora]
     end
@@ -110,6 +111,7 @@ flowchart TD
     solid --> taa
     embers --> additive
     contrail --> additive
+    shipjets --> additive
     railgun --> additive
     aurora --> additive
     taa[TAA resolve: depth-sort solid vs body,<br/>reproject, variance-clip, accumulate]

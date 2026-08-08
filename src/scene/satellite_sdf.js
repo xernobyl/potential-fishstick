@@ -190,6 +190,13 @@ export const SAT_MESH = {
    * resolution that then verifies clean at every step rather than at one lucky value.
    */
   panelResolution: 72,
-  /** Simplification budgets, in the units these trees are authored in (world units already). */
-  error: [0.0008, 0.0025],
+  /**
+   * Simplification budget, in the units these trees are authored in — world units already.
+   *
+   * ONE value, not a chain. There were two and only the fine one was ever used, because the coarse
+   * one was 16% of the panel's thickness and collapsed the sheet's two faces together. A budget is a
+   * LENGTH and has to be small against the THINNEST thing being simplified, not against the object;
+   * at these sizes that leaves no room for a second, coarser level worth having.
+   */
+  error: 0.0008,
 };

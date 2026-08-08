@@ -665,8 +665,8 @@ shaders/
   shade.wgsl         the translucent material
   reflect.wgsl       cheap marched reflections, for any metal surface
   rings.wgsl         the three metal hoops
-  ship.wgsl          the ship's engine and RCS plumes (the hull is a mesh now)
   shipmesh.wgsl      the meshed hull: procedural paint over the generated geometry
+  shipjets.wgsl      engine plumes and RCS puffs, as billboards in the additive layer
   satmesh.wgsl       satellites as instanced boxes
   contrail.wgsl      camera-facing ribbons through past positions
   aurora.wgsl        field-aligned ribbon, curl-noise paths, emission palette

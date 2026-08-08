@@ -91,7 +91,7 @@ struct Frame {
 
 // ---- quaternions -------------------------------------------------------
 //
-// Here rather than in ship.wgsl and railgun.wgsl, which each carried an identical copy — and neither of
+// Here rather than in the ship and rail gun shaders, which each carried an identical copy — and neither of
 // which the mesh vertex front end could include, since it has no business depending on either. One
 // definition, in the header everything already includes.
 //

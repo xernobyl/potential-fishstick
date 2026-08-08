@@ -49,7 +49,7 @@ const alongZ = (child) => rotate([1, 0, 0], [0, 0, 1], [0, -1, 0], child);
  *
  * Exported because three other files need these and were each carrying their own copy. The rail guns
  * fired from `RAIL.spread`, the contrails emitted from `CONTRAIL.spread`, and the engine plumes from a
- * literal in ship.wgsl — all describing points on a hull defined here, none of them derived from it.
+ * literal in the plume shader — all describing points on a hull defined here, none derived from it.
  * They had already drifted: the muzzles were sitting 0.178 units past the wingtip, left behind when the
  * marched hull (whose wings reached 0.61) was replaced by this one.
  *
