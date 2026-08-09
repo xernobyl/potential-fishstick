@@ -34,7 +34,7 @@ struct Frame {
   prevShipPos : vec4f, // xyz the ship's position last frame
   prevShipRot : vec4f, // the ship's orientation last frame
   taa       : vec4f,   // x blend, y clipGamma, z clipFloor, w depthGate
-  taa2      : vec4f,   // x depthGradSlack (px), y depthGradMax, z historyFilter, w taauSigma
+  taa2      : vec4f,   // x depthGradSlack (px), y depthGradMax, z historyFilter, w spare
   // Step scales for the body march. Uniforms rather than injected consts for the same
   // reason the TAA knobs are: as consts they are baked at pipeline creation, so every
   // console A/B against them silently measures the same shader twice. The cost is one

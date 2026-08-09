@@ -554,13 +554,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         let tol = frame.taa.w * gateDist
                 + min(frame.taa2.x * gradPx, frame.taa2.y * gateDist);
         ok = h.a > 0.0 && abs(h.a - gateDist) < tol;
-        // Velocity-based disocclusion: a TIGHT, non-slope-scaled depth check that
-        // catches what the permissive slope-scaled gate lets through on fast pans.
-        // When the reprojected pixel moved more than DISOCC_MOTION output pixels
-        // and its depth disagrees by more than DISOCC_DEPTH of the distance, the
-        // surface at that location is not the same one — it was disoccluded.
+        // Velocity-based disocclusion: a tight, non-slope-scaled depth check
+        // that catches what the permissive slope-scaled gate lets through on
+        // fast pans. When the reprojected pixel moved more than 8 output pixels
+        // and its depth disagrees by more than 1% of the distance, the surface
+        // at that location is not the same one — it was disoccluded.
         let mvLen = length(rp.xy - opc);
-        if (ok && mvLen > frame.taa3.w) {
+        if (ok && mvLen > 8.0) {
           ok = abs(h.a - gateDist) < 0.01 * max(gateDist, 1.0);
         }
       } else {
