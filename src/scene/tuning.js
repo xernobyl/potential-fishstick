@@ -1138,7 +1138,7 @@ export const TEMPORAL = {
    * stable, but that is a blur, which defeats the point. 1.0 puts a sample 1 output pixel
    * away at weight 0.37 and one at 1.41 (the diagonal) at 0.14.
    */
-  taauSigma: 1.0,
+  taauSigma: 0.65,
   /**
    * Cap on accumulated weight, which is what the upsampling path uses in place of `blend`.
    *

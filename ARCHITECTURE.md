@@ -220,6 +220,11 @@ The gate is slope-scaled, like a rasteriser's `depthBiasSlopeScale`: a flat tole
 valid history across steep surfaces, where one pixel of reprojection slide is legitimately a large
 depth change.
 
+A secondary **velocity-based disocclusion** gate tightens further: when reprojected motion exceeds
+8 output pixels, a flat 1%-of-distance threshold overrides the slope-scaled tolerance. This catches
+surfaces that were genuinely occluded last frame but whose depth happens to fall within the
+permissive slope-scaled gate — the classic fast-pan ghosting case.
+
 ### 5. What convergence is actually limited by
 
 History is combined by variance clipping (Salvi/Karis) in YCoCg, not by a luma-difference guard —

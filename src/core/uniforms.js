@@ -63,7 +63,7 @@ const O = {
   // The depth gate's SLOPE-SCALED term. Same idea as a rasteriser's
   // depthBiasSlopeScale: a fixed tolerance is wrong on a steep surface, because there
   // one pixel of reprojection error is legitimately a large depth change.
-  taa2: 116,        // x depthGradSlack (pixels), y depthGradMax, z historyFilter, w spare
+  taa2: 116,        // x depthGradSlack (pixels), y depthGradMax, z historyFilter, w taauSigma
   march: 120,       // x bandLimit (probe), y far, z near, w nearBand
   probe: 124,       // x latticeTable, y showFieldEvals, z noSatMotion, w testPattern
   // Size of the ACCUMULATION buffer, which with temporal upsampling is the DISPLAY

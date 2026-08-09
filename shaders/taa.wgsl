@@ -196,7 +196,7 @@ fn readTap(q : vec2i) -> Tap {
 }
 
 /// Reconstruction kernel for the upsampling gather: a sharp Gaussian,
-/// in OUTPUT pixels.
+/// in OUTPUT pixels. Width is frame.taa2.w (taauSigma, default 0.65).
 ///
 /// `d` is the offset from the output pixel's centre to where the input sample
 /// landed. Must be strictly non-negative — the accumulate phase divides by
@@ -207,7 +207,7 @@ fn readTap(q : vec2i) -> Tap {
 /// below, where it only reads one value and the negative lobes sharpen
 /// without destabilising an accumulator.
 fn taauKernel(d : vec2f) -> f32 {
-  return exp(-0.65 * dot(d, d));
+  return exp(-frame.taa2.w * dot(d, d));
 }
 
 /// A 3x3 of input taps around an output pixel, centred on the nearest input pixel.
