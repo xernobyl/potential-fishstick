@@ -105,8 +105,12 @@ async function boot() {
       setFrozen(!frozen, true);
     } else if (k === 'b') {
       e.preventDefault();
-      // -1 is the normal composite, then each buffer in turn, then back.
-      renderer.debugView = renderer.debugView + 1 >= VIEWS.length ? -1 : renderer.debugView + 1;
+      if (renderer.scene.cycleDebug) {
+        renderer.debugView = -1;
+        renderer.scene.cycleDebug();
+      } else {
+        renderer.debugView = renderer.debugView + 1 >= VIEWS.length ? -1 : renderer.debugView + 1;
+      }
       syncViewLabel();
     } else if (k === 'j') {
       e.preventDefault();
@@ -114,6 +118,18 @@ async function boot() {
     } else if (k === 'g') {
       e.preventDefault();
       setOverlay((overlay + 1) % 3);
+    } else if (k === '1') {
+      e.preventDefault();
+      renderer.setScene('planetoid');
+      syncViewLabel();
+    } else if (k === '2') {
+      e.preventDefault();
+      renderer.setScene('rasterized');
+      syncViewLabel();
+    } else if (k === '3') {
+      e.preventDefault();
+      renderer.setScene('modelview');
+      syncViewLabel();
     }
   });
 
@@ -483,6 +499,7 @@ async function boot() {
     const rows = [
       ['drag', 'orbit'],
       ['arrows / wasd', 'fly'],
+      ['pinch', 'zoom'],
       ['space', 'shoot'],
       ['c', 'chase camera'],
       ['', ''],
@@ -494,6 +511,8 @@ async function boot() {
       ['j', `pixel jitter: ${on(jitterOn)}`],
       ['', ''],
       ['b', `buffer: ${renderer.debugView < 0 ? 'off' : VIEWS[renderer.debugView].name}`],
+      ['', ''],
+      ['1/2/3', `scene: ${renderer.scene.constructor.label}`],
       ['', ''],
       ['r', 'record 15s of 1080p30 to mp4'],
       ['f', 'fullscreen'],

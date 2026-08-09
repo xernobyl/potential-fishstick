@@ -19,6 +19,8 @@ export class EmberPass {
     this.targets = targets;
     this.shaders = shaders;
     this.generation = -1;
+    /** All one-shot GPU resources created during init, for the destroy path. */
+    this._owned = [];
   }
 
   async init(frameBGL) {
@@ -26,21 +28,21 @@ export class EmberPass {
     const defines = wgslDefines();
 
     // ---- buffers ----
-    this.emberBuffer = d.createBuffer({
+    this.emberBuffer = this._own(d.createBuffer({
       label: 'embers',
       size: EMBERS.count * EMBER_STRIDE,
       usage: GPUBufferUsage.STORAGE,
-    });
-    this.liveBuffer = d.createBuffer({
+    }));
+    this.liveBuffer = this._own(d.createBuffer({
       label: 'ember-live-list',
       size: EMBERS.count * 4,
       usage: GPUBufferUsage.STORAGE,
-    });
-    this.drawArgs = d.createBuffer({
+    }));
+    this.drawArgs = this._own(d.createBuffer({
       label: 'ember-draw-args',
       size: DRAW_ARGS_SIZE,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
-    });
+    }));
 
     // ---- simulation ----
     this.simBGL = d.createBindGroupLayout({
@@ -55,7 +57,7 @@ export class EmberPass {
     const simLayout = d.createPipelineLayout({ bindGroupLayouts: [frameBGL, this.simBGL] });
     [this.resetPipeline, this.simPipeline] = await Promise.all([
       d.createComputePipelineAsync({
-        label: 'ember-reset', layout: simLayout,
+        label: 'ember-sim-reset', layout: simLayout,
         compute: { module: simMod, entryPoint: 'reset' },
       }),
       d.createComputePipelineAsync({
@@ -97,7 +99,6 @@ export class EmberPass {
         entryPoint: 'fs',
         targets: [{
           format: 'rgba16float',
-          // Premultiplied additive: the shader folds alpha in, so ONE/ONE.
           blend: {
             color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
             alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
@@ -119,16 +120,16 @@ export class EmberPass {
     const size = EMBERS.spriteSize;
     const mipCount = Math.floor(Math.log2(size)) + 1;
 
-    this.sprite = d.createTexture({
+    this.sprite = this._own(d.createTexture({
       label: 'ember-sprite',
       size: { width: size, height: size },
       format: 'rgba16float',
       mipLevelCount: mipCount,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
+    }));
 
     const mod = await this.shaders.module('ember_sprite.wgsl', defines);
-    const pipeline = await d.createRenderPipelineAsync({
+    const bakePipeline = await d.createRenderPipelineAsync({
       label: 'ember-sprite-bake',
       layout: 'auto',
       vertex: { module: mod, entryPoint: 'vs' },
@@ -138,6 +139,7 @@ export class EmberPass {
 
     const enc = d.createCommandEncoder({ label: 'ember-sprite-bake' });
     const pass = enc.beginRenderPass({
+      label: 'ember-sprite-bake-pass',
       colorAttachments: [{
         view: this.sprite.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
         loadOp: 'clear',
@@ -145,25 +147,24 @@ export class EmberPass {
         clearValue: { r: 0, g: 0, b: 0, a: 0 },
       }],
     });
-    pass.setPipeline(pipeline);
+    pass.setPipeline(bakePipeline);
     pass.draw(3);
     pass.end();
     d.queue.submit([enc.finish()]);
+    await d.queue.onSubmittedWorkDone();
 
     // Mip generation: render each level from the one above with a linear sampler.
-    // WebGPU has no generateMipmap, and for a one-off 64px texture a tiny blit
-    // chain is far less machinery than a compute reducer.
     await this.#generateMips(this.sprite, size, mipCount);
 
     this.spriteView = this.sprite.createView();
-    this.spriteSampler = d.createSampler({
+    this.spriteSampler = this._own(d.createSampler({
       label: 'ember-sprite-sampler',
       magFilter: 'linear',
       minFilter: 'linear',
       mipmapFilter: 'linear',
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
-    });
+    }));
   }
 
   async #generateMips(texture, size, mipCount) {
@@ -176,32 +177,61 @@ export class EmberPass {
       fragment: { module: mod, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
       primitive: { topology: 'triangle-list' },
     });
-    const sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
-    const enc = d.createCommandEncoder({ label: 'mip-chain' });
-    for (let m = 1; m < mipCount; m++) {
-      const bg = d.createBindGroup({
-        label: 'ember-draw-bg',
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: texture.createView({ baseMipLevel: m - 1, mipLevelCount: 1 }) },
-          { binding: 1, resource: sampler },
-        ],
+    // One-shot resources scoped to this chain; destroyed after the submit completes
+    // because they serve no further purpose.
+    const owned = [];
+
+    try {
+      const sampler = d.createSampler({
+        label: 'mip-blit-sampler',
+        magFilter: 'linear',
+        minFilter: 'linear',
       });
-      const pass = enc.beginRenderPass({
-        colorAttachments: [{
-          view: texture.createView({ baseMipLevel: m, mipLevelCount: 1 }),
-          loadOp: 'clear',
-          storeOp: 'store',
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        }],
-      });
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bg);
-      pass.draw(3);
-      pass.end();
+      owned.push(sampler);
+
+      const enc = d.createCommandEncoder({ label: 'mip-chain' });
+      for (let m = 1; m < mipCount; m++) {
+        const mipView = texture.createView({ baseMipLevel: m, mipLevelCount: 1 });
+        const srcView = texture.createView({ baseMipLevel: m - 1, mipLevelCount: 1 });
+
+        const bg = d.createBindGroup({
+          label: `mip-blit-bg-${m}`,
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: srcView },
+            { binding: 1, resource: sampler },
+          ],
+        });
+        owned.push(bg);
+
+        const pass = enc.beginRenderPass({
+          label: `mip-blit-pass-${m}`,
+          colorAttachments: [{
+            view: mipView,
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          }],
+        });
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bg);
+        pass.draw(3);
+        pass.end();
+      }
+
+      d.queue.submit([enc.finish()]);
+      await d.queue.onSubmittedWorkDone();
+    } finally {
+      for (const r of owned) {
+        if (typeof r.destroy === 'function') r.destroy();
+      }
     }
-    d.queue.submit([enc.finish()]);
+  }
+
+  _own(resource) {
+    this._owned.push(resource);
+    return resource;
   }
 
   #sync() {
@@ -232,7 +262,6 @@ export class EmberPass {
       label: 'ember-sim',
       ...profiler.scope('embers'),
     });
-    // Reset the counter first: the compaction below uses atomicAdd on it.
     pass.setPipeline(this.resetPipeline);
     pass.setBindGroup(0, frameBG);
     pass.setBindGroup(1, this.simBG);
@@ -265,9 +294,9 @@ export class EmberPass {
   }
 
   destroy() {
-    this.emberBuffer.destroy();
-    this.liveBuffer.destroy();
-    this.drawArgs.destroy();
-    this.sprite.destroy();
+    for (const r of this._owned) {
+      if (r && typeof r.destroy === 'function') r.destroy();
+    }
+    this._owned.length = 0;
   }
 }

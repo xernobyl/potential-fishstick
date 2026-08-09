@@ -28,7 +28,7 @@ const view = m4.view(m4.create(), cam);
 const proj = m4.projection(m4.create(), focal, [0, 0], aspect / Math.hypot(aspect, 1),
                            1 / Math.hypot(aspect, 1));
 const vp = m4.mul(m4.create(), proj, view);
-const planes = extractFrustum(vp);
+const planes = extractFrustum(vp, new Float32Array(20));
 
 // ---- the planes themselves ----
 {
@@ -77,7 +77,7 @@ const planes = extractFrustum(vp);
 {
   const side = { pos: [0, 0, 10], fwd: [1, 0, 0], right: [0, 0, 1], up: [0, 1, 0] };
   const vp2 = m4.mul(m4.create(), proj, m4.view(m4.create(), side));
-  const p2 = extractFrustum(vp2);
+  const p2 = extractFrustum(vp2, new Float32Array(20));
   check(!sphereVisible(p2, 0, 0, 0, 0.1), 'looking away, the origin leaves the frustum');
   check(sphereVisible(p2, 50, 0, 10, 0.1), 'and what is now ahead enters it');
 }

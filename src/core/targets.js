@@ -100,9 +100,9 @@ export class Targets {
 
     const d = this.device;
 
-    // Scene: written by the raymarch compute pass, read by TAA.
+    // Scene: written by the raymarch compute pass (or rasterized planet draw), read by TAA.
     this.sceneRaw = this.own(tex(d, 'scene-raw', w, h,
-      U.STORAGE_BINDING | U.TEXTURE_BINDING));
+      U.STORAGE_BINDING | U.TEXTURE_BINDING | U.RENDER_ATTACHMENT));
 
     // Accumulation ping-pong. Both need STORAGE (written) and TEXTURE (read as
     // history, and read by everything downstream).

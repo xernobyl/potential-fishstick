@@ -179,6 +179,7 @@ export class SolidMeshPass {
     // is a shared layer rather than one pass's private buffer — which is what the file header promised
     // when it said another kind of solid means adding a draw rather than another target.
     const load = this.spec.clear === false;
+    const depthLoad = this.spec.depthClear === false ? true : load;
     const pass = encoder.beginRenderPass({
       label: this.spec.label,
       colorAttachments: [
@@ -200,7 +201,7 @@ export class SolidMeshPass {
       depthStencilAttachment: {
         view: this.depthView,
         depthClearValue: 0.0,          // reverse-Z: nothing is further than 0
-        depthLoadOp: load ? 'load' : 'clear',
+        depthLoadOp: depthLoad ? 'load' : 'clear',
         // STORE, not discard, once more than one pass draws solids: the second needs the first's
         // depth to occlude against. Discarding was correct while the rings were alone.
         depthStoreOp: 'store',

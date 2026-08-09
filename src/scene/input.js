@@ -38,6 +38,23 @@ export class Input {
     canvas.style.cursor = 'grab';
     this.canvas = canvas;
 
+    /** Trackpad pinch zoom accumulator. Read by the camera. */
+    this.zoom = 0;
+    this._zoomTarget = 0;
+    canvas.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      this._zoomTarget += e.deltaY * -0.002;
+    }, { passive: false });
+    // Also capture wheel on the document so zoom works even when pointer is outside canvas
+    document.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.target === canvas || canvas.contains(e.target)) {
+        e.preventDefault();
+        this._zoomTarget += e.deltaY * -0.002;
+      }
+    }, { passive: false });
+
     const start = (cx, cy) => {
       this.down = true;
       this._px = cx;

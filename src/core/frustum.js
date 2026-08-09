@@ -35,10 +35,11 @@ const M = (c, r) => c * 4 + r;
  * outside when `dot(n, p) + d < -r`. Normalised, so that comparison is in world units and the same
  * epsilon means the same thing at every distance.
  *
- * @param {Float32Array} vp column-major 4x4
- * @param {Float32Array} [out] 5 planes x 4 floats, reused across frames
+ * @param {Float32Array} vp  column-major 4x4 view-projection matrix
+ * @param {Float32Array} out 5 planes x 4 floats, must be length >= 20. Reused across frames.
+ * @returns {Float32Array} `out`
  */
-export function extractFrustum(vp, out = new Float32Array(20)) {
+export function extractFrustum(vp, out) {
   // Left:   x >= -w  ->  (row3 + row0) . p >= 0
   // Right:  x <=  w  ->  (row3 - row0) . p >= 0
   // Bottom: y >= -w  ->  (row3 + row1) . p >= 0

@@ -57,6 +57,8 @@ export class Camera {
     /** Decaying shake amplitude, and the angles it currently resolves to. See `stepShake`. */
     this.shakeAmp = 0;
     this._shake = [0, 0, 0];
+    /** User-controlled zoom multiplier. 1 = default. Adjusted by trackpad pinch. */
+    this.userZoom = 1;
     this.target = V();
     this._tmp = V();
     this._tmp2 = V();
@@ -301,7 +303,7 @@ export class Camera {
       // Arcball: yaw and pitch follow the pointer directly, so steering is exact.
       yaw = -(input.x / Math.max(1, input.width) - 0.5) * Math.PI * 2 * 1.6;
       pitch = clamp((input.y / Math.max(1, input.height) - 0.5) * 2.2, -1.15, 1.15);
-      this.distance = CAMERA.distance + dolly;
+      this.distance = (CAMERA.distance + dolly) * this.userZoom;
       ta[0] = ta[1] = ta[2] = 0;
     } else {
       // Layered sines at incommensurate periods: the rate eases and gathers
@@ -309,7 +311,7 @@ export class Camera {
       const t = time;
       yaw = 0.13 * t + 0.22 * Math.sin(0.077 * t) + 0.09 * Math.sin(0.031 * t + 2.1);
       pitch = 0.2 + 0.16 * Math.sin(0.053 * t + 0.7) + 0.05 * Math.sin(0.121 * t + 1.9);
-      this.distance = CAMERA.distance + dolly;
+      this.distance = (CAMERA.distance + dolly) * this.userZoom;
       ta[0] = 0.16 * Math.sin(0.045 * t + 0.3);
       ta[1] = 0.16 * Math.sin(0.062 * t + 1.7);
       ta[2] = 0.16 * Math.sin(0.038 * t + 2.9);

@@ -43,14 +43,15 @@ import { Profiler } from './core/profiler.js';
 import { ShaderCache } from './core/wgsl.js';
 import { Camera } from './scene/camera.js';
 import { PlanetoidScene } from './scenes/planetoid.js';
+import { Scene1Rasterized } from './scenes/Scene1Rasterized.js';
 import { ModelViewScene } from './scenes/modelview.js';
-import { SHIP_MESH } from './scene/ship_sdf.js';
 import { DebugViewPass, VIEWS } from './passes/debugview.js';
 import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME,
          TEMPORAL, MARCH, PROBE, wgslDefines } from './scene/tuning.js';
 import { extractFrustum } from './core/frustum.js';
 import { selectLod } from './core/lod.js';
+import { SHIP_MESH } from './scene/ship_sdf.js';
 import { TaaPass } from './passes/taa.js';
 import { BloomPass } from './passes/bloom.js';
 import { LensFlarePass } from './passes/lensflare.js';
@@ -77,8 +78,10 @@ export class Renderer {
     // change rather than a load: the alternative stalls the one frame where a stall is most obviously
     // the switch's fault. They share the ship's contoured mesh through a memo in planetoid.js, so the
     // second one costs GPU buffers rather than another hundred milliseconds of contouring.
+    const planetoid = new PlanetoidScene(gpu, this.targets, this.shaders);
     this.scenes = {
-      planetoid: new PlanetoidScene(gpu, this.targets, this.shaders),
+      planetoid,
+      rasterized: new Scene1Rasterized(gpu, this.targets, this.shaders, planetoid),
       modelview: new ModelViewScene(gpu, this.targets, this.shaders),
     };
     this.sceneKey = 'planetoid';
@@ -104,6 +107,9 @@ export class Renderer {
     this._sunA = [0, 0];
     this._sunB = [0, 0];
     this._jitter = [0, 0];
+    // Surface view cache: getCurrentTexture() returns a new texture each frame, but we can hold the
+    // view descriptor pattern. The view itself is rebuilt each frame since the texture object differs.
+    this._surfaceView = null;
     // The render context handed to the scene each frame. Allocated once and refilled, for the same
     // reason every other scratch object here is: a per-frame object is a per-frame allocation.
     this._rc = {
@@ -124,9 +130,6 @@ export class Renderer {
       taa: TEMPORAL, march: MARCH, probe: PROBE, renderScale: 0,
       grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
       volume: VOLUME,
-      // Contributed by the active scene's `writeState`. Declared here anyway: this literal is the
-      // frame-state contract, and a field that only exists in one scene is exactly the kind that
-      // silently carries the other scene's last value.
       modelView: false, modelSpin: 0, modelPrevSpin: 0,
     };
 
@@ -146,10 +149,6 @@ export class Renderer {
 
   /**
    * The player ship, when the active scene has one.
-   *
-   * A forwarding accessor rather than a field, because the ship belongs to the planetoid now. It exists
-   * because the benchmark suppresses auto-fire through it, and a probe reaching for `renderer.ship`
-   * should get `undefined` in a scene without one rather than a stale object from another.
    */
   get ship() { return this.scene.ship; }
 
@@ -157,8 +156,6 @@ export class Renderer {
   setScene(key) {
     if (!this.scenes[key] || key === this.sceneKey) return;
     this.sceneKey = key;
-    // The history describes a world that no longer exists: reprojecting into it would smear the old
-    // scene across the first frames of the new one.
     this.resetHistory();
   }
 
@@ -188,12 +185,6 @@ export class Renderer {
   }
 
   resize() {
-    // `syncSize` reports whether the CANVAS changed, which is not the same question as
-    // whether the TARGETS need rebuilding. Gating the second on the first meant any
-    // setting that changes target sizes without changing the window — `renderScale`, and
-    // now `QUALITY.taau` — was silently ignored until something else forced a resize.
-    // Targets owns its own idempotence, so just ask it every frame; the check is a couple
-    // of integer compares.
     this.gpu.syncSize(QUALITY.maxWidth);
     if (!this.gpu.width) return;
     if (this.targets.resize(this.gpu.width, this.gpu.height)) this.resetHistory();
@@ -209,19 +200,9 @@ export class Renderer {
     if (!t.width) return;
 
     // HELD means dt is exactly zero, so nothing integrates at all.
-    //
-    // The floor of 1e-4 below is what stops a repeated clock from being a true freeze: every sim
-    // still advanced 0.1ms per frame, so the embers, contrails and ribbons crept sub-pixel forever.
-    // Being additive and drawn after the resolve they get no antialiasing, so that creep showed up
-    // as isolated pixels swinging by ~100 of 255 levels between consecutive frames of a scene that
-    // was supposed to be still - which made the frozen baseline a slow-motion scene rather than a
-    // stopped one. Nothing divides by dt except one guarded line in ship.js, so zero is safe.
     const dt = this.held ? 0 : Math.min(0.1, Math.max(1e-4, time - this.prevTime));
 
-    // DYNAMIC RESOLUTION, decided here and applied by the next frame's `resize`. Deliberately not
-    // applied mid-frame: reallocating render targets between passes is the hitch this feature
-    // exists to avoid, and a one-frame delay costs nothing. GPU time when the timestamps are
-    // available, wall time only as a fallback — see dynres.js for why that distinction matters.
+    // DYNAMIC RESOLUTION, decided here and applied by the next frame's `resize`.
     if (QUALITY.dynamicRes && this.profiler.enabled) {
       const step = this.dynres.update();
       if (step !== null) {
@@ -229,7 +210,6 @@ export class Renderer {
         QUALITY.additiveDisplayRes = step.additive;
       }
     } else if (QUALITY.dynamicRes && !this._warnedNoTimestamps) {
-      // Once, not every frame. Wall time cannot substitute — see dynres.js.
       this._warnedNoTimestamps = true;
       console.warn('dynamic resolution needs timestamp queries, which this adapter lacks; holding renderScale');
     }
@@ -243,20 +223,12 @@ export class Renderer {
     rc.time = time;
     rc.dt = dt;
     rc.input = input;
-    // Cleared before `update`, filled before `recordWorld`. The planes are extracted from the camera
-    // this update is about to move, so anything reading them here would be a frame behind — and a
-    // frame-behind frustum culls what just came on screen. Null makes that a crash, not a flicker.
     rc.frustum = null;
-    // THE SHAKE DECAYS HERE, not in a scene, and that is the third bug of this exact shape. A camera
-    // carrying a decaying offset has to decay it wherever it is pointed: the model viewer never called
-    // this, so switching scenes mid-kick froze the offset and left the studio permanently tilted.
-    // Stepping before `update` also means whichever path the scene picks has this frame's value ready.
+    // THE SHAKE DECAYS HERE, not in a scene, and that is the third bug of this exact shape.
     this.camera.stepShake(dt, time);
     this.scene.update(rc);
 
-    // Sun screen positions, for the flare pass to anchor its streaks. 1e3 is the
-    // sentinel the shader reads as "behind the camera", written in place so the
-    // miss path allocates nothing either.
+    // Sun screen positions, for the flare pass to anchor its streaks.
     if (!this.camera.projectDirection(SUNS.a.dir, this._sunA)) {
       this._sunA[0] = 1e3; this._sunA[1] = 1e3;
     }
@@ -267,8 +239,7 @@ export class Renderer {
     const fi = this.frameIndex;
     const st = this._state;
 
-    // Pixel jitter drives the AA; the lens offset drives the bokeh. Both are
-    // low-discrepancy so a handful of frames already looks converged.
+    // Pixel jitter drives the AA.
     this._jitter[0] = ((fi * 0.618033988) % 1) - 0.5;
     this._jitter[1] = radicalInverse(fi) - 0.5;
     if (PROBE.zeroJitter) { this._jitter[0] = 0; this._jitter[1] = 0; }
@@ -292,8 +263,7 @@ export class Renderer {
     st.jitter = this._jitter;
     st.historyValid = this.accumFrames > 0;
     st.dragging = input.dragging;
-    // Pre-grade linear gain. Its own control, not a second application of `exposure` — see
-    // the note on FILM.gain for why those were split.
+    // Pre-grade linear gain.
     st.exposure = FILM.gain;
     st.sunA = this._sunA;
     st.sunB = this._sunB;
@@ -316,15 +286,7 @@ export class Renderer {
     const { taa, bloom, flare, composite } = this.passes;
     const solids = this.scene.solidPasses;
 
-    // DEBUG GROUPS around the phases, not around every pass.
-    //
-    // Each pass already labels its own render pass, which is what a capture lists; what a capture
-    // cannot infer is the STRUCTURE - which passes belong to the same phase, and therefore which of
-    // them a change should be expected to move. These names are the frame graph's own phases, so a
-    // capture reads the way the architecture document describes it. Free when no tool is attached.
-
-    // Frustum planes once per frame, from the same matrix the vertex stages use, into a buffer that is
-    // reused rather than reallocated.
+    // Frustum planes once per frame, from the same matrix the vertex stages use.
     extractFrustum(this.camera.viewProj, this._frustum);
     rc.frustum = this._frustum;
 
@@ -336,12 +298,7 @@ export class Renderer {
       m.wireframe = wire;
       if (wire) m.prepareWireframe(this.frameBGL, wgslDefines());
       if (!m.meshes || m.meshes.length < 2) continue;
-      // The distance is to the object's bounding sphere CENTRE, which the sphere-based culling already
-      // knows how to place — so selection and culling share one fact about where an object is.
       const s0 = m.spec.worldSphere?.(0, m.mesh.ranges[0]);
-      // NO SPHERE MEANS NO DISTANCE, so draw the finest level rather than guess one. Substituting
-      // `camera.distance` looked reasonable and was not: it is maintained by whichever code last
-      // placed the camera, so a scene that places its own inherited the previous scene's value.
       if (!s0) { m.lod = 0; continue; }
       const c = this.camera.current.pos;
       const dist = Math.hypot(s0[0] - c[0], s0[1] - c[1], s0[2] - c[2]);
@@ -360,22 +317,20 @@ export class Renderer {
     this.scene.recordAdditive(encoder, this.frameBG, p, rc);
     encoder.popDebugGroup();
 
+    const surfaceTexture = this.gpu.context.getCurrentTexture();
+    const surfaceView = surfaceTexture.createView({ label: 'swapchain-view' });
+
     encoder.pushDebugGroup('post');
     bloom.record(encoder, this.frameBG, p);
     flare.record(encoder, this.frameBG, p);
 
-    const surface = this.gpu.context.getCurrentTexture().createView();
-    // The buffer viewer REPLACES the composite rather than drawing over it: the point is to see the
-    // buffer, not the buffer under a film grade. Everything upstream still ran, so the timings on the
-    // HUD stay comparable to a normal frame.
     const shown = this.debugView >= 0 && this.debugView < VIEWS.length
-      ? this.passes.debugview.record(encoder, this.frameBG, surface, this.debugView, p)
+      ? this.passes.debugview.record(encoder, this.frameBG, surfaceView, this.debugView, p)
       : false;
     if (!shown) {
-      composite.record(encoder, this.frameBG, surface,
+      composite.record(encoder, this.frameBG, surfaceView,
         bloom.resultView, flare.resultView, p);
     }
-
     encoder.popDebugGroup();
 
     p.resolve(encoder);
@@ -391,7 +346,7 @@ export class Renderer {
   destroy() {
     for (const sc of Object.values(this.scenes)) sc.destroy();
     this.targets.destroy();
+    this.uniforms.buffer.destroy();
     this.profiler.destroy();
   }
 }
-

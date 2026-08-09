@@ -132,6 +132,14 @@ export function buildGui(renderer, live = {}) {
   cam.add(CAMERA, 'zoom', 0.0, 3.0, 0.01).name('dolly amplitude');
   cam.add(CAMERA, 'roll', 0.0, 0.6, 0.01);
 
+  // ---- planet mesh (rasterized scene) ----
+  {
+    const pm = gui.addFolder('Planet Mesh');
+    import('../passes/PlanetMeshManager.js').then(({ PLANET_MESH }) => {
+      pm.add(PLANET_MESH, 'ny', 8, 256, 8).name('resolution');
+    });
+  }
+
   // ---- auroras ----
   // The flow parameters are read per step, so they take effect on the next frame — but the
   // ribbons already in the buffer were integrated under the OLD ones, so a big change takes a
