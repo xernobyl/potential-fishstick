@@ -129,8 +129,8 @@ Everything inside the box belongs to the active scene; everything outside it is 
 viewer reaches the swapchain through exactly the same resolve, bloom, flare and grade.
 
 The march used to own three of those: the body, then the satellites, then the ship, each narrowing
-the next one's `tmax` so the set resolved front-to-back with no sorting. **Two of the three have
-since become triangle meshes** and moved to the solid layer, where hardware depth does that sorting
+the next one's `tmax` so the set resolved front-to-back with no sorting. **All three are now
+triangle meshes** and live in the solid layer, where hardware depth does that sorting
 for free — see *Generated geometry* below for what that bought and what it cost. What is left in the
 march is the body and the engine plumes, which are volumetric and belong there.
 
@@ -249,6 +249,7 @@ is an asset: there is no file to load, and the shapes are code.
 | Object | Source | Built by | Triangles |
 |---|---|---|---|
 | Rings | `rectTube` — a revolved rectangular profile | `meshgen.js` | 3 × 768 |
+| Planet body | `mapBody` — fBM + crater SDF in `sdf.wgsl` | `planet_surfacenets.wgsl` (GPU Surface Nets / DC) | ~19k–77k (resolution-dependent) |
 | Ship hull | an SDF **tree** in `ship_sdf.js` | `sdf/octree.js` | 14.2k / 10.8k / 7.1k / 4.3k (4 LODs) |
 | Satellites | two SDF trees in `satellite_sdf.js` | `sdf/octree.js` | 4.6k bus + 2.9k wing, instanced |
 
@@ -311,6 +312,110 @@ where adaptive DC's non-manifold vertices come from: a merged cell whose corner 
 separate surface sheets gets one vertex, welding them into a pinch. A 256-entry table
 (`SINGLE_SHEET`) refuses those collapses — the conservative half of what Manifold Dual Contouring
 (2007) does properly. With it, every level is closed, manifold and genus-0.
+
+### GPU Surface Nets / Dual Contouring (`planet_surfacenets.wgsl`, `SurfaceNetsManager.js`)
+
+The planet body itself is also meshed on the GPU, in a **3-pass cached-corner pipeline** that
+replaces the old UV-sphere displacement approach. It evaluates the same `mapBody` SDF at every
+corner of a 3D grid exactly once, then extracts an isosurface as triangle geometry — either via
+**Surface Nets** (centroid of edge crossings, fast, ideal for smooth fields) or full **Dual
+Contouring** (QEF solve over crossing planes, preserving sharp features). A toggle in the tuning
+panel switches between them.
+
+#### Architecture
+
+The pipeline uses four compute dispatches, each in its own pass for WebGPU ordering:
+
+| Pass | Entry point | Workgroup | What it does |
+|------|------------|-----------|-------------|
+| 0 | `clear_buffers` | 64×1×1 | Resets indirect draw args + fills cell vertex IDs with -1 |
+| 1 | `eval_corners` | 4×4×4 | One `mapBody()` call per grid corner → `cornerBuffer` |
+| 2 | `compute_vertices` | 4×4×4 | Finds surface cells via 12-edge sign-change test; places a dual vertex (centroid for Surface Nets, QEF minimiser for DC) with `calcNormal`; atomically assigns a compact vertex slot |
+| 3 | `generate_faces` | 4×4×4 | Processes three anchor edges per cell; when an edge crosses the surface, stitches a quad between the four surrounding cells' dual vertices; atomically reserves index slots |
+
+The cached-corner design means a corner shared by up to 8 cells is evaluated once rather than
+eight times — at `lateralRes=48, depthRes=32` (~80k corners) this is an ~8× reduction over the
+naive per-cell approach and keeps the driver from timing out.
+
+**Vertex mapping is sparse.** An atomic counter (`vertexCount` in the indirect draw buffer at
+byte 20) assigns compact slots only to surface cells. Non-surface cells store -1. The face pass
+checks all four neighbouring cells' vertex IDs before emitting a quad, so the index buffer
+references only valid vertices.
+
+**The indirect draw buffer** carries both the standard 20-byte `drawIndexedIndirect` layout
+(`indexCount` at offset 0 is atomic) and the vertex counter at byte 20. `drawIndexedIndirect`
+reads only the first 20 bytes; the extra 4 are invisible to the draw call.
+
+#### Grid resolution & mode
+
+Two grid modes, toggled via the `gridMode` dropdown in the tuning panel:
+
+**World mode** (default) — an axis-aligned cube centered on the body origin. Uniform cell sizes
+within each axis, rectangular prisms. Best for orbital viewing where depth variation across the
+visible surface is small. Vertices are temporally stable (the grid never moves), giving exact
+motion vectors.
+
+**Frustum mode** — the grid is projected from NDC through `frame.invViewProj`. X and Y cover the
+full screen, Z slices are placed uniformly in NDC depth, which maps to non-uniform world-space
+spacing (denser near the camera, sparser far away). This gives roughly constant screen-space
+triangle density regardless of viewing distance. The `nearDist` and `farDist` sliders control the
+world-space depth range the grid covers. Useful for fly-by cameras and terrain-like surfaces.
+
+Resolution is controlled by three sliders:
+
+- **lateral res** — cells across the shorter screen axis (height). Width auto-adjusts to
+  `lateralRes × aspect` so cells project to roughly square pixels.
+- **depth res** — cells along the view depth axis, independent of lateral resolution.
+- **near dist / far dist** — (frustum mode only) world-space depth range in front of the camera.
+
+The edge interpolation that places Surface Nets / DC vertices does not assume cubic cells, so
+non-uniform spacing works correctly in both modes.
+
+#### QEF solver
+
+When dual contouring is enabled, `compute_vertices` calls `solveQef()` — a direct WGSL port of
+the proven solver in `src/scene/sdf/qef.js`. For each edge crossing it computes the field's
+gradient via `calcNormal` (4 additional SDF samples), accumulates the normal equations
+(`A = Σ nnᵀ`, `b = Σ n(n·p)`), solves the 3×3 system via Cramer's rule with Tikhonov
+regularisation toward the mass point, and clamps the result into the cell. The solver is
+structurally identical to the CPU version used for the ship hull.
+
+On the planet's smooth fBM field the QEF and Surface Nets centroids produce near-identical
+results — DC earns its keep on hard-surface SDFs with sharp edges (boxes, boolean cuts).
+
+#### Winding
+
+The face pass uses the same right-handed quad ordering as the CPU `dualcontour.js`:
+
+| Edge axis | Perpendicular pair | Quad vertex order |
+|-----------|-------------------|-------------------|
+| X | (Y, Z) | `(x, y-1, z-1)`, `(x, y, z-1)`, `(x, y, z)`, `(x, y-1, z)` |
+| Y | (Z, X) | `(x-1, y, z-1)`, `(x-1, y, z)`, `(x, y, z)`, `(x, y, z-1)` |
+| Z | (X, Y) | `(x-1, y-1, z)`, `(x, y-1, z)`, `(x, y, z)`, `(x-1, y, z)` |
+
+The flip is determined by the sign at the edge's low corner: `flip = (corner0 > 0)`. The same
+`emitQuad` triangle decomposition as the CPU code guarantees outward-facing normals on all three
+axes simultaneously.
+
+#### Motion vectors & debug views
+
+Vertices are stored **camera-relative** (`worldPos - cameraPos`) to match the convention in
+`planet_raster.wgsl`, which reconstructs world position as `rel + cameraPos` and computes motion
+vectors from the NDC delta between the current and previous frame's camera-relative position,
+projected through `projNoTrans`.
+
+The B key cycles through 6 debug views rendered by the fragment shader:
+
+| Mode | Name | Rendering |
+|------|------|-----------|
+| 0 | Lit | Production: `shadeBody` + volumetric |
+| 1 | Motion | Motion-vector magnitude RGB |
+| 2 | SDF parity | Green=on surface, red=outside, blue=inside |
+| 3 | Grid | `fract(worldPos)` vertex-density heatmap |
+| 4 | Normals | `calcNormal` remapped to RGB |
+| 5 | Winding | Face normal vs SDF gradient alignment |
+
+All six use the same triangle-list pipeline with `drawIndexedIndirect`.
 
 ### Level of detail
 

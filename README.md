@@ -11,7 +11,9 @@ resolution, and an analytic film response on the way out.
 
 Everything is procedural. **No textures and no asset files** — the body is a distance field marched
 per pixel, and the ship, rings and satellites are triangle meshes GENERATED at startup: the hull is
-its own SDF, adaptively dual-contoured into an LOD chain. Nothing is loaded, which is a stronger claim
+its own SDF, adaptively dual-contoured into an LOD chain. The planet body itself is meshed on the GPU
+every frame via a 3-pass Surface Nets / Dual Contouring pipeline (togglable in the tuning panel) that
+evaluates the same `mapBody` field. Nothing is loaded, which is a stronger claim
 than having no meshes and a more useful one. The one dependency is a vendored copy of `lil-gui` for
 the tuning panel, loaded on demand and outside the render path.
 

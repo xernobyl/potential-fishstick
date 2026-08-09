@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
-// Planet rasterization — full shading, motion vectors, 5 debug modes.
+// Planet rasterization — full shading, motion vectors, 6 debug modes.
 //
-// Debug modes (cycled via uniform.devmode):
-//   0 = Lit (production: shadeBody + volumetric)
-//   1 = Motion vectors RGB
-//   2 = Wireframe flat colour
-//   3 = SDF parity heatmap (mapBody @ worldPos)
-//   4 = World-space normals RGB
+// Debug modes (cycled via uniform.devmode.x):
+//   0 = Lit          (production: shadeBody + volumetric)
+//   1 = Motion       (motion-vector RGB: |velUv.x|*20, |velUv.y|*20, |velUv|*50)
+//   2 = SDF parity   (green=on surface, red=outside, blue=inside — mapBody check)
+//   3 = Grid         (fract worldPos × 1.5 shows vertex density)
+//   4 = Normals      (calcNormal at worldPos, remapped to 0..1)
+//   5 = Winding      (face normal vs SDF gradient; red=inverted, green=correct)
 //
 // Motion vectors: camera-relative NDC delta, stored as second attachment.
 // ---------------------------------------------------------------------------

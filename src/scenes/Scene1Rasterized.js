@@ -1,8 +1,15 @@
 /**
- * Scene1Rasterized — GPU-driven rasterized planet matching the raymarched body.
+ * Scene1Rasterized — GPU Surface Nets planet mesh matching the raymarched body.
  *
- * UV sphere mesh with mapBody surface extraction. Fragment shader calls
- * shadeBody + volumetric for identical shading. Shared state with PlanetoidScene.
+ * 4-pass compute pipeline:
+ *   0. clear_buffers     — reset indirect draw args + cell vertex IDs
+ *   1. eval_corners      — one SDF eval per grid corner → cornerBuffer
+ *   2. compute_vertices  — one vertex per surface cell → vertexBuffer
+ *   3. generate_faces    — quads as triangle pairs → indexBuffer
+ *
+ * Fragment shader reuses planet_raster.wgsl for identical shadeBody +
+ * volumetric shading. Shared simulation state with PlanetoidScene so
+ * switching scenes does not reset the world.
  *
  * 1=planetoid  2=rasterized  3=modelview
  * B: debug views (0=Lit 1=Wire 2=Points 3=Normals 4=SDF 5=Winding)
@@ -16,13 +23,13 @@ import { Aurora } from '../scene/aurora.js';
 import { AdditivePass } from '../passes/additive.js';
 import { SolidMeshPass } from '../passes/solidmesh.js';
 import { Mesh } from '../core/mesh.js';
-import { PlanetMeshManager } from '../passes/PlanetMeshManager.js';
+import { SurfaceNetsManager } from '../passes/SurfaceNetsManager.js';
 import { buildRingMesh, buildShipMesh, buildSatelliteMesh } from './planetoid.js';
 import { RINGS, SATELLITES, SHIP, CONTRAIL, RAIL, AURORA as AURORA_TUNE,
          wgslDefines } from '../scene/tuning.js';
 import { extractFrustum } from '../core/frustum.js';
 
-const DEBUG_NAMES = ['Lit', 'Wire', 'Points', 'Normals', 'SDF', 'Winding'];
+const DEBUG_NAMES = ['Lit', 'Motion', 'SDF', 'Grid', 'Normals', 'Winding', 'Wire'];
 
 export class Scene1Rasterized extends Scene {
   static label = 'planet rasterized';
@@ -46,7 +53,7 @@ export class Scene1Rasterized extends Scene {
       this._fireSlot = -1;
     }
 
-    this.meshManager = new PlanetMeshManager(gpu.device);
+    this.meshManager = new SurfaceNetsManager(gpu.device);
     this._frustum = new Float32Array(20);
     this.debugMode = 0;
     this._prevCam = new Float32Array(3);
@@ -91,30 +98,51 @@ export class Scene1Rasterized extends Scene {
   async init(rc) {
     const d = this.gpu.device, fbgl = rc.frameBGL, defines = wgslDefines();
 
+    // ---- draw uniform (shared with planet_raster.wgsl) ----
     this._drawUniformBuf = d.createBuffer({
       label: 'planet-draw-uniform', size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const meshBGL = this.meshManager.mesherBGL(d);
-    const drawBGL = this.meshManager.drawBGL(d);
+    // ---- bind group layouts (created once, cached) ----
+    this._meshBGL = this.meshManager.mesherBGL(d);
+    this._drawBGL = this.meshManager.drawBGL(d);
 
-    const [meshMod, skyMod, drawMod] = await Promise.all([
-      this.shaders.module('planet_mesher.wgsl', defines),
+    // ---- shader modules ----
+    const [snMod, skyMod, drawMod] = await Promise.all([
+      this.shaders.module('planet_surfacenets.wgsl', defines),
       this.shaders.module('planet_sky.wgsl', defines),
       this.shaders.module('planet_raster.wgsl', defines),
     ]);
 
+    // ---- compute pipelines (all 4 share one layout) ----
     const meshLayout = d.createPipelineLayout({
-      label: 'planet-mesh-layout', bindGroupLayouts: [fbgl, meshBGL],
+      label: 'sn-mesh-layout', bindGroupLayouts: [fbgl, this._meshBGL],
     });
 
-    this._meshPipe = await d.createComputePipelineAsync({
-      label: 'planet-mesh', layout: meshLayout,
-      compute: { module: meshMod, entryPoint: 'main' },
+    this._clearPipe = await d.createComputePipelineAsync({
+      label: 'sn-clear', layout: meshLayout,
+      compute: { module: snMod, entryPoint: 'clear_buffers' },
     });
-    this._meshBG = this.meshManager.buildMesherBG(d, meshBGL);
+    this._cornerPipe = await d.createComputePipelineAsync({
+      label: 'sn-corners', layout: meshLayout,
+      compute: { module: snMod, entryPoint: 'eval_corners' },
+    });
+    this._vertexPipe = await d.createComputePipelineAsync({
+      label: 'sn-vertices', layout: meshLayout,
+      compute: { module: snMod, entryPoint: 'compute_vertices' },
+    });
+    this._facePipe = await d.createComputePipelineAsync({
+      label: 'sn-faces', layout: meshLayout,
+      compute: { module: snMod, entryPoint: 'generate_faces' },
+    });
 
+    this._wireCompPipe = await d.createComputePipelineAsync({
+      label: 'sn-wire-comp', layout: meshLayout,
+      compute: { module: snMod, entryPoint: 'generate_wireframe' },
+    });
+
+    // ---- sky pipeline ----
     this._skyPipe = await d.createRenderPipelineAsync({
       label: 'planet-sky',
       layout: d.createPipelineLayout({ label: 'sky-layout', bindGroupLayouts: [fbgl] }),
@@ -123,38 +151,28 @@ export class Scene1Rasterized extends Scene {
       primitive: { topology: 'triangle-list' },
     });
 
+    // ---- planet draw pipelines (lit, wire, points) ----
     const depthStencil = {
       format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'greater-equal',
     };
 
     this._drawPipe = await d.createRenderPipelineAsync({
       label: 'planet-draw',
-      layout: d.createPipelineLayout({ label: 'draw-layout', bindGroupLayouts: [fbgl, drawBGL] }),
+      layout: d.createPipelineLayout({ label: 'draw-layout', bindGroupLayouts: [fbgl, this._drawBGL] }),
       vertex: { module: drawMod, entryPoint: 'vs' },
       fragment: { module: drawMod, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
       primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
       depthStencil,
     });
 
-    this._wirePipe = await d.createRenderPipelineAsync({
-      label: 'planet-wire',
-      layout: d.createPipelineLayout({ label: 'wire-layout', bindGroupLayouts: [fbgl, drawBGL] }),
+    this._wireDrawPipe = await d.createRenderPipelineAsync({
+      label: 'planet-wire-draw',
+      layout: d.createPipelineLayout({ label: 'wire-layout', bindGroupLayouts: [fbgl, this._drawBGL] }),
       vertex: { module: drawMod, entryPoint: 'vs' },
       fragment: { module: drawMod, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
       primitive: { topology: 'line-list', cullMode: 'none' },
       depthStencil,
     });
-
-    this._pointPipe = await d.createRenderPipelineAsync({
-      label: 'planet-points',
-      layout: d.createPipelineLayout({ label: 'point-layout', bindGroupLayouts: [fbgl, drawBGL] }),
-      vertex: { module: drawMod, entryPoint: 'vs' },
-      fragment: { module: drawMod, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
-      primitive: { topology: 'point-list', cullMode: 'none' },
-      depthStencil,
-    });
-
-    this._dBG = this.meshManager.buildDrawBG(d, drawBGL, this._drawUniformBuf);
 
     // ---- additive passes ----
     const add = this.additive = {
@@ -219,29 +237,89 @@ export class Scene1Rasterized extends Scene {
 
   recordWorld(encoder, frameBG, profiler, rc) {
     const t = this.targets, cam = rc.camera;
-    const grid = this.meshManager.resolveGrid();
-    this.meshManager.writeUniform(cam, grid);
 
+    // ---- per-frame state ----
+    const aspect = this.gpu.canvas.width / Math.max(1, this.gpu.canvas.height);
+    const res = this.meshManager.resolve(aspect);
+    this.meshManager.ensureBuffers(res);
+    this.meshManager.writeUniform(cam.current.pos, cam.invViewProj);
+
+    // Build/rebuild bind groups (idempotent — only rebuilds when buffers change)
+    this._meshBG = this.meshManager.buildMesherBG(this.gpu.device, this._meshBGL);
+    this._dBG = this.meshManager.buildDrawBG(this.gpu.device, this._drawBGL, this._drawUniformBuf);
+
+    // Write draw uniform (camera position, prev camera, debug mode)
     const cp = cam.current.pos, du = this._cpuUni;
     du[0] = cp[0]; du[1] = cp[1]; du[2] = cp[2]; du[3] = 0;
     du[4] = this._prevCam[0]; du[5] = this._prevCam[1]; du[6] = this._prevCam[2]; du[7] = 0;
     du[8] = this.debugMode; du[9] = 0; du[10] = 0; du[11] = 0;
+    du[12] = 0; du[13] = 0; du[14] = 0; du[15] = 0;
     this.gpu.device.queue.writeBuffer(this._drawUniformBuf, 0, du);
     this._prevCam.set(cp);
 
-    // Compute
-    encoder.pushDebugGroup('planet-mesh');
+    // ---- 4-pass Surface Nets compute (each in its own pass for ordering) ----
+    encoder.pushDebugGroup('surface-nets');
     {
-      const pass = encoder.beginComputePass({ label: 'planet-mesh' });
-      pass.setPipeline(this._meshPipe);
-      pass.setBindGroup(0, frameBG);
-      pass.setBindGroup(1, this._meshBG);
-      pass.dispatchWorkgroups(Math.ceil(grid.nx * grid.ny / 64));
-      pass.end();
+      const d = this.meshManager;
+
+      // Pass 0: clear indirect args + cell vertex IDs
+      {
+        const pass = encoder.beginComputePass({ label: 'sn-clear' });
+        pass.setPipeline(this._clearPipe);
+        pass.setBindGroup(0, frameBG);
+        pass.setBindGroup(1, this._meshBG);
+        const cd = d.clearDispatch(res);
+        pass.dispatchWorkgroups(cd.x, cd.y, cd.z);
+        pass.end();
+      }
+
+      // Pass 1: evaluate corners
+      {
+        const pass = encoder.beginComputePass({ label: 'sn-corners' });
+        pass.setPipeline(this._cornerPipe);
+        pass.setBindGroup(0, frameBG);
+        pass.setBindGroup(1, this._meshBG);
+        const crd = d.cornerDispatch(res);
+        pass.dispatchWorkgroups(crd.x, crd.y, crd.z);
+        pass.end();
+      }
+
+      // Pass 2: compute dual vertices (reads corners, writes vertices + cellVerts)
+      {
+        const pass = encoder.beginComputePass({ label: 'sn-vertices' });
+        pass.setPipeline(this._vertexPipe);
+        pass.setBindGroup(0, frameBG);
+        pass.setBindGroup(1, this._meshBG);
+        const vd = d.cellDispatch(res);
+        pass.dispatchWorkgroups(vd.x, vd.y, vd.z);
+        pass.end();
+      }
+
+      // Pass 3: generate faces (reads corners + cellVerts, writes indices)
+      {
+        const pass = encoder.beginComputePass({ label: 'sn-faces' });
+        pass.setPipeline(this._facePipe);
+        pass.setBindGroup(0, frameBG);
+        pass.setBindGroup(1, this._meshBG);
+        const vd2 = d.cellDispatch(res);
+        pass.dispatchWorkgroups(vd2.x, vd2.y, vd2.z);
+        pass.end();
+      }
+
+      // Pass 4: generate wireframe (reads triangle indices → line pairs)
+      {
+        const pass = encoder.beginComputePass({ label: 'sn-wire' });
+        pass.setPipeline(this._wireCompPipe);
+        pass.setBindGroup(0, frameBG);
+        pass.setBindGroup(1, this._meshBG);
+        const wd = d.wireDispatch(res);
+        pass.dispatchWorkgroups(wd.x, wd.y, wd.z);
+        pass.end();
+      }
     }
     encoder.popDebugGroup();
 
-    // Sky
+    // ---- sky background ----
     {
       const pass = encoder.beginRenderPass({
         label: 'planet-sky',
@@ -254,10 +332,11 @@ export class Scene1Rasterized extends Scene {
       pass.end();
     }
 
-    // Planet
+    // ---- planet draw ----
     {
-      const wire = this.debugMode === 1, points = this.debugMode === 2;
-      const pipe = points ? this._pointPipe : (wire ? this._wirePipe : this._drawPipe);
+      const wire = this.debugMode === 6;
+      const pipe = wire ? this._wireDrawPipe : this._drawPipe;
+
       const pass = encoder.beginRenderPass({
         label: 'planet-body',
         colorAttachments: [{ view: t.sceneRaw.createView(), loadOp: 'load', storeOp: 'store' }],
@@ -270,16 +349,22 @@ export class Scene1Rasterized extends Scene {
       pass.setPipeline(pipe);
       pass.setBindGroup(0, frameBG);
       pass.setBindGroup(1, this._dBG);
-      if (points) {
-        pass.draw(this.meshManager.vertexBuffer.size / 24);
+
+      if (wire) {
+        // Wireframe: line-list indices from the wireframe index buffer.
+        // drawIndexedIndirect reads from the wire indirect buffer (pre-filled
+        // by the generate_wireframe pass).
+        pass.setIndexBuffer(this.meshManager.wireIndexBuffer, 'uint32');
+        pass.drawIndexedIndirect(this.meshManager.wireIndirectBuf, 0);
       } else {
-        pass.setIndexBuffer(this.meshManager.ensureIndexBuffer(grid), 'uint32');
-        pass.drawIndexed(this.meshManager.indexCount(grid));
+        // Triangle mesh: drawIndexedIndirect from the main indirect buffer.
+        pass.setIndexBuffer(this.meshManager.indexBuffer, 'uint32');
+        pass.drawIndexedIndirect(this.meshManager.indirectBuffer, 0);
       }
       pass.end();
     }
 
-    // Solid meshes
+    // ---- solid meshes (rings, ship, satellites) ----
     extractFrustum(cam.viewProj, this._frustum);
     for (const m of this._solid) m.record(encoder, frameBG, profiler, this._frustum);
   }

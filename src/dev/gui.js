@@ -140,6 +140,19 @@ export function buildGui(renderer, live = {}) {
     });
   }
 
+  // ---- surface nets ----
+  {
+    const sn = gui.addFolder('Surface Nets');
+    import('../passes/SurfaceNetsManager.js').then(({ SURFACE_NETS }) => {
+      sn.add(SURFACE_NETS, 'lateralRes', 8, 128, 4).name('lateral res');
+      sn.add(SURFACE_NETS, 'depthRes', 4, 128, 4).name('depth res');
+      sn.add(SURFACE_NETS, 'useDC').name('dual contour');
+      sn.add(SURFACE_NETS, 'gridMode', ['world', 'frustum']).name('grid mode');
+      sn.add(SURFACE_NETS, 'nearDist', 0.1, 20, 0.5).name('near dist');
+      sn.add(SURFACE_NETS, 'farDist', 0.5, 50, 1).name('far dist');
+    });
+  }
+
   // ---- auroras ----
   // The flow parameters are read per step, so they take effect on the next frame — but the
   // ribbons already in the buffer were integrated under the OLD ones, so a big change takes a
