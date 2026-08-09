@@ -195,15 +195,22 @@ fn readTap(q : vec2i) -> Tap {
   return t;
 }
 
-/// Reconstruction kernel for the upsampling gather: a Gaussian, in OUTPUT pixels.
+/// Reconstruction kernel for the upsampling gather: a Catmull-Rom cubic,
+/// in OUTPUT pixels.
 ///
-/// `d` is the offset from the output pixel's centre to where the input sample actually
-/// landed. Gaussian rather than a negative-lobed Lanczos or Mitchell to begin with: the
-/// lobes do sharpen, but they ring, and this resolve already runs a variance clip and a
-/// firefly clamp that would interact with ringing in ways worth measuring on their own
-/// rather than all at once. Width is a uniform so it can be swept.
+/// `d` is the offset from the output pixel's centre to where the input sample
+/// landed. Catmull-Rom has negative lobes (the second ring at 1..2 output px
+/// sharpens by pulling weight away from the centre), but they are mild enough
+/// that the variance clip handles them — the same cubic already drives the
+/// history resample below. Support is 2 output pixels, which fits inside the
+/// 3x3 gather window at any render scale.
 fn taauKernel(d : vec2f) -> f32 {
-  return exp(-frame.taa2.w * dot(d, d));
+  let r = length(d);
+  if (r >= 2.0) { return 0.0; }
+  if (r < 1.0) {
+    return 1.5 * r*r*r - 2.5 * r*r + 1.0;
+  }
+  return -0.5 * r*r*r + 2.5 * r*r - 4.0 * r + 2.0;
 }
 
 /// A 3x3 of input taps around an output pixel, centred on the nearest input pixel.
@@ -547,6 +554,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         let tol = frame.taa.w * gateDist
                 + min(frame.taa2.x * gradPx, frame.taa2.y * gateDist);
         ok = h.a > 0.0 && abs(h.a - gateDist) < tol;
+        // Velocity-based disocclusion: a TIGHT, non-slope-scaled depth check that
+        // catches what the permissive slope-scaled gate lets through on fast pans.
+        // When the reprojected pixel moved more than DISOCC_MOTION output pixels
+        // and its depth disagrees by more than DISOCC_DEPTH of the distance, the
+        // surface at that location is not the same one — it was disoccluded.
+        let mvLen = length(rp.xy - opc);
+        if (ok && mvLen > frame.taa3.w) {
+          ok = abs(h.a - gateDist) < 0.01 * max(gateDist, 1.0);
+        }
       } else {
         ok = isBackground(h.a);
       }
