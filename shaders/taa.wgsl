@@ -195,22 +195,19 @@ fn readTap(q : vec2i) -> Tap {
   return t;
 }
 
-/// Reconstruction kernel for the upsampling gather: a Catmull-Rom cubic,
+/// Reconstruction kernel for the upsampling gather: a sharp Gaussian,
 /// in OUTPUT pixels.
 ///
 /// `d` is the offset from the output pixel's centre to where the input sample
-/// landed. Catmull-Rom has negative lobes (the second ring at 1..2 output px
-/// sharpens by pulling weight away from the centre), but they are mild enough
-/// that the variance clip handles them — the same cubic already drives the
-/// history resample below. Support is 2 output pixels, which fits inside the
-/// 3x3 gather window at any render scale.
+/// landed. Must be strictly non-negative — the accumulate phase divides by
+/// Σ w_i, and a negative-lobed kernel (Lanczos, Catmull-Rom, Mitchell) can
+/// drive that denominator to zero or below, causing the output to oscillate
+/// frame-to-frame. A Gaussian cannot go negative, so the weighted sum is
+/// always stable. The Catmull-Rom is still used for the history *resample*
+/// below, where it only reads one value and the negative lobes sharpen
+/// without destabilising an accumulator.
 fn taauKernel(d : vec2f) -> f32 {
-  let r = length(d);
-  if (r >= 2.0) { return 0.0; }
-  if (r < 1.0) {
-    return 1.5 * r*r*r - 2.5 * r*r + 1.0;
-  }
-  return -0.5 * r*r*r + 2.5 * r*r - 4.0 * r + 2.0;
+  return exp(-0.65 * dot(d, d));
 }
 
 /// A 3x3 of input taps around an output pixel, centred on the nearest input pixel.
