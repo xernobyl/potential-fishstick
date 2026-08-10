@@ -14,6 +14,11 @@
 // blow up, and it stays perfectly in step with the body's pulse. The cost is
 // that particles cannot collide or be pushed around — if that is ever wanted,
 // this is the file that changes, and nothing else needs to know.
+//
+// Curl noise turbulence is layered on top of the radial drift: a divergence-free
+// 3D vector field sampled from vnoise() via finite differences. It swirls the
+// particles without clumping or dispersing them, and grows with the particle's
+// age so the ejection is tight near the surface and turbulent far out.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -37,6 +42,28 @@ struct DrawArgs {
 @group(1) @binding(0) var<storage, read_write> embers : array<Ember>;
 @group(1) @binding(1) var<storage, read_write> liveList : array<u32>;
 @group(1) @binding(2) var<storage, read_write> drawArgs : DrawArgs;
+
+/// Divergence-free 3D vector field from the curl of a scalar noise potential.
+/// Sampled at `p` (world space), animated by `t`, with feature scale `s`.
+/// The step `eps` controls derivative quality; 0.05 is a good default.
+///
+/// Evaluates `vnoise` 6 times — cheap enough for per-particle use.
+fn curlNoise(p : vec3f, t : f32, s : f32, eps : f32) -> vec3f {
+  let sp = p * s + t;
+  let h = eps * s;
+  let nx_p = vnoise(sp + vec3f( h, 0, 0));
+  let nx_m = vnoise(sp + vec3f(-h, 0, 0));
+  let ny_p = vnoise(sp + vec3f(0,  h, 0));
+  let ny_m = vnoise(sp + vec3f(0, -h, 0));
+  let nz_p = vnoise(sp + vec3f(0, 0,  h));
+  let nz_m = vnoise(sp + vec3f(0, 0, -h));
+  let inv = 1.0 / (2.0 * eps);
+  return vec3f(
+    (ny_p - ny_m) - (nz_p - nz_m),
+    (nz_p - nz_m) - (nx_p - nx_m),
+    (nx_p - nx_m) - (ny_p - ny_m),
+  ) * inv;
+}
 
 @compute @workgroup_size(64)
 fn reset(@builtin(global_invocation_id) gid : vec3u) {
@@ -69,6 +96,11 @@ fn simulate(@builtin(global_invocation_id) gid : vec3u) {
 
   var e : Ember;
   e.pos = dir * radius;
+  // Curl noise turbulence: divergence-free 3D swirl that grows with the
+  // particle's age. Tight radial ejection near the surface, increasingly
+  // turbulent as the motes cool and drift outward.
+  let turb = curlNoise(e.pos, beatPhase() * 0.7, 1.3, 0.05);
+  e.pos += turb * (EMBER_TURB * life);
   // Swell then shrink, and a per-mote base size.
   e.size = EMBER_SIZE * (0.35 + 1.5 * sin(PI * life)) * (0.55 + 0.9 * hash11(fi * 2.11));
   // Cool from white-hot to deep ember as they travel.

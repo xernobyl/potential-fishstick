@@ -1318,6 +1318,7 @@ export const EMBERS = {
   colour: [1.0, 0.44, 0.15],
   intensity: 4.6,
   spriteSize: 64,
+  turb: 0.0,                    // curl noise turbulence strength (0 = off)
 };
 
 /**
@@ -1660,6 +1661,7 @@ export function wgslDefines() {
     EMBER_TRAVEL: EMBERS.travel,
     EMBER_SIZE: EMBERS.size,
     EMBER_COL: `vec3f(${EMBERS.colour.map(f).join(', ')}) * ${f(EMBERS.intensity)}`,
+    EMBER_TURB: f(EMBERS.turb),
     // raymarched reflections
     REFL_STEPS: int(REFLECT.steps),
     REFL_OCT: int(REFLECT.octaves),
