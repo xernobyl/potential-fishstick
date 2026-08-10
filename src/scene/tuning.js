@@ -1318,7 +1318,7 @@ export const EMBERS = {
   colour: [1.0, 0.44, 0.15],
   intensity: 4.6,
   spriteSize: 64,
-  turb: 0.0,                    // curl noise turbulence strength (0 = off)
+  turb: 0.2,                    // curl noise turbulence strength (0 = off)
 };
 
 /**
