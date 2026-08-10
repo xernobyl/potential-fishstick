@@ -1312,8 +1312,8 @@ export const SATELLITES = {
 export const EMBERS = {
   count: 1400,
   rate: 0.42,                   // outward cycles per heartbeat
-  spawnR: 2.96,
-  travel: 0.62,
+  spawnR: 3.0,                  // launch from just outside the body
+  travel: 1.8,                  // reach to the outer ring
   size: 0.02,                  // world-space billboard radius
   colour: [1.0, 0.44, 0.15],
   intensity: 4.6,

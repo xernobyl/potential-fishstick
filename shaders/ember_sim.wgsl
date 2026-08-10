@@ -101,8 +101,8 @@ fn simulate(@builtin(global_invocation_id) gid : vec3u) {
   // Curl noise turbulence: divergence-free 3D swirl that grows with the
   // particle's age. Tight radial ejection near the surface, increasingly
   // turbulent as the motes cool and drift outward.
-  let turb = curlNoise(e.pos, beatPhase() * 1.1, 0.9, 0.05);
-  e.pos += turb * (EMBER_TURB * life);
+  let turb = curlNoise(e.pos, beatPhase() * 0.5, 1.1, 0.05);
+  e.pos += turb * (EMBER_TURB * life * 0.7);
   // Swell then shrink, and a per-mote base size.
   e.size = EMBER_SIZE * (0.35 + 1.5 * sin(PI * life)) * (0.55 + 0.9 * hash11(fi * 2.11));
   // Cool from white-hot to deep ember as they travel.
