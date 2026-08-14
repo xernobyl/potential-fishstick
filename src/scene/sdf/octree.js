@@ -225,10 +225,15 @@ class NodePool {
  * @param {number} [opts.pad]   cells of margin, so the surface is never clipped
  * @returns {object|object[]}  a mesh, or one per error value
  */
-export function dualContourAdaptive(f, { bounds, resolution, error = 0, bias = 0.1, pad = 2 }) {
+export function dualContourAdaptive(f, { bounds, resolution, error = 0, bias = 0.1, pad = 2 }, analytic = null) {
   const grid = sampleGrid(f, { bounds, resolution, pad });
   const { d, lo, cell, nxC, nyC, nzC, cornerIdx } = grid;
-  const { edgeMap, exs, ens, grad } = findCrossings(f, grid);
+  const { edgeMap, exs, ens, grad } = findCrossings(f, grid, analytic);
+  // Combined normal estimator: analytic where one exists (sharp creases), central differences
+  // elsewhere (smooth blends and rounded shapes). Used for the output vertex normals too.
+  const normalAt = analytic
+    ? (x, y, z, out) => { if (!analytic(x, y, z, out)) grad(x, y, z, out); }
+    : grad;
 
   const qefs = new QefPool();
   const nodes = new NodePool();
@@ -270,7 +275,7 @@ export function dualContourAdaptive(f, { bounds, resolution, error = 0, bias = 0
         nodes.corners[n] = mask;
         qefs.solve(h, lo[0] + i * cell, lo[1] + j * cell, lo[2] + k * cell, cell, bias, vout);
         nodes.px[n] = vout[0]; nodes.py[n] = vout[1]; nodes.pz[n] = vout[2];
-        grad(vout[0], vout[1], vout[2], nrm);
+        normalAt(vout[0], vout[1], vout[2], nrm);
         nodes.nx[n] = nrm[0]; nodes.ny[n] = nrm[1]; nodes.nz[n] = nrm[2];
         level.set(key(i, j, k), n);
       }
@@ -323,7 +328,7 @@ export function dualContourAdaptive(f, { bounds, resolution, error = 0, bias = 0
   const meshes = budgets.map((budget) => {
     // Squared, once, here: the QEF residual is in squared world units, so a budget expressed as a
     // LENGTH — which is the only unit a caller can reason about — has to be squared to compare.
-    simplify(nodes, qefs, root, budget * budget, lo, cell, bias, grad, vout, nrm, d, cornerIdx);
+    simplify(nodes, qefs, root, budget * budget, lo, cell, bias, normalAt, vout, nrm, d, cornerIdx);
     return contour(nodes, root, grid);
   });
 
@@ -358,7 +363,7 @@ function emptyResult(grid, error) {
  * corner is outside, the mesh that survived says it is inside — and the quads would face the wrong way
  * there. Corners no child claims inherit the cell centre's sign, which every child agrees on.
  */
-function simplify(nodes, qefs, node, threshold, lo, cell, bias, grad, vout, nrm, d, cornerIdx) {
+function simplify(nodes, qefs, node, threshold, lo, cell, bias, normalAt, vout, nrm, d, cornerIdx) {
   if (node < 0 || nodes.type[node] !== INTERNAL) return node;
 
   const signs = [-1, -1, -1, -1, -1, -1, -1, -1];
@@ -366,7 +371,7 @@ function simplify(nodes, qefs, node, threshold, lo, cell, bias, grad, vout, nrm,
 
   for (let i = 0; i < 8; i++) {
     const c = simplify(nodes, qefs, nodes.children[node * 8 + i], threshold,
-                       lo, cell, bias, grad, vout, nrm, d, cornerIdx);
+                       lo, cell, bias, normalAt, vout, nrm, d, cornerIdx);
     nodes.children[node * 8 + i] = c;
     if (c < 0) continue;
     if (nodes.type[c] === INTERNAL) { collapsible = false; continue; }
@@ -427,8 +432,8 @@ function simplify(nodes, qefs, node, threshold, lo, cell, bias, grad, vout, nrm,
   nodes.px[node] = vout[0]; nodes.py[node] = vout[1]; nodes.pz[node] = vout[2];
   // The FIELD's gradient at the merged vertex, not the average of the children's normals. The children's
   // normals belong to points up to a cell away and averaging them rounds off exactly the feature the
-  // merge just kept; six evaluations here is a rounding error against the corner grid.
-  grad(vout[0], vout[1], vout[2], nrm);
+  // merge just kept. Analytic where one exists — a crease vertex shades face-aligned.
+  normalAt(vout[0], vout[1], vout[2], nrm);
   nodes.nx[node] = nrm[0]; nodes.ny[node] = nrm[1]; nodes.nz[node] = nrm[2];
   for (let i = 0; i < 8; i++) nodes.children[node * 8 + i] = -1;
   return node;

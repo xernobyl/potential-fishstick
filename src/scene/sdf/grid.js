@@ -134,9 +134,12 @@ function gradientAt(f, cell) {
  * Sparse: edge ids are (corner, axis), three per corner, and only the ones that change sign get an entry
  * in the compact position/normal lists. On a closed surface that is a few percent of the edges.
  *
+ * @param {(x:number,y:number,z:number)=>number} f  compiled field
+ * @param {object} grid  from `sampleGrid`
+ * @param {(x:number,y:number,z:number,out:number[])=>boolean} [analytic]  analytic normal, or null
  * @returns {{edgeMap:Int32Array, exs:FloatList, ens:FloatList, crossings:number}}
  */
-export function findCrossings(f, grid) {
+export function findCrossings(f, grid, analytic = null) {
   const { d, lo, cell, cw, ch, cd, cornerIdx } = grid;
   const edgeMap = new Int32Array(cw * ch * cd * 3).fill(-1);
   const exs = new FloatList();
@@ -166,7 +169,10 @@ export function findCrossings(f, grid) {
     y = y0 + dj * cell * t;
     z = z0 + dk * cell * t;
 
-    grad(x, y, z, nrm);
+    // Analytic normal where one exists, else central differences. The analytic path keeps a sharp
+    // crease sharp; the fallback covers smooth blends and rounded shapes, whose blended normal is only
+    // correct as the field's own gradient.
+    if (!(analytic && analytic(x, y, z, nrm))) grad(x, y, z, nrm);
     edgeMap[(cornerIdx(i, j, k) * 3) + axis] = crossings++;
     exs.push3(x, y, z);
     ens.push3(nrm[0], nrm[1], nrm[2]);

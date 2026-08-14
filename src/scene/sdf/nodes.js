@@ -50,6 +50,19 @@ export const box = (h) => ({
     const inside = Math.min(Math.max(qx, Math.max(qy, qz)), 0);
     return outside + inside;
   },
+  // Face-aligned normal, discontinuous at the edges. The exact-distance field's gradient near an
+  // edge points radially away from it (diagonal), which a central-difference estimator reproduces and
+  // which chamfers the crease. Picking the single most-outside face instead gives the QEF two distinct,
+  // orthogonal planes at an edge, and the minimiser lands on the crease line rather than short of it.
+  n: (x, y, z, out) => {
+    const qx = Math.abs(x) - h[0];
+    const qy = Math.abs(y) - h[1];
+    const qz = Math.abs(z) - h[2];
+    if (qx >= qy && qx >= qz) { out[0] = x >= 0 ? 1 : -1; out[1] = 0; out[2] = 0; }
+    else if (qy >= qz) { out[0] = 0; out[1] = y >= 0 ? 1 : -1; out[2] = 0; }
+    else { out[0] = 0; out[1] = 0; out[2] = z >= 0 ? 1 : -1; }
+    return true;
+  },
 });
 
 /** Box with rounded edges of radius `r`. A box inflated by r, which is exactly what subtracting r does. */
@@ -69,10 +82,25 @@ export const cylinder = (r, hh) => ({
     const outside = Math.hypot(Math.max(dx, 0), Math.max(dy, 0));
     return Math.min(Math.max(dx, dy), 0) + outside;
   },
+  n: (x, y, z, out) => {
+    const dx = Math.hypot(x, z) - r;
+    const dy = Math.abs(y) - hh;
+    if (dx > dy) {
+      const q = Math.hypot(x, z) || 1;
+      out[0] = x / q; out[1] = 0; out[2] = z / q;
+    } else {
+      out[0] = 0; out[1] = y >= 0 ? 1 : -1; out[2] = 0;
+    }
+    return true;
+  },
 });
 
 /** Infinite plane through the origin with unit normal `n`. Useful as a cutter. */
-export const plane = (n) => ({ op: 'plane', n, f: (x, y, z) => x * n[0] + y * n[1] + z * n[2] });
+export const plane = (n) => ({
+  op: 'plane',
+  f: (x, y, z) => x * n[0] + y * n[1] + z * n[2],
+  n: (x, y, z, out) => { out[0] = n[0]; out[1] = n[1]; out[2] = n[2]; return true; },
+});
 
 /**
  * Cone-ish tapered cylinder along Y, from radius `r0` at -hh to `r1` at +hh.
@@ -95,6 +123,24 @@ export const cone = (r0, r1, hh) => ({
     const dCap = Math.abs(y) - hh;
     const outside = Math.hypot(Math.max(dLat, 0), Math.max(dCap, 0));
     return Math.min(Math.max(dLat, dCap), 0) + outside;
+  },
+  n: (x, y, z, out) => {
+    const q = Math.hypot(x, z) || 1e-12;
+    const t = Math.min(Math.max((y + hh) / (2 * hh), 0), 1);
+    const r = r0 + (r1 - r0) * t;
+    const s = (r1 - r0) / (2 * hh);
+    const dLat = (q - r) * (2 * hh) / Math.hypot(2 * hh, r1 - r0);
+    const dCap = Math.abs(y) - hh;
+    if (dLat > dCap) {
+      // Lateral normal: the outward surface normal of the tapered cylinder, (x/q, -s, z/q) normalised.
+      const inv = 1 / Math.hypot(1, s);
+      out[0] = (x / q) * inv;
+      out[1] = -s * inv;
+      out[2] = (z / q) * inv;
+    } else {
+      out[0] = 0; out[1] = y >= 0 ? 1 : -1; out[2] = 0;
+    }
+    return true;
   },
 });
 
@@ -281,6 +327,138 @@ export function compile(node) {
     }
     default:
       throw new Error(`unknown SDF op: ${node.op}`);
+  }
+}
+
+/**
+ * Turn a node tree into `(x, y, z, out) => boolean` — an ANALYTIC normal, where one exists.
+ *
+ * The companion to `compile`. The two exist separately because the normal is only analytically
+ * well-defined for SHARP features: the exact-distance field's gradient near a box edge points radially
+ * away from it (diagonal), which a central-difference estimator reproduces and which chamfers the
+ * crease. The analytic normal instead reports the face it actually belongs to, discontinuous at edges,
+ * so the QEF sees two orthogonal planes and lands on the crease line.
+ *
+ * Where no analytic normal exists — smooth blends, rounded shapes — this returns `null` and the caller
+ * falls back to central differences, which is exactly right for a field whose whole purpose is smooth.
+ *
+ * Composition rule for booleans: the surface belongs to the child whose distance is extremal, so
+ * `union`/`intersect` take the child with the min/max distance, and `subtract` negates the cutter's
+ * normal when the surface is the negative region. Transforms map the child's normal back to world.
+ */
+export function compileNormal(node) {
+  if (!node || typeof node !== 'object') return null;
+  if (node.n) return node.n;                          // a primitive carries its own analytic normal
+  // Smooth operators and rounding fall back to central differences: their whole purpose is a smooth
+  // field, and the blended normal is only correct as the field's own gradient.
+  if (node.op === 'smoothUnion' || node.op === 'smoothSubtract' || node.op === 'round') return null;
+
+  const kids = (node.kids ?? []).map(compileNormal);
+  switch (node.op) {
+    case 'union': {
+      const fs = (node.kids ?? []).map(compile);
+      if (kids.every((k) => !k)) return null;      // all smooth — central diff everywhere
+      return (x, y, z, out) => {
+        let best = 0, bestD = Infinity;
+        for (let i = 0; i < kids.length; i++) {
+          const d = fs[i](x, y, z);
+          if (d < bestD) { bestD = d; best = i; }
+        }
+        return kids[best] ? kids[best](x, y, z, out) : false;
+      };
+    }
+    case 'intersect': {
+      const fs = (node.kids ?? []).map(compile);
+      if (kids.every((k) => !k)) return null;
+      return (x, y, z, out) => {
+        let best = 0, bestD = -Infinity;
+        for (let i = 0; i < kids.length; i++) {
+          const d = fs[i](x, y, z);
+          if (d > bestD) { bestD = d; best = i; }
+        }
+        return kids[best] ? kids[best](x, y, z, out) : false;
+      };
+    }
+    case 'subtract': {
+      const [a, b] = kids;
+      const [fa, fb] = (node.kids ?? []).map(compile);
+      if (!a || !b) return null;
+      return (x, y, z, out) => {
+        if (fa(x, y, z) >= -fb(x, y, z)) return a(x, y, z, out);
+        if (!b(x, y, z, out)) return false;
+        out[0] = -out[0]; out[1] = -out[1]; out[2] = -out[2];
+        return true;
+      };
+    }
+    case 'translate': {
+      const [c] = kids;
+      const [tx, ty, tz] = node.t;
+      if (!c) return null;
+      return (x, y, z, out) => c(x - tx, y - ty, z - tz, out);
+    }
+    case 'rotate': {
+      const [c] = kids;
+      const { ax, ay, az } = node;
+      if (!c) return null;
+      // Child normal in local space -> world by R^T, i.e. local.x * ax + local.y * ay + local.z * az.
+      return (x, y, z, out) => {
+        const lx = x * ax[0] + y * ax[1] + z * ax[2];
+        const ly = x * ay[0] + y * ay[1] + z * ay[2];
+        const lz = x * az[0] + y * az[1] + z * az[2];
+        const ln = [0, 0, 0];
+        if (!c(lx, ly, lz, ln)) return false;
+        out[0] = ln[0] * ax[0] + ln[1] * ay[0] + ln[2] * az[0];
+        out[1] = ln[0] * ax[1] + ln[1] * ay[1] + ln[2] * az[1];
+        out[2] = ln[0] * ax[2] + ln[1] * ay[2] + ln[2] * az[2];
+        return true;
+      };
+    }
+    case 'scale': {
+      const [c] = kids;
+      const inv = 1 / node.s;
+      if (!c) return null;
+      return (x, y, z, out) => c(x * inv, y * inv, z * inv, out);
+    }
+    case 'mirror': {
+      const [c] = kids;
+      const a = node.axis;
+      if (!c) return null;
+      // The sign flip is read from the ORIGINAL coordinate, not the folded |x| — folding first would
+      // make the sign always +1 and leave the mirrored side's normal pointing inward.
+      if (a === 0) return (x, y, z, out) => {
+        if (!c(Math.abs(x), y, z, out)) return false;
+        out[0] = (x < 0 ? -1 : 1) * out[0];
+        return true;
+      };
+      if (a === 1) return (x, y, z, out) => {
+        if (!c(x, Math.abs(y), z, out)) return false;
+        out[1] = (y < 0 ? -1 : 1) * out[1];
+        return true;
+      };
+      return (x, y, z, out) => {
+        if (!c(x, y, Math.abs(z), out)) return false;
+        out[2] = (z < 0 ? -1 : 1) * out[2];
+        return true;
+      };
+    }
+    case 'repeat': {
+      const [c] = kids;
+      const a = node.axis;
+      const sp = node.spacing;
+      const even = node.count % 2 === 0;
+      const lim = (node.count - 1) / 2;
+      if (!c) return null;
+      const fold = (v) => {
+        const shifted = even ? v / sp - 0.5 : v / sp;
+        const i = Math.max(-Math.ceil(lim), Math.min(Math.floor(lim), Math.round(shifted)));
+        return v - (even ? (i + 0.5) : i) * sp;
+      };
+      if (a === 0) return (x, y, z, out) => c(fold(x), y, z, out);
+      if (a === 1) return (x, y, z, out) => c(x, fold(y), z, out);
+      return (x, y, z, out) => c(x, y, fold(z), out);
+    }
+    default:
+      return null;
   }
 }
 

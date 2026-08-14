@@ -141,11 +141,17 @@ function solveQef(px, py, pz, nx, ny, nz, count, cx, cy, cz, cell, bias, out) {
  * @returns {{positions:Float32Array, normals:Float32Array, indices:Uint32Array,
  *            vertexCount:number, triangleCount:number, cells:number[], cellSize:number}}
  */
-export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
+export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }, analytic = null) {
   // ---- 1 & 2. the grid and its crossings, shared with the adaptive contourer ----
   const grid = sampleGrid(f, { bounds, resolution, pad });
   const { d, lo, cell, cw, ch, cd, nxC, nyC, nzC, cornerIdx, cellIdx } = grid;
-  const { edgeMap, exs, ens, grad } = findCrossings(f, grid);
+  const { edgeMap, exs, ens, grad } = findCrossings(f, grid, analytic);
+  // Combined normal estimator: analytic where one exists (sharp creases), central differences
+  // elsewhere (smooth blends and rounded shapes). Used for the output vertex normals too, so a
+  // crease shades face-aligned rather than diagonal.
+  const normalAt = analytic
+    ? (x, y, z, out) => { if (!analytic(x, y, z, out)) grad(x, y, z, out); }
+    : grad;
   const nrm = [0, 0, 0];
 
   // ---- 3. one vertex per cell that any crossing touches ----
@@ -185,10 +191,9 @@ export function dualContour(f, { bounds, resolution, bias = 0.1, pad = 2 }) {
                  lo[0] + i * cell, lo[1] + j * cell, lo[2] + k * cell, cell, bias, vout);
 
         // NORMAL FROM THE FIELD at the placed vertex, not averaged from the crossings. The crossings'
-        // normals belong to points up to a cell away; the gradient here is this vertex's own. It costs
-        // six evaluations per vertex, and vertices scale with surface AREA, so it is a rounding error
-        // against the corner grid.
-        grad(vout[0], vout[1], vout[2], nrm);
+        // normals belong to points up to a cell away; the gradient here is this vertex's own. Analytic
+        // where one exists — a crease vertex shades face-aligned, which keeps the mechanical lines crisp.
+        normalAt(vout[0], vout[1], vout[2], nrm);
         cellVert[cellIdx(i, j, k)] = vertexCount++;
         positions.push3(vout[0], vout[1], vout[2]);
         normals.push3(nrm[0], nrm[1], nrm[2]);

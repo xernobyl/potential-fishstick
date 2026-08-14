@@ -30,7 +30,7 @@ import { Aurora } from '../scene/aurora.js';
 import { rectTube, concatMeshes } from '../scene/meshgen.js';
 import { shipTree, SHIP_MESH } from '../scene/ship_sdf.js';
 import { satelliteBusTree, satellitePanelTree, SAT_MESH } from '../scene/satellite_sdf.js';
-import { compile, bounds } from '../scene/sdf/nodes.js';
+import { compile, compileNormal, bounds } from '../scene/sdf/nodes.js';
 import { resolutionForScreen } from '../scene/sdf/dualcontour.js';
 import { dualContourAdaptive } from '../scene/sdf/octree.js';
 import { RINGS, SATELLITES, SHIP, CONTRAIL, RAIL, AURORA, ringDims, wgslDefines }
@@ -78,7 +78,7 @@ export function buildShipMesh() {
     bounds: b,
     resolution: res,
     error: SHIP_MESH.lodErrors,
-  });
+  }, compileNormal(tree));
 
   const out = levels.map((mesh, i) => {
     // Body units -> world units. A uniform scale leaves normals unchanged, which is the whole reason
@@ -124,7 +124,7 @@ export function buildSatelliteMesh() {
     const b = bounds(tree);
     const m = dualContourAdaptive(compile(tree), {
       bounds: b, resolution, error: SAT_MESH.error,
-    });
+    }, compileNormal(tree));
     return {
       positions: m.positions,
       normals: m.normals,

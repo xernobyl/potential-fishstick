@@ -10,7 +10,7 @@
 // the wrong four cells. It is worth more than every other assertion in this file combined.
 
 import { sphere, box, cylinder, union, smoothUnion, subtract, translate, rotate, scale, mirror,
-         compile, bounds } from '../src/scene/sdf/nodes.js';
+         compile, compileNormal, bounds } from '../src/scene/sdf/nodes.js';
 import { dualContour, resolutionForScreen } from '../src/scene/sdf/dualcontour.js';
 import { shipTree, SHIP_HARDPOINTS } from '../src/scene/ship_sdf.js';
 
@@ -174,6 +174,58 @@ function topology(m) {
   }
   check(faceErr < m.cellSize * 0.1, 'and the flat faces stay flat',
         `worst ${faceErr.toFixed(5)}`);
+}
+
+// ---- analytic normals keep a rotated box sharper ----
+//
+// The exact-distance box's gradient near an edge points diagonally away from it, which a central
+// difference reproduces and which chamfers the crease. The analytic face-aligned normal (compileNormal)
+// is the fix; this pins it by asserting vertices land closer to the true surface with it than without.
+{
+  const s = Math.SQRT1_2;
+  const tree = rotate([s, 0, s], [0, 1, 0], [-s, 0, s], box([0.6, 0.6, 0.6]));
+  const f = compile(tree);
+  const b = bounds(tree);
+  const cd = dualContour(f, { bounds: b, resolution: 32 });
+  const an = dualContour(f, { bounds: b, resolution: 32 }, compileNormal(tree));
+
+  const worstD = (m) => {
+    let w = 0;
+    for (let v = 0; v < m.vertexCount; v++) {
+      w = Math.max(w, Math.abs(f(m.positions[v * 3], m.positions[v * 3 + 1], m.positions[v * 3 + 2])));
+    }
+    return w;
+  };
+  const wcd = worstD(cd), wan = worstD(an);
+  check(wan < wcd * 0.5, 'analytic normals halve the chamfer on a rotated box',
+        `central ${wcd.toFixed(5)} -> analytic ${wan.toFixed(5)}`);
+  check(an.vertexCount === cd.vertexCount && an.triangleCount === cd.triangleCount,
+        'and change only vertex placement, not the weave',
+        `${cd.triangleCount} vs ${an.triangleCount} tris`);
+  const topo = topology(an);
+  check(topo.boundary === 0 && topo.nonManifold === 0 && an.vertexCount - topo.edges + an.triangleCount === 2,
+        'and stay closed, manifold, genus 0');
+}
+
+// ---- analytic normals survive n-ary booleans and mirrors ----
+//
+// The production trees are n-ary (`union` of many children) and mirrored, both of which early versions
+// of compileNormal got wrong: the 2-child-only union returned null for every real tree, and the mirror
+// read its sign from the already-folded |x| so the mirrored side's normal pointed inward. These pin both.
+{
+  // n-ary union must produce a non-null analytic normal.
+  const tri = union(box([0.5, 0.5, 0.5]), translate([1.5, 0, 0], sphere(0.6)),
+                    translate([-1.5, 0, 0], sphere(0.6)));
+  check(compileNormal(tri) !== null, 'an n-ary union still yields an analytic normal');
+
+  // A mirror must flip the normal on the mirrored side, read from the ORIGINAL coordinate.
+  const mir = compileNormal(mirror(0, translate([2, 0, 0], box([0.5, 0.5, 0.5]))));
+  const out = [0, 0, 0];
+  const nAt = (x) => { mir(x, 0, 0, out); return out.slice(); };
+  check(nAt(2.5)[0] === 1 && nAt(1.5)[0] === -1, 'mirror keeps the original side outward',
+        `${nAt(2.5)[0]}, ${nAt(1.5)[0]}`);
+  check(nAt(-1.5)[0] === 1 && nAt(-2.5)[0] === -1, 'and flips the mirrored side outward',
+        `${nAt(-1.5)[0]}, ${nAt(-2.5)[0]}`);
 }
 
 // ---- a compound shape, which is what the ship actually is ----
