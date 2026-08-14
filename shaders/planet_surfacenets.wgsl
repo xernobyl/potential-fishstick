@@ -67,10 +67,14 @@ struct WireIndirect {
   firstInstance : u32,
 };
 
-/// Each output vertex: camera-relative position (vec3) and world-space normal (vec3).
+/// Each output vertex: camera-relative position (vec3) plus the normal in whichever format
+/// the build selected — full float32x3, or one Fibonacci-spiral index (see SN_NORMAL in tuning.js).
 /// Camera-relative matches the convention in planet_raster.wgsl, which does
 /// `wp = rel + du.cameraPos.xyz` in the vertex stage.
-const VERTEX_STRIDE = 6u;
+///
+/// SN_VERTEX_STRIDE is injected (not local) so the mesher here and the drawer in
+/// planet_raster.wgsl index the shared vertex buffer with the SAME stride — a mismatch is a
+/// silent garbled mesh, not a compile error, so the number lives in exactly one place.
 
 @group(1) @binding(0) var<uniform> grid : GridUniform;
 @group(1) @binding(1) var<storage, read_write> corners    : array<f32>;
@@ -296,14 +300,20 @@ fn compute_vertices(@builtin(global_invocation_id) gid: vec3u) {
   let slot = atomicAdd(&drawArgs.vertexCount, 1u);
   cellVerts[cellIdx(ci, cj, ck)] = i32(slot);
 
-  // Write vertex data — camera-relative position (matching planet_raster.wgsl convention)
-  let base = slot * VERTEX_STRIDE;
-  vertices[base]     = vertexPos.x - grid.cameraPos.x;
+  // Write vertex data — camera-relative position (matching planet_raster.wgsl convention),
+  // then the normal in the build's chosen format.
+  let base = slot * SN_VERTEX_STRIDE;
+  vertices[base]      = vertexPos.x - grid.cameraPos.x;
   vertices[base + 1u] = vertexPos.y - grid.cameraPos.y;
   vertices[base + 2u] = vertexPos.z - grid.cameraPos.z;
-  vertices[base + 3u] = nor.x;
-  vertices[base + 4u] = nor.y;
-  vertices[base + 5u] = nor.z;
+  if (SN_NORMAL_PACK) {
+    // One f32 carrying the spiral index; `fibDecodeNormal(idx, FIB_N)` recovers the direction.
+    vertices[base + 3u] = fibNearestIndex(nor, FIB_N);
+  } else {
+    vertices[base + 3u] = nor.x;
+    vertices[base + 4u] = nor.y;
+    vertices[base + 5u] = nor.z;
+  }
 }
 
 

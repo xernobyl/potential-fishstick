@@ -340,6 +340,30 @@ export const SOLID = {
 };
 
 /**
+ * How the SurfaceNets planet mesh stores its per-vertex normal.
+ *
+ * The normal is written into the vertex buffer but not yet consumed by the draw shader — the
+ * planet's fragment stage re-derives it from the SDF gradient (`calcNormal`). It is kept rather
+ * than dropped because a smooth per-vertex normal is the obvious future route to cheaper shading
+ * and to a silhouette-accurate interpolation, and the storage format is the decision that can be
+ * made now while it is cheap.
+ *
+ *   bits: 0  — full float32x3 (stride 6 floats per vertex), the lossless form.
+ *        16  — ONE index into a 2^16 = 65536-point spherical-Fibonacci spiral, carried in a
+ *              single f32 (stride 4). Any bit count works: the spiral keeps a roughly uniform
+ *              vector density at every N = 2^bits, so more bits are pure precision — unlike an
+ *              octahedral mapping, which is fixed at 8 or 16 bits per axis and wastes the two
+ *              halves of its square on directions that map outside the diamond.
+ *
+ * BUILD-TIME, not a live knob: the stride is baked into both the mesher (`planet_surfacenets.wgsl`)
+ * and the drawer (`planet_raster.wgsl`) as `SN_VERTEX_STRIDE`, and `SurfaceNetsManager` reads it
+ * for the buffer size. Change it and reload.
+ */
+export const SN_NORMAL = {
+  bits: 16,
+};
+
+/**
  * The player ship: a 2D arcade game on the surface of a sphere. Two DOF of position,
  * one of heading, no roll or pitch freedom — the orientation is DERIVED from the
  * surface normal and the heading, so the hull cannot tumble. See src/scene/ship.js.
@@ -1758,6 +1782,11 @@ export function wgslDefines() {
     RING_CORE_GAIN: RINGS.coreGain,
     RING_AMBIENT: RINGS.ambient,
     MOTION_NONE: SOLID.motionNone,
+    // SurfaceNets vertex normals. The stride is a raw `u` literal so both the mesher and the
+    // drawer index the shared `array<f32>` vertex buffer with a u32, as they already did.
+    SN_NORMAL_PACK: SN_NORMAL.bits > 0,
+    SN_VERTEX_STRIDE: `${SN_NORMAL.bits > 0 ? 4 : 6}u`,
+    FIB_N: 2 ** SN_NORMAL.bits,
     // spherochromatism
     SPHERO_STRENGTH: SPHERO.strength,
     SPHERO_TINT: `vec3f(${SPHERO.tint.map(f).join(', ')})`,

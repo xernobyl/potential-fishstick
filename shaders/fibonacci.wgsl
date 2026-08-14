@@ -208,3 +208,48 @@ fn sfPointFwd(i : f32, n : f32) -> vec3f {
   let st = sqrt(max(1.0 - ct * ct, 0.0));
   return vec3f(cos(ph) * st, sin(ph) * st, ct);
 }
+
+// ---- normal encoding ------------------------------------------------------
+//
+// A unit direction packed as ONE index into an n-point Fibonacci spiral, instead of three floats.
+// `n` is the point count (2^bits), so the bit width is chosen at the CALL SITE, not fixed here —
+// the same property the lattice layers already exploit. Encoding is the inverse of `sfPointFwd`,
+// the same Keinert/Innmann/Sanger/Stamminger inverse `sfCell` uses above, but with no layer rotation
+// and no per-layer variable `n`; the 3x3 window survives the f32 rounding and is kept for the same
+// reason `sfCell` keeps it — the true nearest neighbour can sit off the cell centre.
+//
+// Cost is O(1) plus 9 decodes. It runs once per vertex, so it is not on a per-pixel hot path.
+
+/// Index of the spiral point NEAREST `dir`. `dir` need only be unit-ish: the polar inverse
+/// clamps z and the window selects by true dot product, so a few ulps of length do not bias it.
+fn fibNearestIndex(dir : vec3f, n : f32) -> f32 {
+  let ct = clamp(dir.z, -1.0, 1.0);
+  let s2 = max(1.0 - ct * ct, 1e-7);
+  let m = 1.0 - 1.0 / n;
+  let k = max(2.0, floor(log(n * PI * sqrt(5.0) * s2) / log(PHI + 1.0)));
+  let Fk = pow(PHI, k) / sqrt(5.0);
+  let F = vec2f(floor(Fk + 0.5), floor(Fk * PHI + 0.5));
+  let ka = 2.0 * F / n;
+  let kb = TAU * (fract((F + 1.0) * PHI) - (PHI - 1.0));
+  let iB = mat2x2f(vec2f(ka.y, -ka.x), vec2f(kb.y, -kb.x)) * (1.0 / (ka.y * kb.x - ka.x * kb.y));
+  let cc = floor(iB * vec2f(atan2(dir.y, dir.x), ct - m));
+
+  var best = 0.0;
+  var bestDot = -2.0;
+  for (var j = 0; j < 9; j++) {
+    let w = SFWIN[j];
+    let i = dot(F, cc + w);
+    if (i < 0.0 || i > n - 0.5) { continue; }
+    let d = sfPointFwd(i, n);
+    let q = dot(d, dir);
+    if (q > bestDot) { bestDot = q; best = i; }
+  }
+  return best;
+}
+
+/// Decode an index back to a unit direction. `sfPointFwd` is exactly this; the alias gives the
+/// encode/decode pair one shared name for the normal use, so a future reader is not left matching
+/// "which forward mapping" against "which inverse".
+fn fibDecodeNormal(i : f32, n : f32) -> vec3f {
+  return sfPointFwd(i, n);
+}

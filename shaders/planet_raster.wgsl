@@ -33,7 +33,9 @@ struct DrawUniform {
 @group(1) @binding(0) var<storage, read> vertexData : array<f32>;
 @group(1) @binding(1) var<uniform> du : DrawUniform;
 
-const STRIDE = 6u;
+// Injected so it agrees with the mesher in planet_surfacenets.wgsl (see SN_NORMAL in tuning.js).
+// The vertex shader only reads the position; the normal sits at +3 (packed index or float32x3)
+// and is re-derived analytically in the fragment stage for now.
 
 /// Projection with zero translation (for camera-relative velocity)
 fn projNoTrans(vp : mat4x4f) -> mat4x4f {
@@ -53,7 +55,7 @@ struct Varying {
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32) -> Varying {
-  let base = vi * STRIDE;
+  let base = vi * SN_VERTEX_STRIDE;
   let rel = vec3f(vertexData[base], vertexData[base + 1u], vertexData[base + 2u]);
 
   let wp = rel + du.cameraPos.xyz;

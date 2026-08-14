@@ -22,7 +22,7 @@
  * allocations — only writeBuffer for uniforms and dispatches.
  */
 
-import { BODY } from '../scene/tuning.js';
+import { BODY, SN_NORMAL } from '../scene/tuning.js';
 
 /** Live tuning knobs. Read fresh each frame — sliders just mutate these. */
 export const SURFACE_NETS = {
@@ -49,7 +49,10 @@ const GRID_UNIFORM_FLOATS = 40;   // GridUniform: 2×vec4f + 3×f32 + u32 + 2×v
 const GRID_UNIFORM_BYTES = GRID_UNIFORM_FLOATS * 4;
 const INDIRECT_BYTES = 24;        // 5 draw args + vertexCount
 const WIRE_INDIRECT_BYTES = 20;  // 5 draw args (no atomics needed)
-const VERTEX_STRIDE_FLOATS = 6;   // pos.xyz + nor.xyz
+// pos.xyz + normal, in the build's chosen format. Must agree with the SN_VERTEX_STRIDE that
+// wgslDefines() injects into planet_surfacenets.wgsl and planet_raster.wgsl — see SN_NORMAL in
+// tuning.js. 4 floats = position + one packed Fibonacci index, 6 = position + float32x3 normal.
+const VERTEX_STRIDE_FLOATS = SN_NORMAL.bits > 0 ? 4 : 6;
 const VERTEX_STRIDE_BYTES = VERTEX_STRIDE_FLOATS * 4;
 
 function maxCells(nx, ny, nz) { return nx * ny * nz; }
