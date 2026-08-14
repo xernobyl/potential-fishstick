@@ -105,11 +105,15 @@ export function shipTree() {
   //
   // Swept, thin in Y so they have a defined leading and trailing edge, and reaching all the way to the
   // gun pods. The sweep is a rotation about Y rather than a modelled taper.
+  //
+  // A BOX, not a roundBox. A fillet here is sub-cell (0.012 vs a 0.016 cell) and reads as a jagged
+  // staircase rather than a rounded edge; the crisp 90-degree edge is exactly what the hard-edge
+  // splitting + analytic normals reconstruct as a clean straight line.
   const sweep = Math.cos(0.40);
   const sweepS = Math.sin(0.40);
   const wing = translate([0.30, -0.008, -0.05],
     rotate([sweep, 0, -sweepS], [0, 1, 0], [sweepS, 0, sweep],
-           roundBox([0.27, 0.015, 0.115], 0.012)));
+           box([0.27, 0.015, 0.115])));
 
   // Gun pods at the tips — so the rail guns come out of something instead of out of thin air.
   const pod = translate([SHIP_HARDPOINTS.wingTip, -0.005, SHIP_HARDPOINTS.podZ],
