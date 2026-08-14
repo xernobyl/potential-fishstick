@@ -422,6 +422,38 @@ The B key cycles through 6 debug views rendered by the fragment shader:
 
 All six use the same triangle-list pipeline with `drawIndexedIndirect`.
 
+#### Vertex layout & normal encoding
+
+Each vertex is **camera-relative position (3 × f32) followed by the normal**, and the normal's
+storage format is a build-time choice (`SN_NORMAL.bits` in `tuning.js`):
+
+| `SN_NORMAL.bits` | Normal storage | Stride |
+|------------------|----------------|--------|
+| 0 | `float32x3` (lossless) | 6 floats |
+| 16 (default) | one f32 holding a Fibonacci-spiral index | 4 floats |
+
+The normal is written but **not yet read** by `planet_raster.wgsl` — its fragment stage re-derives
+the normal from the SDF gradient (`calcNormal`). It is kept rather than dropped because a smooth,
+interpolated per-vertex normal is the obvious future route to cheaper shading, and its storage
+format can be decided now while it is cheap.
+
+The packed form encodes a unit vector as **one index into a 65536-point spherical-Fibonacci
+spiral** (`fibNearestIndex` / `fibDecodeNormal` in `fibonacci.wgsl` — the same lattice family the
+SDF already uses). Unlike an octahedral mapping, whose two 8-bit halves waste the square's corners
+outside the diamond, the spiral keeps every point valid and roughly uniformly dense, and its bit
+width is arbitrary (`N = 2^bits`, so more bits are pure precision). Measured at 16 bits the max
+angular error is ~0.56°, mean ~0.30°.
+
+Riding in a single f32 slot, the packed normal saves 8 bytes per vertex (stride 6 → 4, normal
+12 → 4 bytes); the slot still has room for a second 16-bit value later without touching the layout.
+
+The stride is **injected** as `SN_VERTEX_STRIDE`, not declared locally, so the mesher
+(`planet_surfacenets.wgsl`), the drawer (`planet_raster.wgsl`) and `SurfaceNetsManager`'s buffer
+size all index the shared vertex buffer with the same number — a mismatch is a garbled mesh, not a
+compile error. It is a build-time knob rather than a live slider because the stride is baked into
+both shader modules. `dev/fibnormal.mjs` checks the encode/decode headlessly (exact inverse, unit
+decode, identity round-trip).
+
 ### Level of detail
 
 The whole chain comes out of **one** octree. Simplification is monotone in the threshold, so the
