@@ -32,6 +32,7 @@ export class Input {
       // The flight command rides along on the frame state, because that object is
       // what actually crosses into the renderer — `state()` is the boundary.
       cmd: this._cmd, chase: false,
+      zoom: 0,
     };
 
     canvas.style.touchAction = 'none';
@@ -41,14 +42,15 @@ export class Input {
     /** Trackpad pinch zoom accumulator. Read by the camera. */
     this.zoom = 0;
     this._zoomTarget = 0;
+    // Plain wheel scroll and trackpad pinch both zoom — the modifier guard is gone, because the model
+    // viewer wants a plain mouse wheel to dolly and the planetoid's fullscreen canvas has no scroll to
+    // reserve it for.
     canvas.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       this._zoomTarget += e.deltaY * -0.002;
     }, { passive: false });
     // Also capture wheel on the document so zoom works even when pointer is outside canvas
     document.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       if (e.target === canvas || canvas.contains(e.target)) {
         e.preventDefault();
         this._zoomTarget += e.deltaY * -0.002;
@@ -195,6 +197,10 @@ export class Input {
     s.width = canvas.width;
     s.height = canvas.height;
     s.chase = this.chase;
+    // Ease the zoom toward its raw target once per frame. Exponential in time rather than a fixed
+    // per-frame fraction, so a wheel notch settles the same way at any frame rate.
+    this.zoom += (this._zoomTarget - this.zoom) * 0.25;
+    s.zoom = this.zoom;
     this.command();                 // refreshes s.cmd in place
     return s;
   }

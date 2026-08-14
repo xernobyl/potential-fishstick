@@ -130,21 +130,35 @@ export class ModelViewScene extends Scene {
   }
 
   update(rc) {
-    const { dt, camera } = rc;
+    const { dt, input, camera } = rc;
     this.prevSpin = this.spin;
     this.spin += dt * MODELVIEW.spinRate;
 
-    // A QUARTER TOP-DOWN VIEW: elevated, looking down and in. Placed rather than integrated, so
-    // switching models re-frames immediately instead of easing across the studio.
     const o = MODELVIEW.origin;
-    const dist = this.#radius() * MODELVIEW.distance;
-    const el = MODELVIEW.elevation;
-    // Offset in the model's own frame: back along -Z, up by the elevation. The model spins, so a fixed
-    // camera sees every side without the lighting following it around.
+    // Wheel/pinch zoom: `input.zoom` is an accumulated log-scale factor, so exp() turns it into a
+    // distance multiplier. Clamped so the camera cannot cross the model or fly to the stars.
+    const zoom = Math.exp(Math.min(1.8, Math.max(-2.3, input.zoom)));
+    const dist = this.#radius() * MODELVIEW.distance * zoom;
+
+    // ARCBALL, around the model. Dragging orbits the camera; idle holds the default quarter view.
+    // Yaw/pitch use the same pointer->angle mapping as the planetoid camera, so the feel matches,
+    // and start from the quarter view so the first drag is a nudge from there, not a jump.
+    const yawDefault = -Math.PI / 2;                 // behind the model, looking down -Z
+    const pitchDefault = MODELVIEW.elevation;
+    let yaw = yawDefault;
+    let pitch = pitchDefault;
+    if (input.everUsed) {
+      const sx = input.x / Math.max(1, input.width) - 0.5;
+      const sy = input.y / Math.max(1, input.height) - 0.5;
+      yaw += -sx * Math.PI * 2 * 1.6;
+      pitch += Math.min(1.2, Math.max(-1.2, sy * 2.2));
+    }
+
+    const cp = Math.cos(pitch);
     const pos = [
-      o[0],
-      o[1] + Math.sin(el) * dist,
-      o[2] - Math.cos(el) * dist,
+      o[0] + dist * cp * Math.cos(yaw),
+      o[1] + dist * Math.sin(pitch),
+      o[2] + dist * cp * Math.sin(yaw),
     ];
     const fwd = [o[0] - pos[0], o[1] - pos[1], o[2] - pos[2]];
     const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
