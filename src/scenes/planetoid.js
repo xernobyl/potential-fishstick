@@ -27,7 +27,7 @@ import { Ship } from '../scene/ship.js';
 import { Contrail } from '../scene/contrail.js';
 import { Railgun } from '../scene/railgun.js';
 import { Aurora } from '../scene/aurora.js';
-import { rectTube, concatMeshes } from '../scene/meshgen.js';
+import { rectTube, concatMeshes, splitHardEdges } from '../scene/meshgen.js';
 import { shipTree, SHIP_MESH } from '../scene/ship_sdf.js';
 import { satelliteBusTree, satellitePanelTree, SAT_MESH } from '../scene/satellite_sdf.js';
 import { compile, compileNormal, bounds } from '../scene/sdf/nodes.js';
@@ -35,6 +35,13 @@ import { resolutionForScreen } from '../scene/sdf/dualcontour.js';
 import { dualContourAdaptive } from '../scene/sdf/octree.js';
 import { RINGS, SATELLITES, SHIP, CONTRAIL, RAIL, AURORA, ringDims, wgslDefines }
   from '../scene/tuning.js';
+
+/**
+ * Crease angle for hard-edge normal splitting. Faces meeting at more than this angle get duplicated
+ * vertices with per-face normals (flat shading); gentler slopes keep their shared, smooth normals.
+ * 40° keeps the smoothUnion blends smooth while splitting genuine box/cylinder/cone creases.
+ */
+const HARD_EDGE_ANGLE = 40;
 
 /**
  * The ship's hull, contoured from its SDF into an LOD chain.
@@ -81,10 +88,12 @@ export function buildShipMesh() {
   }, compileNormal(tree));
 
   const out = levels.map((mesh, i) => {
+    // Split hard edges first: the face normals are scale-invariant under the uniform scale below.
+    const split = splitHardEdges(mesh, HARD_EDGE_ANGLE);
     // Body units -> world units. A uniform scale leaves normals unchanged, which is the whole reason
     // `scale` is uniform-only.
-    const positions = new Float32Array(mesh.positions.length);
-    for (let j = 0; j < positions.length; j++) positions[j] = mesh.positions[j] * SHIP_MESH.scale;
+    const positions = new Float32Array(split.positions.length);
+    for (let j = 0; j < positions.length; j++) positions[j] = split.positions[j] * SHIP_MESH.scale;
 
     // Through `concatMeshes` even though there is one object, rather than hand-rolling the ids and the
     // empty `extra`. It is the same three lines either way until it is not: the first version wrote them
@@ -93,9 +102,9 @@ export function buildShipMesh() {
     // together, so a mesh cannot arrive half-described.
     const level = concatMeshes([{
       positions,
-      normals: mesh.normals,
-      extra: new Float32Array(mesh.vertexCount * 4),
-      indices: mesh.indices,
+      normals: split.normals,
+      extra: new Float32Array(split.vertexCount * 4),
+      indices: split.indices,
     }]);
     // The budget this level was simplified to, in WORLD units — what the selector compares against.
     level.errorWorld = SHIP_MESH.lodErrors[i] * SHIP_MESH.scale;
@@ -125,11 +134,12 @@ export function buildSatelliteMesh() {
     const m = dualContourAdaptive(compile(tree), {
       bounds: b, resolution, error: SAT_MESH.error,
     }, compileNormal(tree));
+    const split = splitHardEdges(m, HARD_EDGE_ANGLE);
     return {
-      positions: m.positions,
-      normals: m.normals,
-      extra: new Float32Array(m.vertexCount * 4),
-      indices: m.indices,
+      positions: split.positions,
+      normals: split.normals,
+      extra: new Float32Array(split.vertexCount * 4),
+      indices: split.indices,
     };
   });
   satMeshCache = concatMeshes(parts);

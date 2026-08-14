@@ -298,3 +298,130 @@ export function interleave(data) {
   }
   return out;
 }
+
+/**
+ * Split shared vertices where faces meet at a hard angle, so creases shade FLAT.
+ *
+ * Dual contouring shares one vertex across a crease, so the single normal it carries smooths the
+ * lighting across the edge and the crease reads rounded — the geometry is sharp, the shading is not.
+ * This is the "hard edges by duplication" trick `box` and `revolveProfile` do by hand, generalised to
+ * any mesh: group each vertex's triangles by their geometric face normal, and where two faces meet at
+ * more than `angleDeg`, duplicate the vertex so each face keeps its own normal.
+ *
+ * Vertices whose triangles all face within `angleDeg` of each other are left untouched, so smooth
+ * blends keep their smooth normals — only genuine creases split.
+ *
+ * Zero-area triangles (which dual contouring keeps for watertightness) carry no orientation, so they
+ * join the first group at their vertex rather than forcing a split.
+ *
+ * Positions are copied verbatim (only normals change and vertices duplicate), so bounding spheres stay
+ * correct and the weave stays watertight.
+ *
+ * @param {{positions:Float32Array, normals:Float32Array, indices:Uint32Array, vertexCount?:number}} mesh
+ * @param {number} [angleDeg]  crease angle; faces meeting steeper than this split
+ * @returns {{positions:Float32Array, normals:Float32Array, indices:Uint32Array,
+ *            vertexCount:number, triangleCount:number}}
+ */
+export function splitHardEdges(mesh, angleDeg = 40) {
+  const { positions, normals, indices } = mesh;
+  const vertexCount = mesh.vertexCount ?? positions.length / 3;
+  const triCount = indices.length / 3;
+  const cosT = Math.cos(angleDeg * Math.PI / 180);
+
+  // Geometric face normal per triangle; (0,0,0) for zero-area triangles.
+  const faceN = new Float32Array(triCount * 3);
+  for (let t = 0; t < triCount; t++) {
+    const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+    const ux = positions[b * 3] - positions[a * 3];
+    const uy = positions[b * 3 + 1] - positions[a * 3 + 1];
+    const uz = positions[b * 3 + 2] - positions[a * 3 + 2];
+    const vx = positions[c * 3] - positions[a * 3];
+    const vy = positions[c * 3 + 1] - positions[a * 3 + 1];
+    const vz = positions[c * 3 + 2] - positions[a * 3 + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz);
+    if (l > 1e-12) { faceN[t * 3] = nx / l; faceN[t * 3 + 1] = ny / l; faceN[t * 3 + 2] = nz / l; }
+  }
+
+  // Which triangles use each vertex.
+  const vertTris = Array.from({ length: vertexCount }, () => []);
+  for (let t = 0; t < triCount; t++) {
+    vertTris[indices[t * 3]].push(t);
+    vertTris[indices[t * 3 + 1]].push(t);
+    vertTris[indices[t * 3 + 2]].push(t);
+  }
+
+  const newPos = [];
+  const newNor = [];
+  const cornerMap = new Int32Array(triCount * 3);   // each triangle corner -> new vertex index
+
+  const assignCorner = (t, corner, ni) => { cornerMap[t * 3 + corner] = ni; };
+
+  for (let v = 0; v < vertexCount; v++) {
+    const tris = vertTris[v];
+    // Greedy groups of NON-degenerate triangles, by face-normal angle.
+    const groups = [];                 // { tris:[], nx, ny, nz }
+    const degenerate = [];
+    for (const t of tris) {
+      const fx = faceN[t * 3], fy = faceN[t * 3 + 1], fz = faceN[t * 3 + 2];
+      if (fx === 0 && fy === 0 && fz === 0) { degenerate.push(t); continue; }
+      let placed = false;
+      for (const g of groups) {
+        if (fx * g.nx + fy * g.ny + fz * g.nz >= cosT) {
+          g.tris.push(t); g.nx += fx; g.ny += fy; g.nz += fz; placed = true; break;
+        }
+      }
+      if (!placed) groups.push({ tris: [t], nx: fx, ny: fy, nz: fz });
+    }
+
+    if (groups.length <= 1) {
+      // Smooth (or all-degenerate): keep the original vertex and its normal.
+      const ni = newPos.length / 3;
+      newPos.push(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]);
+      newNor.push(normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2]);
+      for (const t of tris) {
+        if (indices[t * 3] === v) assignCorner(t, 0, ni);
+        if (indices[t * 3 + 1] === v) assignCorner(t, 1, ni);
+        if (indices[t * 3 + 2] === v) assignCorner(t, 2, ni);
+      }
+    } else {
+      // Hard edge: one copy per group, each shaded by its group's face-normal average.
+      const groupVertex = [];
+      for (const g of groups) {
+        const l = Math.hypot(g.nx, g.ny, g.nz) || 1;
+        const ni = newPos.length / 3;
+        newPos.push(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]);
+        newNor.push(g.nx / l, g.ny / l, g.nz / l);
+        groupVertex.push(ni);
+        for (const t of g.tris) {
+          if (indices[t * 3] === v) assignCorner(t, 0, ni);
+          if (indices[t * 3 + 1] === v) assignCorner(t, 1, ni);
+          if (indices[t * 3 + 2] === v) assignCorner(t, 2, ni);
+        }
+      }
+      // Zero-area triangles carry no orientation; they join the first group.
+      for (const t of degenerate) {
+        if (indices[t * 3] === v) assignCorner(t, 0, groupVertex[0]);
+        if (indices[t * 3 + 1] === v) assignCorner(t, 1, groupVertex[0]);
+        if (indices[t * 3 + 2] === v) assignCorner(t, 2, groupVertex[0]);
+      }
+    }
+  }
+
+  const newIndices = new Uint32Array(indices.length);
+  for (let t = 0; t < triCount; t++) {
+    newIndices[t * 3] = cornerMap[t * 3];
+    newIndices[t * 3 + 1] = cornerMap[t * 3 + 1];
+    newIndices[t * 3 + 2] = cornerMap[t * 3 + 2];
+  }
+
+  return {
+    positions: new Float32Array(newPos),
+    normals: new Float32Array(newNor),
+    indices: newIndices,
+    vertexCount: newPos.length / 3,
+    triangleCount: triCount,
+  };
+}

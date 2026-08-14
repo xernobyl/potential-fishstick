@@ -10,8 +10,10 @@
 // arithmetic got for free and a buffer could get wrong: unit normals, no degenerate triangles, a
 // closed sweep with no seam, and consistent winding.
 
-import { rectTube, revolveProfile, box, concatMeshes, interleave, MESH_FIELDS, MESH_STRIDE_FLOATS }
-  from '../src/scene/meshgen.js';
+import { rectTube, revolveProfile, box, concatMeshes, interleave, splitHardEdges,
+         MESH_FIELDS, MESH_STRIDE_FLOATS } from '../src/scene/meshgen.js';
+import { box as sdfBox, compile, compileNormal, bounds } from '../src/scene/sdf/nodes.js';
+import { dualContour } from '../src/scene/sdf/dualcontour.js';
 
 const TAU = Math.PI * 2;
 let failed = 0;
@@ -254,6 +256,53 @@ check(tri.positions.length / 3 === 3 * (8 + 1) * 2, 'revolveProfile takes an arb
   // 2*(4*6 + 4*8 + 6*8) for half-extents 2,3,4 — exact, so a scaled or duplicated face shows up here.
   check(Math.abs(area - 208) < 1e-9, 'and the surface area is exactly right',
         `${area.toFixed(4)} vs 208`);
+}
+
+// ---- splitHardEdges: dual-contoured box turns flat ----
+//
+// Dual contouring SHARES vertices across a crease, so a box's 12 edges smooth-shade. splitHardEdges
+// must duplicate them so each face keeps its own normal — the same "hard edges by duplication" the
+// `box` generator above does by hand, but derived from the angle between geometric face normals.
+{
+  const tree = sdfBox([0.6, 0.6, 0.6]);
+  const raw = dualContour(compile(tree), { bounds: bounds(tree), resolution: 24 }, compileNormal(tree));
+  const split = splitHardEdges(raw, 40);
+
+  check(split.vertexCount > raw.vertexCount, 'splitting duplicates vertices at the creases',
+        `${raw.vertexCount} -> ${split.vertexCount}`);
+  check(split.triangleCount === raw.triangleCount, 'and keeps every triangle', `${split.triangleCount}`);
+
+  // Watertight AFTER welding by position: hard edges duplicate vertices on purpose, so the
+  // shared-edge metric does not apply directly. Welding collapses the duplicates and must then show
+  // a closed, manifold surface.
+  const key = (p) => p.map((x) => (Math.abs(x) < 1e-9 ? 0 : x).toFixed(5)).join(',');
+  const posKey = (v) => key([split.positions[v * 3], split.positions[v * 3 + 1], split.positions[v * 3 + 2]]);
+  const weld = new Map();
+  for (let v = 0; v < split.vertexCount; v++) if (!weld.has(posKey(v))) weld.set(posKey(v), weld.size);
+  const use = new Map();
+  for (let t = 0; t < split.indices.length; t += 3) {
+    for (let e = 0; e < 3; e++) {
+      const a = split.indices[t + e], b = split.indices[t + (e + 1) % 3];
+      const ka = weld.get(posKey(a)), kb = weld.get(posKey(b));
+      const k = ka < kb ? `${ka},${kb}` : `${kb},${ka}`;
+      use.set(k, (use.get(k) ?? 0) + 1);
+    }
+  }
+  let open = 0, nonManifold = 0;
+  for (const c of use.values()) { if (c === 1) open++; else if (c > 2) nonManifold++; }
+  check(open === 0 && nonManifold === 0, 'and stays closed and manifold once welded',
+        `boundary ${open}, nonManifold ${nonManifold}`);
+
+  // Flat faces: every vertex on the +X face must carry the +X normal, no diagonal averaging.
+  let badFace = 0;
+  for (let v = 0; v < split.vertexCount; v++) {
+    const x = split.positions[v * 3], y = split.positions[v * 3 + 1], z = split.positions[v * 3 + 2];
+    if (x > 0.6 - 0.1 && Math.abs(y) < 0.5 && Math.abs(z) < 0.5) {
+      const nx = split.normals[v * 3], ny = split.normals[v * 3 + 1], nz = split.normals[v * 3 + 2];
+      if (!(nx > 0.99 && Math.abs(ny) < 0.01 && Math.abs(nz) < 0.01)) badFace++;
+    }
+  }
+  check(badFace === 0, 'the +X face shades flat after splitting', `${badFace} off-normal vertices`);
 }
 
 process.exit(failed === 0 ? 0 : 1);
