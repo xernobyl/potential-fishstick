@@ -139,7 +139,9 @@ fn sdGoal(p : vec3f) -> f32 {
       let post = sdCylinderX(p - (a + vec3f(GOAL_H * 0.5, 0.0, 0.0)), GOAL_R, GOAL_H * 0.5);
       d = min(d, post);
     }
-    let a = vec3f(surfX(s * PITCH_L, 0.0), s * PITCH_L, 0.0);
+    // Crossbar at the posts' top height (the sphere curves, so the posts at
+    // z = +-GOAL_W sit lower than the centre — match them, not z = 0).
+    let a = vec3f(surfX(s * PITCH_L, GOAL_W), s * PITCH_L, 0.0);
     let bar = sdRoundBox(p - (a + vec3f(GOAL_H, 0.0, 0.0)), vec3f(GOAL_R, GOAL_R, GOAL_W), GOAL_R * 0.5);
     d = min(d, bar);
   }
@@ -283,7 +285,7 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   for (var g = 0; g < 2; g++) {
     let s = f32(g) * 2.0 - 1.0;
     let gy = s * PITCH_L;
-    let gx0 = surfX(PITCH_L, 0.0);
+    let gx0 = surfX(PITCH_L, GOAL_W);
     let nearPost = abs(abs(p.z) - GOAL_W) < GOAL_R * 3.0 && abs(p.y - gy) < GOAL_R * 3.0;
     let nearBar = abs(p.x - (gx0 + GOAL_H)) < GOAL_R * 3.0 && abs(p.z) < GOAL_W && abs(p.y - gy) < GOAL_R * 3.0;
     if ((nearPost || nearBar) && p.x > gx0 - 0.01 && p.x < gx0 + GOAL_H + 0.01) {
