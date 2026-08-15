@@ -1,12 +1,11 @@
 /**
- * The chibi football planet: a small raymarched world — a pitch, a running track,
- * grandstands and a bouncing football — with cartoon PBR and corner spotlights.
+ * The chibi grass planet: a small raymarched world covered in grass — rolling
+ * hills and a field of blades, adapted from David Hoskins' "Rolling hills".
  *
- * A SELF-CONTAINED MARCH. Unlike the planetoid it does not share `sdf.wgsl` /
- * `shade.wgsl`: the whole field, material and lighting live in `chibi.wgsl`, so
- * this scene is a drop-in that touches nothing else in the march. It still
- * reuses the entire shared post chain — TAA, bloom, flare, grade — for free,
- * because it produces the same depth-tagged scene output every scene does.
+ * A SELF-CONTAINED MARCH. The whole field, material and lighting live in
+ * `chibi.wgsl`, so this scene is a drop-in that touches nothing else in the
+ * march. It still reuses the entire shared post chain — TAA, bloom, flare,
+ * grade — for free.
  */
 
 import { Scene } from './scene.js';
@@ -20,7 +19,7 @@ const DUMMY_SHIP = () => ({
 });
 
 export class ChibiScene extends Scene {
-  static label = 'chibi football';
+  static label = 'chibi planet';
 
   constructor(gpu, targets, shaders) {
     super();
