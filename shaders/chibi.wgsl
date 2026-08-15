@@ -3,10 +3,11 @@
 // camera, a running track, terraced grandstands, floodlights, goal nets and a
 // bouncing football. Neo-retro cartoon PBR.
 //
-// The pitch is a material region on the sphere (not a platform). Grass elsewhere
-// is rolling hills (low-frequency fbm) plus a Voronoi blade field, adapted from
-// David Hoskins' "Rolling hills" (Shadertoy Xsf3zX). A per-blade normal tilt
-// gives the surface a furry, volumetric read.
+// The pitch is a material region on the sphere (not a platform). Its LONG side
+// runs along Y (north-south on screen, goals at top and bottom) and spans the
+// planet's hemisphere; its short side runs along Z. Grass elsewhere is rolling
+// hills (fbm) plus a Voronoi blade field, adapted from David Hoskins' "Rolling
+// hills" (Shadertoy Xsf3zX), with a per-blade normal tilt for volume.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -15,23 +16,22 @@
 
 // ---- geometry constants ---------------------------------------------------
 //
-// The field sits on the +X pole, facing the default camera; its long side runs
-// along Z (horizontal on screen), its short side along Y (vertical). The field's
-// length is half the planet's diameter.
+// The field sits on the +X pole (facing the default camera). Length along Y
+// (goal to goal, north-south), width along Z (sideline to sideline, east-west).
 
 const CR       : f32 = 1.0;     // planet radius
-const PITCH_L  : f32 = 0.50;    // pitch half-LENGTH, along Z (goal to goal)
-const PITCH_W  : f32 = 0.32;    // pitch half-WIDTH, along Y (sideline to sideline)
+const PITCH_L  : f32 = 0.92;    // pitch half-LENGTH, along Y (goal to goal)
+const PITCH_W  : f32 = 0.44;    // pitch half-WIDTH, along Z (sideline to sideline)
 const TRACK_W  : f32 = 0.07;    // running-track width
 const SEAT_W   : f32 = 0.12;    // grandstand tier depth
 const SEAT_H   : f32 = 0.05;    // tier rise
 const FB_R     : f32 = 0.05;    // football radius
-const POST_H   : f32 = 0.12;    // goal height
+const POST_H   : f32 = 0.13;    // goal height
 const POST_R   : f32 = 0.009;   // goal post thickness
 const POLE_H   : f32 = 0.45;    // floodlight pole height
 const POLE_R   : f32 = 0.013;   // floodlight pole radius
 const HEAD_R   : f32 = 0.038;   // floodlight head radius
-const LINE_W   : f32 = 0.009;   // pitch line half-width
+const LINE_W   : f32 = 0.01;    // pitch line half-width
 
 // ---- primitives (iq formulations; smin comes from common.wgsl) ------------
 
@@ -61,7 +61,6 @@ fn hash22(p : vec2f) -> vec2f {
   return fract((p3.xx + p3.yz) * p3.zy);
 }
 
-/// 2D Voronoi: (blade density 0..~0.4, random cell id).
 fn voronoi2(x : vec2f) -> vec2f {
   let p = floor(x);
   let f = fract(x);
@@ -78,12 +77,10 @@ fn voronoi2(x : vec2f) -> vec2f {
   return vec2f(max(0.4 - sqrt(res), 0.0), id);
 }
 
-/// Rolling hills: a low-frequency fbm, subtle so the pitch stays level.
 fn grassHills(dir : vec3f) -> f32 {
   return (fbm3(dir * 3.5) - 0.5) * 0.05;
 }
 
-/// Grass colour: hill-shaded green, with lighter Voronoi blades and pale seed tips.
 fn grassColour(dir : vec3f) -> vec3f {
   let uv = dir.yz * 26.0;
   let v = voronoi2(uv);
@@ -100,7 +97,7 @@ fn grassColour(dir : vec3f) -> vec3f {
 fn footballPos() -> vec3f {
   let t = frame.camPos.w;
   let bounce = abs(sin(t * 2.1));
-  return vec3f(CR + FB_R + 0.16 * bounce, 0.10 * cos(t * 0.83), 0.14 * sin(t * 1.1));
+  return vec3f(CR + FB_R + 0.18 * bounce, 0.16 * sin(t * 1.1), 0.10 * cos(t * 0.83));
 }
 
 fn mapBody(p : vec3f) -> f32 {
@@ -108,45 +105,46 @@ fn mapBody(p : vec3f) -> f32 {
 
   // The planet itself, with rolling-hill grass everywhere EXCEPT the field.
   var d = length(p) - CR;
-  let onField = p.x > 0.7 && abs(p.z) < PITCH_L && abs(p.y) < PITCH_W;
+  let onField = p.x > 0.0 && abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
   if (!onField) {
     d += grassHills(dir);
   }
 
-  // Terraced grandstands on the two SIDELINES (y = +-PITCH_W): a staircase.
+  // Terraced grandstands on the two SIDELINES (z = +-PITCH_W): a staircase
+  // stepping outward in Z and upward in X (off the field normal).
   for (var i = 0; i < 4; i++) {
     let fi = f32(i);
-    let y = PITCH_W + TRACK_W + SEAT_W * (fi + 0.5);
+    let z = PITCH_W + TRACK_W + SEAT_W * (fi + 0.5);
     let x = CR - 0.04 + SEAT_H * (fi + 0.5);
-    d = smin(d, sdBox(p - vec3f(x, y, 0.0), vec3f(SEAT_H * 0.5, SEAT_W * 0.5, PITCH_L + TRACK_W)), 0.02);
-    d = smin(d, sdBox(p - vec3f(x, -y, 0.0), vec3f(SEAT_H * 0.5, SEAT_W * 0.5, PITCH_L + TRACK_W)), 0.02);
+    d = smin(d, sdBox(p - vec3f(x, 0.0, z), vec3f(SEAT_H * 0.5, PITCH_L + TRACK_W, SEAT_W * 0.5)), 0.02);
+    d = smin(d, sdBox(p - vec3f(x, 0.0, -z), vec3f(SEAT_H * 0.5, PITCH_L + TRACK_W, SEAT_W * 0.5)), 0.02);
   }
 
-  // Goal frames (posts + crossbar) and a wire net at each END (z = +-PITCH_L).
+  // Goal frames (posts + crossbar) and a wire net at each END (y = +-PITCH_L).
   for (var g = 0; g < 2; g++) {
     let s = f32(g) * 2.0 - 1.0;
-    let gx = PITCH_W * 0.6;
-    let gy = CR - 0.02 + POST_H;
+    let gz = PITCH_W * 0.6;                                  // goal mouth half-width (along Z)
+    let gx = CR - 0.02 + POST_H;                             // crossbar height (along X)
     for (var pi = 0; pi < 2; pi++) {
-      let px = f32(pi) * 2.0 - 1.0;
-      let post = sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, px * gx, s * PITCH_L),
+      let pz = f32(pi) * 2.0 - 1.0;
+      let post = sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, s * PITCH_L, pz * gz),
                             vec3f(POST_H * 0.5, POST_R, POST_R), POST_R * 0.5);
       d = min(d, post);
     }
-    let bar = sdRoundBox(p - vec3f(gy, 0.0, s * PITCH_L),
-                         vec3f(POST_R, gx, POST_R), POST_R * 0.5);
+    let bar = sdRoundBox(p - vec3f(gx, s * PITCH_L, 0.0),
+                         vec3f(POST_R, POST_R, gz), POST_R * 0.5);
     d = min(d, bar);
 
-    let netZ = s * (PITCH_L + 0.015);
+    let netY = s * (PITCH_L + 0.015);
     for (var vw = -3; vw <= 3; vw++) {
-      let wy = f32(vw) / 3.0 * gx;
-      d = min(d, sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, wy, netZ),
+      let wz = f32(vw) / 3.0 * gz;
+      d = min(d, sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, netY, wz),
                             vec3f(POST_H * 0.5, 0.004, 0.004), 0.002));
     }
     for (var hw = 1; hw <= 4; hw++) {
       let wx = CR - 0.02 + POST_H * f32(hw) / 4.0;
-      d = min(d, sdRoundBox(p - vec3f(wx, 0.0, netZ),
-                            vec3f(0.004, gx, 0.004), 0.002));
+      d = min(d, sdRoundBox(p - vec3f(wx, netY, 0.0),
+                            vec3f(0.004, 0.004, gz), 0.002));
     }
   }
 
@@ -154,7 +152,7 @@ fn mapBody(p : vec3f) -> f32 {
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(CR - 0.05, sy * (PITCH_W + TRACK_W + 0.05), sz * (PITCH_L + TRACK_W + 0.05));
+    let base = vec3f(CR - 0.05, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
     let pole = sdCylinderX(p - (base + vec3f(POLE_H * 0.5, 0.0, 0.0)), POLE_R, POLE_H * 0.5);
     d = min(d, pole);
     let head = sdSphere(p - (base + vec3f(POLE_H, 0.0, 0.0)), HEAD_R);
@@ -195,8 +193,8 @@ fn cornerSpotlights(p : vec3f, n : vec3f) -> vec3f {
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let lightPos = vec3f(CR + POLE_H, sy * (PITCH_W + TRACK_W + 0.05),
-                         sz * (PITCH_L + TRACK_W + 0.05));
+    let lightPos = vec3f(CR + POLE_H, sy * (PITCH_L + TRACK_W + 0.05),
+                         sz * (PITCH_W + TRACK_W + 0.05));
     let L = lightPos - p;
     let d = length(L);
     let l = L / d;
@@ -218,18 +216,18 @@ fn soccerPattern(n : vec3f) -> f32 {
   return step(0.62, hash13(id)) * blob;
 }
 
-fn pitchLines(z : f32, y : f32) -> f32 {
-  let bz = abs(z) - PITCH_L;
-  let by = abs(y) - PITCH_W;
-  let boundary = select(0.0, 1.0, max(abs(bz), abs(by)) < LINE_W);
-  let halfway = select(0.0, 1.0, abs(z) < LINE_W);
-  let circle = select(0.0, 1.0, abs(length(vec2f(z, y)) - 0.07) < LINE_W);
-  let spot = select(0.0, 1.0, length(vec2f(z, y)) < LINE_W);
-  let penL = PITCH_L - 0.15;
+fn pitchLines(y : f32, z : f32) -> f32 {
+  let by = abs(y) - PITCH_L;
+  let bz = abs(z) - PITCH_W;
+  let boundary = select(0.0, 1.0, max(abs(by), abs(bz)) < LINE_W);
+  let halfway = select(0.0, 1.0, abs(y) < LINE_W);
+  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.08) < LINE_W);
+  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W);
+  let penL = PITCH_L - 0.17;
   let penW = PITCH_W * 0.55;
-  let inPen = abs(y) < penW && abs(z) > penL && abs(z) < PITCH_L;
-  let penEdge = select(0.0, 1.0, inPen && (abs(abs(z) - penL) < LINE_W
-                         || abs(abs(y) - penW) < LINE_W || abs(abs(z) - PITCH_L) < LINE_W));
+  let inPen = abs(z) < penW && abs(y) > penL && abs(y) < PITCH_L;
+  let penEdge = select(0.0, 1.0, inPen && (abs(abs(y) - penL) < LINE_W
+                         || abs(abs(z) - penW) < LINE_W || abs(abs(y) - PITCH_L) < LINE_W));
   return max(boundary, max(max(halfway, circle), max(spot, penEdge)));
 }
 
@@ -245,39 +243,39 @@ fn material(p : vec3f) -> vec3f {
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let head = vec3f(CR + POLE_H, sy * (PITCH_W + TRACK_W + 0.05), sz * (PITCH_L + TRACK_W + 0.05));
+    let head = vec3f(CR + POLE_H, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
     if (length(p - head) < HEAD_R * 1.4) { return vec3f(1.0, 0.97, 0.88); }
   }
 
-  let onGoal = abs(abs(p.z) - PITCH_L) < 0.02 && abs(p.y) < PITCH_W * 0.62
+  let onGoal = abs(abs(p.y) - PITCH_L) < 0.02 && abs(p.z) < PITCH_W * 0.62
                && p.x < CR + POST_H + 0.02 && p.x > CR - 0.08;
   if (onGoal) { return vec3f(0.9, 0.92, 0.95); }
 
   for (var c2 = 0; c2 < 4; c2++) {
     let sy = f32(c2 & 1) * 2.0 - 1.0;
     let sz = f32((c2 >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(CR - 0.05, sy * (PITCH_W + TRACK_W + 0.05), sz * (PITCH_L + TRACK_W + 0.05));
+    let base = vec3f(CR - 0.05, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
     if (length((p - base).yz) < POLE_R * 1.5 && p.x > CR - 0.08 && p.x < CR + POLE_H) {
       return vec3f(0.25, 0.26, 0.28);
     }
   }
 
-  if (abs(p.y) > PITCH_W + TRACK_W + SEAT_W * 0.3 && abs(p.z) < PITCH_L + TRACK_W
+  if (abs(p.z) > PITCH_W + TRACK_W + SEAT_W * 0.3 && abs(p.y) < PITCH_L + TRACK_W
       && p.x > CR - 0.08 && p.x < CR + SEAT_H * 4.0) {
     return vec3f(0.62, 0.60, 0.55);
   }
 
   // The pitch: a region on the sphere, green with white lines.
-  if (p.x > 0.7 && abs(p.z) < PITCH_L + 0.02 && abs(p.y) < PITCH_W + 0.02) {
-    let line = pitchLines(p.z, p.y);
+  if (p.x > 0.0 && abs(p.y) < PITCH_L + 0.02 && abs(p.z) < PITCH_W + 0.02) {
+    let line = pitchLines(p.y, p.z);
     let base = mix(vec3f(0.10, 0.42, 0.16), vec3f(0.16, 0.52, 0.22), fbm3(dir * 10.0));
     return mix(base, vec3f(0.92, 0.94, 0.96), line);
   }
 
   // The running track: a rectangular ring around the pitch.
-  let inOuter = abs(p.y) < PITCH_W + TRACK_W && abs(p.z) < PITCH_L + TRACK_W;
-  let inPitch = abs(p.y) < PITCH_W && abs(p.z) < PITCH_L;
-  if (p.x > 0.7 && inOuter && !inPitch) {
+  let inOuter = abs(p.y) < PITCH_L + TRACK_W && abs(p.z) < PITCH_W + TRACK_W;
+  let inPitch = abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
+  if (p.x > 0.0 && inOuter && !inPitch) {
     return vec3f(0.55, 0.28, 0.20);
   }
 
@@ -290,11 +288,9 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let dir = normalize(p + 1e-6);
   let base = material(p);
 
-  // Grass blade normal tilt: perturb the normal in the tangent plane where the
-  // Voronoi blade field is dense, so each blade catches light at its own angle.
-  // Gives the surface a furry, volumetric read instead of flat plastic. Skipped
-  // on the pitch so it stays level.
-  let onField = p.x > 0.7 && abs(p.z) < PITCH_L && abs(p.y) < PITCH_W;
+  // Grass blade normal tilt, in the tangent plane, where the Voronoi blade
+  // field is dense. Skipped on the pitch so it stays level.
+  let onField = p.x > 0.0 && abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
   if (!onField) {
     let bv = voronoi2(dir.yz * 26.0);
     let a = hash11(bv.y * 13.7) * 6.2831853;
@@ -311,9 +307,8 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   var col = base * (vec3f(0.16) + SUN1_COL * diff);
   col += base * cornerSpotlights(p, n);
 
-  // Specular: kept only off the grass (grass is matte), so the pitch and ball
-  // get a crisp retro highlight and the turf stays diffuse.
-  let onGrass = !onField && p.x > 0.7;
+  // Specular off the grass (matte turf); crisp on pitch and ball.
+  let onGrass = !onField && p.x > 0.0;
   let spec = select(0.0, pow(max(dot(n, normalize(SUN1_DIR + v)), 0.0), 48.0), !onGrass);
   col += spec * SUN1_COL * 0.6;
 
