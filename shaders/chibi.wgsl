@@ -1,11 +1,7 @@
 // ---------------------------------------------------------------------------
-// Chibi planet: a small raymarched world — a football pitch, a running track,
-// tiered grandstands and a bouncing football. Neo-retro cartoon PBR.
-//
-// Everything is one self-contained field so the scene is a drop-in that needs
-// no march changes elsewhere. It reuses the shared sky (`background`) and the
-// sun directions/colours from tuning, then layers four corner spotlights with
-// soft falloff and a soft sphere shadow from the football.
+// Chibi planet: a small raymarched world — a football pitch on a grassy planet,
+// a running track, terraced grandstands, floodlights, goal nets and a bouncing
+// football. Neo-retro cartoon PBR.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -13,18 +9,25 @@
 //!include "sky.wgsl"
 
 // ---- geometry constants ---------------------------------------------------
+//
+// The pitch's LONG side runs along Z so it reads horizontal from the default
+// camera (which sits on the +X side looking at the planet's north pole).
 
 const CR       : f32 = 1.0;     // planet radius
-const FIELD_L  : f32 = 0.33;    // pitch half-length — 1/3 of the planet's diameter
-const FIELD_W  : f32 = 0.21;    // pitch half-width
-const TRACK_W  : f32 = 0.08;    // running-track width
-const SEAT_W   : f32 = 0.14;    // grandstand depth
-const SEAT_H   : f32 = 0.05;    // step height per tier
-const FB_R     : f32 = 0.055;   // football radius
-const POST_H   : f32 = 0.09;    // goalpost height
-const POST_R   : f32 = 0.008;   // goalpost thickness
+const PITCH_L  : f32 = 0.33;    // pitch half-LENGTH, along Z (goal to goal)
+const PITCH_W  : f32 = 0.21;    // pitch half-WIDTH, along X (sideline to sideline)
+const TRACK_W  : f32 = 0.07;    // running-track width
+const SEAT_W   : f32 = 0.12;    // grandstand tier depth
+const SEAT_H   : f32 = 0.05;    // tier rise
+const FB_R     : f32 = 0.05;    // football radius
+const POST_H   : f32 = 0.10;    // goal height
+const POST_R   : f32 = 0.008;   // goal post thickness
+const POLE_H   : f32 = 0.40;    // floodlight pole height
+const POLE_R   : f32 = 0.012;   // floodlight pole radius
+const HEAD_R   : f32 = 0.035;   // floodlight head radius
+const LINE_W   : f32 = 0.008;   // pitch line half-width
 
-// ---- primitives (iq formulations) -----------------------------------------
+// ---- primitives (iq formulations; smin comes from common.wgsl) ------------
 
 fn sdSphere(p : vec3f, r : f32) -> f32 { return length(p) - r; }
 
@@ -38,7 +41,10 @@ fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
 }
 
-// `smin` comes from common.wgsl.
+fn sdCylinder(p : vec3f, r : f32, hh : f32) -> f32 {
+  let d = vec2f(length(p.xz) - r, abs(p.y) - hh);
+  return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
+}
 
 /// A flat rounded-rectangle RING (the running track): the shell between two rounded boxes.
 fn sdRingFlat(p : vec3f, halfExtents : vec3f, thickness : f32, r : f32) -> f32 {
@@ -59,53 +65,78 @@ fn mapBody(p : vec3f) -> f32 {
   // The planet itself.
   var d = sdSphere(p, CR);
 
-  // The pitch: a flat plateau tangent to the north pole.
-  let field = sdBox(p - vec3f(0.0, CR - 0.02, 0.0), vec3f(FIELD_L, 0.02, FIELD_W));
-  d = smin(d, field, 0.05);
+  // The pitch: a flat rectangle, flush with the north pole, blended into the
+  // planet with a wide smin so it reads as a flat field on a round world rather
+  // than a board glued on top.
+  let field = sdBox(p - vec3f(0.0, CR - 0.006, 0.0), vec3f(PITCH_W, 0.006, PITCH_L));
+  d = smin(d, field, 0.30);
 
-  // The running track: a flat oval ring around the pitch, at the sphere surface.
+  // The running track: a flat oval ring around the pitch.
   let track = sdRingFlat(p - vec3f(0.0, CR - 0.012, 0.0),
-                         vec3f(FIELD_L + TRACK_W * 0.5, 0.012, FIELD_W + TRACK_W * 0.5),
-                         TRACK_W, 0.02);
+                         vec3f(PITCH_W + TRACK_W * 0.6, 0.012, PITCH_L + TRACK_W * 0.6),
+                         TRACK_W, 0.03);
   d = smin(d, track, 0.03);
 
-  // Grandstands: three tiers on each LONG side (traditional terrace, not a bowl).
-  for (var i = 0; i < 3; i++) {
+  // Terraced grandstands on the two SIDELINES (x = +-PITCH_W): each tier steps
+  // outward and upward, a staircase rather than a stacked box.
+  for (var i = 0; i < 4; i++) {
     let fi = f32(i);
-    let seat = sdBox(p - vec3f(FIELD_L + TRACK_W + SEAT_W * 0.5, CR - 0.01 + SEAT_H * (fi + 0.5), 0.0),
-                     vec3f(SEAT_W * 0.5, SEAT_H * 0.5, FIELD_W + TRACK_W));
-    d = smin(d, seat, 0.02);
-    let seat2 = sdBox(p - vec3f(-(FIELD_L + TRACK_W + SEAT_W * 0.5), CR - 0.01 + SEAT_H * (fi + 0.5), 0.0),
-                      vec3f(SEAT_W * 0.5, SEAT_H * 0.5, FIELD_W + TRACK_W));
-    d = smin(d, seat2, 0.02);
+    let x = PITCH_W + TRACK_W + SEAT_W * (fi + 0.5);
+    let y = CR - 0.01 + SEAT_H * (fi + 0.5);
+    d = smin(d, sdBox(p - vec3f(x, y, 0.0), vec3f(SEAT_W * 0.5, SEAT_H * 0.5, PITCH_L + TRACK_W)), 0.02);
+    d = smin(d, sdBox(p - vec3f(-x, y, 0.0), vec3f(SEAT_W * 0.5, SEAT_H * 0.5, PITCH_L + TRACK_W)), 0.02);
   }
 
-  // Goal frames: two posts and a crossbar at each end of the pitch.
+  // Goal frames (posts + crossbar) at each END (z = +-PITCH_L), white.
   for (var g = 0; g < 2; g++) {
-    let s = f32(g) * 2.0 - 1.0;                              // +1 / -1 end
-    let gx = FIELD_L * 0.45;                                 // goal mouth half-width
-    let gy = CR - 0.02 + POST_H;                             // crossbar height
+    let s = f32(g) * 2.0 - 1.0;
+    let gx = PITCH_W * 0.55;                                // goal mouth half-width
+    let gy = CR - 0.01 + POST_H;
     for (var pi = 0; pi < 2; pi++) {
       let px = f32(pi) * 2.0 - 1.0;
-      let post = sdRoundBox(p - vec3f(px * gx, CR - 0.02 + POST_H * 0.5, s * FIELD_W),
+      let post = sdRoundBox(p - vec3f(px * gx, CR - 0.01 + POST_H * 0.5, s * PITCH_L),
                             vec3f(POST_R, POST_H * 0.5, POST_R), POST_R * 0.5);
       d = min(d, post);
     }
-    let bar = sdRoundBox(p - vec3f(0.0, gy, s * FIELD_W),
+    let bar = sdRoundBox(p - vec3f(0.0, gy, s * PITCH_L),
                          vec3f(gx, POST_R, POST_R), POST_R * 0.5);
     d = min(d, bar);
+
+    // Net: a coarse grid of thin wires behind the goal line.
+    let netZ = s * (PITCH_L + 0.012);
+    for (var vw = -3; vw <= 3; vw++) {
+      let wx = f32(vw) / 3.0 * gx;
+      let wire = sdRoundBox(p - vec3f(wx, CR - 0.01 + POST_H * 0.5, netZ),
+                            vec3f(0.004, POST_H * 0.5, 0.004), 0.002);
+      d = min(d, wire);
+    }
+    for (var hw = 1; hw <= 4; hw++) {
+      let wy = CR - 0.01 + POST_H * f32(hw) / 4.0;
+      let wire = sdRoundBox(p - vec3f(0.0, wy, netZ),
+                            vec3f(gx, 0.004, 0.004), 0.002);
+      d = min(d, wire);
+    }
   }
 
-  // The football: a small sphere that bounces on the pitch.
-  let fb = sdSphere(p - footballPos(), FB_R);
-  d = min(d, fb);
+  // Four floodlight poles at the pitch corners, with a bright head.
+  for (var c = 0; c < 4; c++) {
+    let sx = f32(c & 1) * 2.0 - 1.0;
+    let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
+    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.02, sz * (PITCH_L + TRACK_W + 0.04));
+    let pole = sdCylinder(p - (base + vec3f(0.0, POLE_H * 0.5, 0.0)), POLE_R, POLE_H * 0.5);
+    d = min(d, pole);
+    let head = sdSphere(p - (base + vec3f(0.0, POLE_H, 0.0)), HEAD_R);
+    d = min(d, head);
+  }
+
+  // The football.
+  d = min(d, sdSphere(p - footballPos(), FB_R));
 
   return d;
 }
 
 fn bodyBound() -> f32 {
-  // Planet radius plus the tallest feature (a grandstand tier) and the football's apex.
-  return CR + SEAT_H * 3.0 + 0.25;
+  return CR + POLE_H + HEAD_R + 0.2;
 }
 
 fn calcNormal(p : vec3f) -> vec3f {
@@ -117,8 +148,7 @@ fn calcNormal(p : vec3f) -> vec3f {
 
 // ---- shading --------------------------------------------------------------
 
-/// Soft shadow from the football only — cheap, analytic, and the one moving thing that
-/// occludes the lights. Returns 0 (shadowed) .. 1 (lit).
+/// Soft shadow from the football only. Returns 0 (shadowed) .. 1 (lit).
 fn footballShadow(p : vec3f, l : vec3f, lightDist : f32) -> f32 {
   let fp = footballPos();
   let L = fp - p;
@@ -128,49 +158,117 @@ fn footballShadow(p : vec3f, l : vec3f, lightDist : f32) -> f32 {
   return smoothstep(FB_R * FB_R, FB_R * FB_R * 0.25, d2);
 }
 
-/// The four corner spotlights: poles above the pitch corners, pointing down at the centre.
+/// The four corner floodlights, aligned with the poles.
 fn cornerSpotlights(p : vec3f, n : vec3f) -> vec3f {
   var acc = vec3f(0.0);
   let centre = vec3f(0.0, CR, 0.0);
   for (var c = 0; c < 4; c++) {
     let sx = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let lightPos = vec3f(sx * (FIELD_L + 0.06), CR + 0.42, sz * (FIELD_W + 0.06));
+    let lightPos = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR + POLE_H,
+                         sz * (PITCH_L + TRACK_W + 0.04));
     let L = lightPos - p;
     let d = length(L);
     let l = L / d;
-    let att = 1.0 / (1.0 + 0.35 * d * d);            // inverse-square-ish, tunable
-    let aim = normalize(centre - lightPos);           // cone axis points at the pitch centre
-    let spot = smoothstep(0.35, 0.85, dot(l, aim));   // soft cone edge
+    let att = 1.0 / (1.0 + 0.30 * d * d);
+    let aim = normalize(centre - lightPos);
+    let spot = smoothstep(0.30, 0.80, dot(l, aim));
     let diff = max(dot(n, l), 0.0);
     let shadow = footballShadow(p, l, d);
-    acc += vec3f(1.0, 0.96, 0.86) * att * spot * diff * shadow;
+    acc += vec3f(1.0, 0.97, 0.88) * att * spot * diff * shadow;
   }
   return acc;
 }
 
-/// The cartoon material colour, decided by WHERE the hit landed (a cheap, deliberate fake).
+/// Grass: a green base modulated by fbm, so it reads as turf rather than a flat colour.
+fn grassColour(p : vec3f) -> vec3f {
+  let n = fbm3(p * 6.0);
+  return mix(vec3f(0.16, 0.42, 0.16), vec3f(0.30, 0.58, 0.22), n);
+}
+
+/// A patchy panel pattern for the football (pentagon-ish blobs).
+fn soccerPattern(n : vec3f) -> f32 {
+  let p = n * 5.0;
+  let id = floor(p);
+  let f = fract(p) - 0.5;
+  let blob = smoothstep(0.45, 0.18, length(f));
+  return step(0.62, hash13(id)) * blob;
+}
+
+/// The pitch markings, drawn as white lines in the material. Returns 1 on a line, 0 off.
+fn pitchLines(x : f32, z : f32) -> f32 {
+  // Boundary rectangle, halfway line, centre circle, centre spot, two penalty-area outlines.
+  let bx = abs(x) - PITCH_W;
+  let bz = abs(z) - PITCH_L;
+  let boundary = max(abs(bx), abs(bz)) < LINE_W ? 1.0 : 0.0;
+  let halfway = abs(z) < LINE_W ? 1.0 : 0.0;
+  let circle = abs(length(vec2f(x, z)) - 0.06) < LINE_W ? 1.0 : 0.0;
+  let spot = length(vec2f(x, z)) < LINE_W ? 1.0 : 0.0;
+  // penalty area: a rectangle outline at each end
+  let penL = PITCH_L - 0.13;
+  let penW = PITCH_W * 0.55;
+  let inPen = abs(x) < penW && abs(z) > penL && abs(z) < PITCH_L;
+  let penEdge = inPen && (abs(abs(z) - penL) < LINE_W || abs(abs(x) - penW) < LINE_W
+                          || abs(abs(z) - PITCH_L) < LINE_W) ? 1.0 : 0.0;
+  return max(boundary, max(max(halfway, circle), max(spot, penEdge)));
+}
+
+/// The cartoon material, decided by WHERE the hit landed.
 fn material(p : vec3f) -> vec3f {
   let fp = footballPos();
-  if (length(p - fp) < FB_R * 1.4) { return vec3f(0.96, 0.97, 1.0); }   // football: white
-  // pitch
-  if (p.y > CR - 0.03 && abs(p.x) < FIELD_L + 0.02 && abs(p.z) < FIELD_W + 0.02) {
-    // alternating mowed stripes, a cartoon touch
-    let stripe = step(0.0, sin(p.x * 40.0));
-    return mix(vec3f(0.10, 0.42, 0.16), vec3f(0.16, 0.52, 0.22), stripe);
+
+  // football
+  if (length(p - fp) < FB_R * 1.4) {
+    let n = (p - fp) / FB_R;
+    let pat = soccerPattern(n);
+    return mix(vec3f(0.97), vec3f(0.10, 0.10, 0.12), pat);
   }
+
+  // floodlight heads: emissive warm white
+  for (var c = 0; c < 4; c++) {
+    let sx = f32(c & 1) * 2.0 - 1.0;
+    let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
+    let head = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR + POLE_H,
+                     sz * (PITCH_L + TRACK_W + 0.04));
+    if (length(p - head) < HEAD_R * 1.4) { return vec3f(1.0, 0.97, 0.88); }
+  }
+
+  // goal frame: white (posts + crossbar)
+  let onGoal = (abs(abs(p.z) - PITCH_L) < POST_R * 2.0 && abs(p.x) < PITCH_W * 0.6
+                && p.y < CR + POST_H && p.y > CR - 0.02);
+  if (onGoal) { return vec3f(0.9, 0.92, 0.95); }
+
+  // pitch (flat field region)
+  if (p.y > CR - 0.03 && abs(p.x) < PITCH_W + 0.02 && abs(p.z) < PITCH_L + 0.02) {
+    let line = pitchLines(p.x, p.z);
+    let base = grassColour(p);
+    return mix(base, vec3f(0.92, 0.94, 0.96), line);
+  }
+
   // running track
-  let trackOuter = max(FIELD_L, FIELD_W) + TRACK_W;
-  if (p.y > CR - 0.03 && max(abs(p.x), abs(p.z)) < trackOuter + 0.05
-      && !(abs(p.x) < FIELD_L && abs(p.z) < FIELD_W)) {
-    return vec3f(0.55, 0.28, 0.20);                                   // cinder red
+  let outer = PITCH_W + TRACK_W;
+  if (p.y > CR - 0.03 && max(abs(p.x), abs(p.z)) < outer + 0.06
+      && !(abs(p.x) < PITCH_W && abs(p.z) < PITCH_L)) {
+    return vec3f(0.55, 0.28, 0.20);
   }
-  // grandstands
-  if (p.y > CR - 0.03 && (abs(p.x) > FIELD_L + TRACK_W * 0.5)) {
-    return vec3f(0.62, 0.60, 0.55);                                   // pale stone
+
+  // grandstands: pale stone, terraced
+  if (p.y > CR - 0.03 && (abs(p.x) > PITCH_W + TRACK_W * 0.5)) {
+    return vec3f(0.62, 0.60, 0.55);
   }
+
+  // floodlight poles: dark grey
+  for (var c2 = 0; c2 < 4; c2++) {
+    let sx = f32(c2 & 1) * 2.0 - 1.0;
+    let sz = f32((c2 >> 1) & 1) * 2.0 - 1.0;
+    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.02, sz * (PITCH_L + TRACK_W + 0.04));
+    if (length((p - base).xz) < POLE_R * 1.5 && p.y > CR - 0.03 && p.y < CR + POLE_H) {
+      return vec3f(0.25, 0.26, 0.28);
+    }
+  }
+
   // the rest of the planet: grass
-  return vec3f(0.22, 0.50, 0.26);
+  return grassColour(p);
 }
 
 fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
@@ -178,24 +276,23 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let v = -rd;
   let base = material(p);
 
-  // Sun key light, with a soft shadow from the football.
+  // Sun key light, soft shadow from the football.
   let sunSh = footballShadow(p, SUN1_DIR, 1e3);
   let diff = max(dot(n, SUN1_DIR), 0.0) * sunSh;
 
-  // Ambient: keep it lifted so the cartoon reads bright, not muddy.
   var col = base * (vec3f(0.16) + SUN1_COL * diff);
 
-  // Corner spotlights.
+  // Corner floodlights.
   col += base * cornerSpotlights(p, n);
 
-  // Specular (Blinn-Phong) — a crisp, slightly retro highlight.
+  // Specular, a crisp retro highlight.
   let h = normalize(SUN1_DIR + v);
   let spec = pow(max(dot(n, h), 0.0), 48.0);
   col += spec * SUN1_COL * 0.6;
 
-  // Rim / outline, for the cartoon silhouette.
+  // Rim / outline.
   let rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
-  col += rim * vec3f(0.55, 0.70, 1.0) * 0.35;
+  col += rim * vec3f(0.55, 0.70, 1.0) * 0.30;
 
   return col;
 }
