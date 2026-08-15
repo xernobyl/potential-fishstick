@@ -21,6 +21,9 @@ const TRACK_W  : f32 = 0.07;    // running-track width
 const TRACK_R  : f32 = 0.26;    // track corner radius
 const FLAG_H   : f32 = 0.07;    // corner-flag post height
 const FLAG_R   : f32 = 0.006;   // corner-flag post radius
+const GOAL_W   : f32 = 0.187;   // goal mouth half-width
+const GOAL_H   : f32 = 0.08;    // goal height
+const GOAL_R   : f32 = 0.005;   // goal post radius
 const LINE_W   : f32 = 0.007;   // pitch line half-width
 const ARC_R    : f32 = 0.12;    // corner-arc radius
 // Player proportions (scaled to ~5% of the pitch length).
@@ -43,7 +46,10 @@ const TEAM_B : array<vec2f, 5> = array<vec2f, 5>(
 const REFEREE : vec2f = vec2f(0.0, 0.0);
 const SHIRT_A : vec3f = vec3f(0.80, 0.18, 0.18);   // red
 const SHIRT_B : vec3f = vec3f(0.18, 0.28, 0.80);   // blue
-const SHIRT_R : vec3f = vec3f(0.10, 0.10, 0.12);   // black
+const SHIRT_R : vec3f = vec3f(0.10, 0.10, 0.12);   // black (referee)
+const SHIRT_L : vec3f = vec3f(0.90, 0.80, 0.10);   // yellow (linesmen)
+const LINESMAN_A : vec2f = vec2f(0.28, PITCH_W + 0.05);
+const LINESMAN_B : vec2f = vec2f(-0.28, -(PITCH_W + 0.05));
 
 fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   let q = abs(p) - b + vec3f(r);
@@ -109,7 +115,7 @@ fn sdPlayerAt(p : vec3f, pos : vec2f) -> f32 {
   return min(min(head, torso), min(leg1, leg2));
 }
 
-/// All players (both teams + the referee).
+/// All players (both teams, the referee and the two linesmen).
 fn sdPlayers(p : vec3f) -> f32 {
   var d = 1e5;
   for (var i = 0; i < 5; i++) {
@@ -117,6 +123,26 @@ fn sdPlayers(p : vec3f) -> f32 {
     d = min(d, sdPlayerAt(p, TEAM_B[i]));
   }
   d = min(d, sdPlayerAt(p, REFEREE));
+  d = min(d, sdPlayerAt(p, LINESMAN_A));
+  d = min(d, sdPlayerAt(p, LINESMAN_B));
+  return d;
+}
+
+/// The goal frames: two posts and a crossbar at each end (y = +-PITCH_L).
+fn sdGoal(p : vec3f) -> f32 {
+  var d = 1e5;
+  for (var g = 0; g < 2; g++) {
+    let s = f32(g) * 2.0 - 1.0;
+    for (var pi = 0; pi < 2; pi++) {
+      let pz = f32(pi) * 2.0 - 1.0;
+      let a = vec3f(surfX(s * PITCH_L, pz * GOAL_W), s * PITCH_L, pz * GOAL_W);
+      let post = sdCylinderX(p - (a + vec3f(GOAL_H * 0.5, 0.0, 0.0)), GOAL_R, GOAL_H * 0.5);
+      d = min(d, post);
+    }
+    let a = vec3f(surfX(s * PITCH_L, 0.0), s * PITCH_L, 0.0);
+    let bar = sdRoundBox(p - (a + vec3f(GOAL_H, 0.0, 0.0)), vec3f(GOAL_R, GOAL_R, GOAL_W), GOAL_R * 0.5);
+    d = min(d, bar);
+  }
   return d;
 }
 
@@ -163,8 +189,11 @@ fn mapBody(p : vec3f) -> f32 {
     d = min(d, post);
   }
 
-  // The players (both teams + referee).
+  // The players (both teams + referee + linesmen).
   d = min(d, sdPlayers(p));
+
+  // The goal frames.
+  d = min(d, sdGoal(p));
 
   return d;
 }
@@ -236,7 +265,7 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     base = vec3f(0.55, 0.28, 0.20);
   }
 
-  // The players: two teams + a referee.
+  // The players: two teams + a referee + two linesmen.
   for (var i = 0; i < 5; i++) {
     let pa = playerShade(p, TEAM_A[i], SHIRT_A);
     if (pa.w > 0.5) { base = pa.xyz; }
@@ -245,6 +274,22 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   }
   let pr = playerShade(p, REFEREE, SHIRT_R);
   if (pr.w > 0.5) { base = pr.xyz; }
+  let pl1 = playerShade(p, LINESMAN_A, SHIRT_L);
+  if (pl1.w > 0.5) { base = pl1.xyz; }
+  let pl2 = playerShade(p, LINESMAN_B, SHIRT_L);
+  if (pl2.w > 0.5) { base = pl2.xyz; }
+
+  // Goals: white frame (two posts + crossbar) at each end.
+  for (var g = 0; g < 2; g++) {
+    let s = f32(g) * 2.0 - 1.0;
+    let gy = s * PITCH_L;
+    let gx0 = surfX(PITCH_L, 0.0);
+    let nearPost = abs(abs(p.z) - GOAL_W) < GOAL_R * 3.0 && abs(p.y - gy) < GOAL_R * 3.0;
+    let nearBar = abs(p.x - (gx0 + GOAL_H)) < GOAL_R * 3.0 && abs(p.z) < GOAL_W && abs(p.y - gy) < GOAL_R * 3.0;
+    if ((nearPost || nearBar) && p.x > gx0 - 0.01 && p.x < gx0 + GOAL_H + 0.01) {
+      base = vec3f(0.92, 0.94, 0.96);
+    }
+  }
 
   // Corner flags: bright yellow posts.
   for (var c = 0; c < 4; c++) {
