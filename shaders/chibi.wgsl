@@ -25,10 +25,20 @@ const TRACK_R  : f32 = 0.26;    // track corner radius
 const FLAG_H   : f32 = 0.07;    // corner-flag post height
 const FLAG_R   : f32 = 0.006;   // corner-flag post radius
 const LINE_W   : f32 = 0.012;   // pitch line half-width
+const PLAYER_Y : f32 = 0.12;    // player's pitch position (along Y)
+const PLAYER_Z : f32 = 0.06;    // player's pitch position (along Z)
 
 fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   let q = abs(p) - b + vec3f(r);
   return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+}
+
+fn sdSphere(p : vec3f, r : f32) -> f32 { return length(p) - r; }
+
+/// A cylinder along +X (the field normal = "up" for objects on the pitch).
+fn sdCylinderX(p : vec3f, r : f32, hh : f32) -> f32 {
+  let d = vec2f(length(p.yz) - r, abs(p.x) - hh);
+  return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
 }
 
 /// Rolling hills: a low-frequency fbm displacement.
@@ -58,6 +68,27 @@ fn sdRoundRect2(p : vec2f, b : vec2f, r : f32) -> f32 {
 fn onTrack(y : f32, z : f32) -> bool {
   let b = vec2f(PITCH_L + MARGIN + TRACK_W * 0.5, PITCH_W + MARGIN + TRACK_W * 0.5);
   return abs(sdRoundRect2(vec2f(y, z), b, TRACK_R)) < TRACK_W * 0.5;
+}
+
+/// A Sensi-style player: big head, chunky torso, stubby legs. Local space is
+/// anchored at the feet with +X as "up" (the field normal).
+fn sdPlayer(p : vec3f) -> f32 {
+  let a = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
+  let q = p - a;
+
+  let headR  = 0.040;
+  let torsoH = 0.050;
+  let torsoW = 0.027;
+  let legLen = 0.042;
+  let legR   = 0.008;
+
+  let head  = sdSphere(q - vec3f(headR + torsoH + legLen, 0.0, 0.0), headR);
+  let torso = sdRoundBox(q - vec3f(legLen + torsoH * 0.5, 0.0, 0.0),
+                         vec3f(torsoH * 0.5, torsoW, torsoW), 0.010);
+  let leg1 = sdCylinderX(q - vec3f(legLen * 0.5, 0.010, 0.0), legR, legLen * 0.5);
+  let leg2 = sdCylinderX(q - vec3f(legLen * 0.5, -0.010, 0.0), legR, legLen * 0.5);
+
+  return min(min(head, torso), min(leg1, leg2));
 }
 
 fn mapBody(p : vec3f) -> f32 {
@@ -126,10 +157,12 @@ fn pitchLines(y : f32, z : f32) -> f32 {
   let edgeY = abs(ay - PITCH_L) < LINE_W && az < PITCH_W;
   let edgeZ = abs(az - PITCH_W) < LINE_W && ay < PITCH_L;
   let boundary = select(0.0, 1.0, edgeY || edgeZ);
-  // Halfway line, centre circle, centre spot.
-  let halfway = select(0.0, 1.0, ay < LINE_W);
-  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W);
-  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W);
+  // Halfway line, centre circle, centre spot. The halfway line and circle sit
+  // at the field's pole, head-on to the camera, so they foreshorten less than
+  // the boundary lines — thin them to match the same visual weight.
+  let halfway = select(0.0, 1.0, ay < LINE_W * 0.6);
+  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W * 0.6);
+  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W * 0.6);
   // Penalty area outlines.
   let penL = PITCH_L - 0.16;
   let penW = PITCH_W * 0.55;
