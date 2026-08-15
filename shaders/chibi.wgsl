@@ -1,7 +1,11 @@
 // ---------------------------------------------------------------------------
-// Chibi planet: a small raymarched world — a football pitch on a grassy planet,
-// a running track, terraced grandstands, floodlights, goal nets and a bouncing
-// football. Neo-retro cartoon PBR.
+// Chibi planet: a grassy world with a football pitch ON its surface, a running
+// track, terraced grandstands, floodlights, goal nets and a bouncing football.
+//
+// The pitch is NOT a separate platform — it is a material region on the sphere
+// itself (green with white lines). The planet's surface is grass elsewhere:
+// rolling hills (low-frequency fbm) with a Voronoi blade field, adapted from
+// David Hoskins' "Rolling hills" (Shadertoy Xsf3zX).
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -46,11 +50,47 @@ fn sdCylinder(p : vec3f, r : f32, hh : f32) -> f32 {
   return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
 }
 
-/// A flat rounded-rectangle RING (the running track): the shell between two rounded boxes.
-fn sdRingFlat(p : vec3f, halfExtents : vec3f, thickness : f32, r : f32) -> f32 {
-  let outer = sdRoundBox(p, halfExtents, r);
-  let inner = sdRoundBox(p, halfExtents - vec3f(thickness), r);
-  return max(-inner, outer);
+// ---- grass noise (adapted from David Hoskins' "Rolling hills") -------------
+
+/// 2x2 hash, for the Voronoi cell offset.
+fn hash22(p : vec2f) -> vec2f {
+  let p3 = fract(vec3f(p.xyx) * vec3f(0.1031, 0.1030, 0.0973));
+  let q = p3 + dot(p3, p3.yzx + 33.33);
+  return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+/// 2D Voronoi: (blade density 0..~0.4, random cell id). Blades sit at cell centres.
+fn voronoi2(x : vec2f) -> vec2f {
+  let p = floor(x);
+  let f = fract(x);
+  var res = 100.0;
+  var id = 0.0;
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let b = vec2f(f32(i), f32(j));
+      let r = b - f + hash22(p + b);
+      let d = dot(r, r);
+      if (d < res) { res = d; id = hash21(p + b); }
+    }
+  }
+  return vec2f(max(0.4 - sqrt(res), 0.0), id);
+}
+
+/// Rolling hills: a low-frequency fbm, subtle enough that the pitch stays level.
+fn grassHills(dir : vec3f) -> f32 {
+  return (fbm3(dir * 3.5) - 0.5) * 0.05;
+}
+
+/// Grass colour: hill-shaded green, with lighter Voronoi blades and pale seed tips.
+fn grassColour(p : vec3f, dir : vec3f) -> vec3f {
+  let uv = dir.xz * 26.0;
+  let v = voronoi2(uv);
+  let blade = v.x;
+  let hills = fbm3(dir * 6.0);
+  var col = mix(vec3f(0.07, 0.30, 0.09), vec3f(0.22, 0.52, 0.18), hills);
+  col = mix(col, vec3f(0.45, 0.62, 0.30), blade * 1.5);
+  col = mix(col, vec3f(0.75, 0.80, 0.55), step(0.38, blade) * step(0.6, v.y));
+  return col;
 }
 
 // ---- the world ------------------------------------------------------------
@@ -62,39 +102,33 @@ fn footballPos() -> vec3f {
 }
 
 fn mapBody(p : vec3f) -> f32 {
-  // The planet itself.
-  var d = sdSphere(p, CR);
+  let dir = normalize(p + 1e-6);
 
-  // The pitch: a flat rectangle, flush with the north pole, blended into the
-  // planet with a wide smin so it reads as a flat field on a round world rather
-  // than a board glued on top.
-  let field = sdBox(p - vec3f(0.0, CR - 0.006, 0.0), vec3f(PITCH_W, 0.006, PITCH_L));
-  d = smin(d, field, 0.30);
+  // The planet itself: a sphere. Grass hills displace the surface everywhere
+  // EXCEPT the field region, which stays smooth so the pitch is level.
+  var d = length(p) - CR;
+  let onField = abs(p.x) < PITCH_W * 1.15 && abs(p.z) < PITCH_L * 1.15;
+  if (!onField) {
+    d += grassHills(dir);
+  }
 
-  // The running track: a flat oval ring around the pitch.
-  let track = sdRingFlat(p - vec3f(0.0, CR - 0.012, 0.0),
-                         vec3f(PITCH_W + TRACK_W * 0.6, 0.012, PITCH_L + TRACK_W * 0.6),
-                         TRACK_W, 0.03);
-  d = smin(d, track, 0.03);
-
-  // Terraced grandstands on the two SIDELINES (x = +-PITCH_W): each tier steps
-  // outward and upward, a staircase rather than a stacked box.
+  // Terraced grandstands on the two SIDELINES (x = +-PITCH_W): a staircase.
   for (var i = 0; i < 4; i++) {
     let fi = f32(i);
     let x = PITCH_W + TRACK_W + SEAT_W * (fi + 0.5);
-    let y = CR - 0.01 + SEAT_H * (fi + 0.5);
+    let y = CR - 0.03 + SEAT_H * (fi + 0.5);
     d = smin(d, sdBox(p - vec3f(x, y, 0.0), vec3f(SEAT_W * 0.5, SEAT_H * 0.5, PITCH_L + TRACK_W)), 0.02);
     d = smin(d, sdBox(p - vec3f(-x, y, 0.0), vec3f(SEAT_W * 0.5, SEAT_H * 0.5, PITCH_L + TRACK_W)), 0.02);
   }
 
-  // Goal frames (posts + crossbar) at each END (z = +-PITCH_L), white.
+  // Goal frames (posts + crossbar) and a wire net at each END (z = +-PITCH_L).
   for (var g = 0; g < 2; g++) {
     let s = f32(g) * 2.0 - 1.0;
-    let gx = PITCH_W * 0.55;                                // goal mouth half-width
-    let gy = CR - 0.01 + POST_H;
+    let gx = PITCH_W * 0.55;
+    let gy = CR - 0.02 + POST_H;
     for (var pi = 0; pi < 2; pi++) {
       let px = f32(pi) * 2.0 - 1.0;
-      let post = sdRoundBox(p - vec3f(px * gx, CR - 0.01 + POST_H * 0.5, s * PITCH_L),
+      let post = sdRoundBox(p - vec3f(px * gx, CR - 0.02 + POST_H * 0.5, s * PITCH_L),
                             vec3f(POST_R, POST_H * 0.5, POST_R), POST_R * 0.5);
       d = min(d, post);
     }
@@ -102,19 +136,16 @@ fn mapBody(p : vec3f) -> f32 {
                          vec3f(gx, POST_R, POST_R), POST_R * 0.5);
     d = min(d, bar);
 
-    // Net: a coarse grid of thin wires behind the goal line.
     let netZ = s * (PITCH_L + 0.012);
     for (var vw = -3; vw <= 3; vw++) {
       let wx = f32(vw) / 3.0 * gx;
-      let wire = sdRoundBox(p - vec3f(wx, CR - 0.01 + POST_H * 0.5, netZ),
-                            vec3f(0.004, POST_H * 0.5, 0.004), 0.002);
-      d = min(d, wire);
+      d = min(d, sdRoundBox(p - vec3f(wx, CR - 0.02 + POST_H * 0.5, netZ),
+                            vec3f(0.004, POST_H * 0.5, 0.004), 0.002));
     }
     for (var hw = 1; hw <= 4; hw++) {
-      let wy = CR - 0.01 + POST_H * f32(hw) / 4.0;
-      let wire = sdRoundBox(p - vec3f(0.0, wy, netZ),
-                            vec3f(gx, 0.004, 0.004), 0.002);
-      d = min(d, wire);
+      let wy = CR - 0.02 + POST_H * f32(hw) / 4.0;
+      d = min(d, sdRoundBox(p - vec3f(0.0, wy, netZ),
+                            vec3f(gx, 0.004, 0.004), 0.002));
     }
   }
 
@@ -122,7 +153,7 @@ fn mapBody(p : vec3f) -> f32 {
   for (var c = 0; c < 4; c++) {
     let sx = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.02, sz * (PITCH_L + TRACK_W + 0.04));
+    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.04, sz * (PITCH_L + TRACK_W + 0.04));
     let pole = sdCylinder(p - (base + vec3f(0.0, POLE_H * 0.5, 0.0)), POLE_R, POLE_H * 0.5);
     d = min(d, pole);
     let head = sdSphere(p - (base + vec3f(0.0, POLE_H, 0.0)), HEAD_R);
@@ -180,12 +211,6 @@ fn cornerSpotlights(p : vec3f, n : vec3f) -> vec3f {
   return acc;
 }
 
-/// Grass: a green base modulated by fbm, so it reads as turf rather than a flat colour.
-fn grassColour(p : vec3f) -> vec3f {
-  let n = fbm3(p * 6.0);
-  return mix(vec3f(0.16, 0.42, 0.16), vec3f(0.30, 0.58, 0.22), n);
-}
-
 /// A patchy panel pattern for the football (pentagon-ish blobs).
 fn soccerPattern(n : vec3f) -> f32 {
   let p = n * 5.0;
@@ -195,16 +220,14 @@ fn soccerPattern(n : vec3f) -> f32 {
   return step(0.62, hash13(id)) * blob;
 }
 
-/// The pitch markings, drawn as white lines in the material. Returns 1 on a line, 0 off.
+/// The pitch markings, drawn as white lines in the material.
 fn pitchLines(x : f32, z : f32) -> f32 {
-  // Boundary rectangle, halfway line, centre circle, centre spot, two penalty-area outlines.
   let bx = abs(x) - PITCH_W;
   let bz = abs(z) - PITCH_L;
   let boundary = select(0.0, 1.0, max(abs(bx), abs(bz)) < LINE_W);
   let halfway = select(0.0, 1.0, abs(z) < LINE_W);
   let circle = select(0.0, 1.0, abs(length(vec2f(x, z)) - 0.06) < LINE_W);
   let spot = select(0.0, 1.0, length(vec2f(x, z)) < LINE_W);
-  // penalty area: a rectangle outline at each end
   let penL = PITCH_L - 0.13;
   let penW = PITCH_W * 0.55;
   let inPen = abs(x) < penW && abs(z) > penL && abs(z) < PITCH_L;
@@ -213,15 +236,15 @@ fn pitchLines(x : f32, z : f32) -> f32 {
   return max(boundary, max(max(halfway, circle), max(spot, penEdge)));
 }
 
-/// The cartoon material, decided by WHERE the hit landed.
+/// The material, decided by WHERE the hit landed.
 fn material(p : vec3f) -> vec3f {
   let fp = footballPos();
+  let dir = normalize(p + 1e-6);
 
   // football
   if (length(p - fp) < FB_R * 1.4) {
     let n = (p - fp) / FB_R;
-    let pat = soccerPattern(n);
-    return mix(vec3f(0.97), vec3f(0.10, 0.10, 0.12), pat);
+    return mix(vec3f(0.97), vec3f(0.10, 0.10, 0.12), soccerPattern(n));
   }
 
   // floodlight heads: emissive warm white
@@ -233,42 +256,43 @@ fn material(p : vec3f) -> vec3f {
     if (length(p - head) < HEAD_R * 1.4) { return vec3f(1.0, 0.97, 0.88); }
   }
 
-  // goal frame: white (posts + crossbar)
-  let onGoal = (abs(abs(p.z) - PITCH_L) < POST_R * 2.0 && abs(p.x) < PITCH_W * 0.6
-                && p.y < CR + POST_H && p.y > CR - 0.02);
+  // goal frame + net: white
+  let onGoal = abs(abs(p.z) - PITCH_L) < 0.02 && abs(p.x) < PITCH_W * 0.6
+               && p.y < CR + POST_H + 0.02 && p.y > CR - 0.06;
   if (onGoal) { return vec3f(0.9, 0.92, 0.95); }
-
-  // pitch (flat field region)
-  if (p.y > CR - 0.03 && abs(p.x) < PITCH_W + 0.02 && abs(p.z) < PITCH_L + 0.02) {
-    let line = pitchLines(p.x, p.z);
-    let base = grassColour(p);
-    return mix(base, vec3f(0.92, 0.94, 0.96), line);
-  }
-
-  // running track
-  let outer = PITCH_W + TRACK_W;
-  if (p.y > CR - 0.03 && max(abs(p.x), abs(p.z)) < outer + 0.06
-      && !(abs(p.x) < PITCH_W && abs(p.z) < PITCH_L)) {
-    return vec3f(0.55, 0.28, 0.20);
-  }
-
-  // grandstands: pale stone, terraced
-  if (p.y > CR - 0.03 && (abs(p.x) > PITCH_W + TRACK_W * 0.5)) {
-    return vec3f(0.62, 0.60, 0.55);
-  }
 
   // floodlight poles: dark grey
   for (var c2 = 0; c2 < 4; c2++) {
     let sx = f32(c2 & 1) * 2.0 - 1.0;
     let sz = f32((c2 >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.02, sz * (PITCH_L + TRACK_W + 0.04));
-    if (length((p - base).xz) < POLE_R * 1.5 && p.y > CR - 0.03 && p.y < CR + POLE_H) {
+    let base = vec3f(sx * (PITCH_W + TRACK_W + 0.04), CR - 0.04, sz * (PITCH_L + TRACK_W + 0.04));
+    if (length((p - base).xz) < POLE_R * 1.5 && p.y > CR - 0.06 && p.y < CR + POLE_H) {
       return vec3f(0.25, 0.26, 0.28);
     }
   }
 
-  // the rest of the planet: grass
-  return grassColour(p);
+  // grandstands: pale stone, on the +-X sides beyond the track
+  if (abs(p.x) > PITCH_W + TRACK_W + SEAT_W * 0.3 && abs(p.z) < PITCH_L + TRACK_W
+      && p.y > CR - 0.06 && p.y < CR + SEAT_H * 4.0) {
+    return vec3f(0.62, 0.60, 0.55);
+  }
+
+  // The pitch: a region ON the sphere surface, green with white lines.
+  if (abs(p.x) < PITCH_W + 0.02 && abs(p.z) < PITCH_L + 0.02) {
+    let line = pitchLines(p.x, p.z);
+    let base = mix(vec3f(0.10, 0.42, 0.16), vec3f(0.16, 0.52, 0.22), fbm3(dir * 10.0));
+    return mix(base, vec3f(0.92, 0.94, 0.96), line);
+  }
+
+  // The running track: a rectangular ring around the pitch.
+  let inOuter = abs(p.x) < PITCH_W + TRACK_W && abs(p.z) < PITCH_L + TRACK_W;
+  let inPitch = abs(p.x) < PITCH_W && abs(p.z) < PITCH_L;
+  if (inOuter && !inPitch) {
+    return vec3f(0.55, 0.28, 0.20);
+  }
+
+  // The rest of the planet: grass.
+  return grassColour(p, dir);
 }
 
 fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
@@ -276,21 +300,16 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let v = -rd;
   let base = material(p);
 
-  // Sun key light, soft shadow from the football.
   let sunSh = footballShadow(p, SUN1_DIR, 1e3);
   let diff = max(dot(n, SUN1_DIR), 0.0) * sunSh;
 
   var col = base * (vec3f(0.16) + SUN1_COL * diff);
-
-  // Corner floodlights.
   col += base * cornerSpotlights(p, n);
 
-  // Specular, a crisp retro highlight.
   let h = normalize(SUN1_DIR + v);
   let spec = pow(max(dot(n, h), 0.0), 48.0);
   col += spec * SUN1_COL * 0.6;
 
-  // Rim / outline.
   let rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
   col += rim * vec3f(0.55, 0.70, 1.0) * 0.30;
 
