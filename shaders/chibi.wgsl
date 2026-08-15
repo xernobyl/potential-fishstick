@@ -21,16 +21,29 @@ const TRACK_W  : f32 = 0.07;    // running-track width
 const TRACK_R  : f32 = 0.26;    // track corner radius
 const FLAG_H   : f32 = 0.07;    // corner-flag post height
 const FLAG_R   : f32 = 0.006;   // corner-flag post radius
-const LINE_W   : f32 = 0.012;   // pitch line half-width
+const LINE_W   : f32 = 0.007;   // pitch line half-width
 const ARC_R    : f32 = 0.12;    // corner-arc radius
-const PLAYER_Y : f32 = 0.12;    // player's pitch position (along Y)
-const PLAYER_Z : f32 = 0.06;    // player's pitch position (along Z)
 // Player proportions (scaled to ~5% of the pitch length).
 const PLAYER_HEAD_R  : f32 = 0.016;
 const PLAYER_TORSO_H : f32 = 0.020;
 const PLAYER_TORSO_W : f32 = 0.011;
 const PLAYER_LEG_LEN : f32 = 0.017;
 const PLAYER_LEG_R   : f32 = 0.004;
+
+// Two five-a-side teams (y, z on the pitch) and a referee. Team A plays up
+// (+Y), team B down (-Y).
+const TEAM_A : array<vec2f, 5> = array<vec2f, 5>(
+  vec2f(0.16, 0.08), vec2f(0.03, -0.10), vec2f(-0.10, 0.12),
+  vec2f(0.24, -0.03), vec2f(0.00, 0.22),
+);
+const TEAM_B : array<vec2f, 5> = array<vec2f, 5>(
+  vec2f(-0.16, 0.08), vec2f(-0.03, -0.10), vec2f(0.10, -0.12),
+  vec2f(-0.24, -0.03), vec2f(0.00, -0.22),
+);
+const REFEREE : vec2f = vec2f(0.0, 0.0);
+const SHIRT_A : vec3f = vec3f(0.80, 0.18, 0.18);   // red
+const SHIRT_B : vec3f = vec3f(0.18, 0.28, 0.80);   // blue
+const SHIRT_R : vec3f = vec3f(0.10, 0.10, 0.12);   // black
 
 fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   let q = abs(p) - b + vec3f(r);
@@ -80,10 +93,10 @@ fn inMargin(y : f32, z : f32) -> bool {
   return insideInner && !inPitchRegion(y, z);
 }
 
-/// A Sensi-style player: big head, chunky torso, stubby legs. Local space is
-/// anchored at the feet with +X as "up" (the field normal).
-fn sdPlayer(p : vec3f) -> f32 {
-  let a = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
+/// A Sensi-style player at pitch position (y, z). Local space is anchored at
+/// the feet with +X as "up".
+fn sdPlayerAt(p : vec3f, pos : vec2f) -> f32 {
+  let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
   let q = p - a;
 
   let head  = sdSphere(q - vec3f(PLAYER_HEAD_R + PLAYER_TORSO_H + PLAYER_LEG_LEN, 0.0, 0.0), PLAYER_HEAD_R);
@@ -94,6 +107,35 @@ fn sdPlayer(p : vec3f) -> f32 {
   let leg2 = sdCylinderX(q - vec3f(PLAYER_LEG_LEN * 0.5, -legOff, 0.0), PLAYER_LEG_R, PLAYER_LEG_LEN * 0.5);
 
   return min(min(head, torso), min(leg1, leg2));
+}
+
+/// All players (both teams + the referee).
+fn sdPlayers(p : vec3f) -> f32 {
+  var d = 1e5;
+  for (var i = 0; i < 5; i++) {
+    d = min(d, sdPlayerAt(p, TEAM_A[i]));
+    d = min(d, sdPlayerAt(p, TEAM_B[i]));
+  }
+  d = min(d, sdPlayerAt(p, REFEREE));
+  return d;
+}
+
+/// Shade one player: returns (colour, 1) on the player's body, else (0,0,0,0).
+fn playerShade(p : vec3f, pos : vec2f, shirt : vec3f) -> vec4f {
+  let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
+  let q = p - a;
+  let ph = PLAYER_LEG_LEN + PLAYER_TORSO_H + 2.0 * PLAYER_HEAD_R;
+  let pw = max(PLAYER_TORSO_W, PLAYER_HEAD_R);
+  if (q.x <= -0.005 || q.x >= ph + 0.005 || length(q.yz) >= pw + 0.005) {
+    return vec4f(0.0, 0.0, 0.0, 0.0);
+  }
+  var col = vec3f(0.12, 0.12, 0.18);   // shorts
+  if (q.x > PLAYER_LEG_LEN + PLAYER_TORSO_H) {
+    col = vec3f(0.93, 0.78, 0.60);     // head (skin)
+  } else if (q.x > PLAYER_LEG_LEN) {
+    col = shirt;                       // torso
+  }
+  return vec4f(col, 1.0);
 }
 
 fn mapBody(p : vec3f) -> f32 {
@@ -121,8 +163,8 @@ fn mapBody(p : vec3f) -> f32 {
     d = min(d, post);
   }
 
-  // The Sensi-style player.
-  d = min(d, sdPlayer(p));
+  // The players (both teams + referee).
+  d = min(d, sdPlayers(p));
 
   return d;
 }
@@ -150,12 +192,10 @@ fn pitchLines(y : f32, z : f32) -> f32 {
   let edgeY = abs(ay - PITCH_L) < LINE_W && az < PITCH_W;
   let edgeZ = abs(az - PITCH_W) < LINE_W && ay < PITCH_L;
   let boundary = select(0.0, 1.0, edgeY || edgeZ);
-  // Halfway line, centre circle, centre spot. The halfway line and circle sit
-  // at the field's pole, head-on to the camera, so they foreshorten less than
-  // the boundary lines — thin them to match the same visual weight.
-  let halfway = select(0.0, 1.0, ay < LINE_W * 0.6);
-  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W * 0.6);
-  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W * 0.6);
+  // Halfway line, centre circle, centre spot.
+  let halfway = select(0.0, 1.0, ay < LINE_W);
+  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W);
+  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W);
   // Penalty area outlines.
   let penL = PITCH_L - 0.16;
   let penW = PITCH_W * 0.55;
@@ -196,21 +236,15 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     base = vec3f(0.55, 0.28, 0.20);
   }
 
-  // The Sensi player: head (skin), torso (shirt), legs (shorts). Bounding box
-  // (not a sphere) so the colour does not bleed onto the surrounding grass.
-  let pa = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
-  let q = p - pa;
-  let ph = PLAYER_LEG_LEN + PLAYER_TORSO_H + 2.0 * PLAYER_HEAD_R;
-  let pw = max(PLAYER_TORSO_W, PLAYER_HEAD_R);
-  if (q.x > -0.005 && q.x < ph + 0.005 && length(q.yz) < pw + 0.005) {
-    if (q.x > PLAYER_LEG_LEN + PLAYER_TORSO_H) {
-      base = vec3f(0.93, 0.78, 0.60);     // head (skin)
-    } else if (q.x > PLAYER_LEG_LEN) {
-      base = vec3f(0.80, 0.18, 0.18);     // torso (shirt)
-    } else {
-      base = vec3f(0.12, 0.12, 0.18);     // legs (shorts)
-    }
+  // The players: two teams + a referee.
+  for (var i = 0; i < 5; i++) {
+    let pa = playerShade(p, TEAM_A[i], SHIRT_A);
+    if (pa.w > 0.5) { base = pa.xyz; }
+    let pb = playerShade(p, TEAM_B[i], SHIRT_B);
+    if (pb.w > 0.5) { base = pb.xyz; }
   }
+  let pr = playerShade(p, REFEREE, SHIRT_R);
+  if (pr.w > 0.5) { base = pr.xyz; }
 
   // Corner flags: bright yellow posts.
   for (var c = 0; c < 4; c++) {
