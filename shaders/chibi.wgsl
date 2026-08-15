@@ -14,9 +14,8 @@
 //!include "sky.wgsl"
 
 const CR       : f32 = 1.0;     // planet radius
-const HILL_AMP : f32 = 0.08;    // rolling-hill amplitude
-const BLADE_H  : f32 = 0.018;   // grass blade height (rough)
-const BLADE_F  : f32 = 110.0;   // rough blade frequency
+const BLADE_H  : f32 = 0.018;   // grass blade height
+const BLADE_F  : f32 = 110.0;   // blade frequency (2x on the pitch)
 const PITCH_L  : f32 = 0.62;    // pitch half-length, along Y (goal to goal)
 const PITCH_W  : f32 = 0.34;    // pitch half-width, along Z
 const MARGIN   : f32 = 0.14;    // grass margin between pitch and track
@@ -25,6 +24,7 @@ const TRACK_R  : f32 = 0.26;    // track corner radius
 const FLAG_H   : f32 = 0.07;    // corner-flag post height
 const FLAG_R   : f32 = 0.006;   // corner-flag post radius
 const LINE_W   : f32 = 0.012;   // pitch line half-width
+const ARC_R    : f32 = 0.12;    // corner-arc radius
 const PLAYER_Y : f32 = 0.12;    // player's pitch position (along Y)
 const PLAYER_Z : f32 = 0.06;    // player's pitch position (along Z)
 
@@ -41,13 +41,8 @@ fn sdCylinderX(p : vec3f, r : f32, hh : f32) -> f32 {
   return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
 }
 
-/// Rolling hills: a low-frequency fbm displacement.
-fn grassHills(dir : vec3f) -> f32 {
-  return (fbm3(dir * 2.6) - 0.5) * HILL_AMP;
-}
-
 /// Fine, smooth blade field (two octaves of value noise), parameterised by
-/// frequency: the pitch mows it at 2x (a golf "green"), the rest is "rough".
+/// frequency: the pitch mows it at 2x.
 fn grassBlades(dir : vec3f, freq : f32) -> f32 {
   let n = 0.62 * vnoise(dir * freq) + 0.38 * vnoise(dir * freq * 2.3);
   return n * BLADE_H;
@@ -68,6 +63,16 @@ fn sdRoundRect2(p : vec2f, b : vec2f, r : f32) -> f32 {
 fn onTrack(y : f32, z : f32) -> bool {
   let b = vec2f(PITCH_L + MARGIN + TRACK_W * 0.5, PITCH_W + MARGIN + TRACK_W * 0.5);
   return abs(sdRoundRect2(vec2f(y, z), b, TRACK_R)) < TRACK_W * 0.5;
+}
+
+/// Is (y, z) inside the pitch — the rectangle plus the four corner arcs?
+fn inPitchRegion(y : f32, z : f32) -> bool {
+  let ay = abs(y);
+  let az = abs(z);
+  let inRect = ay < PITCH_L && az < PITCH_W;
+  let inArc = ay > PITCH_L && az > PITCH_W
+              && length(vec2f(ay - PITCH_L, az - PITCH_W)) < ARC_R;
+  return inRect || inArc;
 }
 
 /// A Sensi-style player: big head, chunky torso, stubby legs. Local space is
@@ -95,16 +100,10 @@ fn mapBody(p : vec3f) -> f32 {
   let dir = normalize(p + 1e-6);
   let r = length(p);
 
-  // Grass displacement by region: the pitch is mowed fine (2x), the track is
-  // smooth, everything else (margin + planet) is rough.
-  let inPitch = p.x > 0.0 && abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
-  let inTrack = p.x > 0.0 && onTrack(p.y, p.z);
-
-  var d = r - CR - grassHills(dir);
-  if (inPitch) {
+  // The planet is smooth sand; only the pitch carries grass.
+  var d = r - CR;
+  if (inPitchRegion(p.y, p.z) && p.x > 0.0) {
     d -= grassBlades(dir, BLADE_F * 2.0);
-  } else if (!inTrack) {
-    d -= grassBlades(dir, BLADE_F);
   }
 
   // Corner flags: four thin posts at the pitch corners.
@@ -119,11 +118,15 @@ fn mapBody(p : vec3f) -> f32 {
     d = min(d, post);
   }
 
+  // The Sensi-style player.
+  d = min(d, sdPlayer(p));
+
   return d;
 }
 
 fn bodyBound() -> f32 {
-  return CR + HILL_AMP + BLADE_H + 0.1;
+  // Covers the planet, the player (tallest feature) and the corner flags.
+  return CR + 0.3;
 }
 
 fn calcNormal(p : vec3f) -> vec3f {
@@ -134,19 +137,6 @@ fn calcNormal(p : vec3f) -> vec3f {
 }
 
 // ---- shading --------------------------------------------------------------
-
-/// Grass colour: hill-shaded green with a subtle blade texture.
-fn grassColour(dir : vec3f, blade : f32) -> vec3f {
-  let hills = fbm3(dir * 4.0);
-  var col = mix(vec3f(0.06, 0.26, 0.09), vec3f(0.18, 0.47, 0.17), hills);
-  col = mix(col, vec3f(0.34, 0.52, 0.24), blade * 0.55);
-  return col;
-}
-
-/// Cheap grass self-shadowing: darken where the blade field is dense.
-fn grassAO(blade : f32) -> f32 {
-  return 1.0 - 0.30 * blade;
-}
 
 /// Football pitch markings, drawn in white on the field region. Returns 1 on a
 /// line, 0 off. `y` is the goal-to-goal axis, `z` the sideline axis.
@@ -169,12 +159,11 @@ fn pitchLines(y : f32, z : f32) -> f32 {
   let inPen = az < penW && ay > penL && ay < PITCH_L;
   let penEdge = select(0.0, 1.0, inPen && (abs(ay - penL) < LINE_W
                          || abs(az - penW) < LINE_W || abs(ay - PITCH_L) < LINE_W));
-  // Corner arcs: a quarter circle at each of the four corners.
-  let cx = PITCH_L - LINE_W;
-  let cz = PITCH_W - LINE_W;
-  let cornerDist = length(vec2f(ay, az) - vec2f(cx, cz));
-  let inCorner = ay > cx && az > cz;
-  let arc = select(0.0, 1.0, abs(cornerDist - 0.07) < LINE_W && inCorner);
+  // Corner arcs: a quarter circle at each of the four corners, centred on the
+  // corner itself and bulging into the outer quadrant.
+  let cornerDist = length(vec2f(ay - PITCH_L, az - PITCH_W));
+  let inCorner = ay > PITCH_L && az > PITCH_W;
+  let arc = select(0.0, 1.0, abs(cornerDist - ARC_R) < LINE_W && inCorner);
   return max(max(boundary, max(halfway, circle)), max(max(spot, penEdge), arc));
 }
 
@@ -182,13 +171,38 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let n = calcNormal(p);
   let v = -rd;
   let dir = normalize(p + 1e-6);
-  let blade = grassBlades(dir, BLADE_F) / BLADE_H;   // rough blade density (margin/planet)
-  var base = grassColour(dir, blade);
 
-  let inPitch = p.x > 0.0 && abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
+  // Default: sand.
+  var base = vec3f(0.74, 0.65, 0.48);
+
+  let inPitch = p.x > 0.0 && inPitchRegion(p.y, p.z);
   let inTrack = p.x > 0.0 && onTrack(p.y, p.z);
 
-  // Corner flags: bright yellow posts at the four corners.
+  // Pitch: fine green grass with white markings.
+  if (inPitch) {
+    let line = pitchLines(p.y, p.z);
+    let green = mix(vec3f(0.09, 0.40, 0.15), vec3f(0.15, 0.50, 0.21), fbm3(dir * 18.0));
+    base = mix(green, vec3f(0.92, 0.94, 0.96), line);
+  }
+  // Track: cinder red.
+  if (inTrack) {
+    base = vec3f(0.55, 0.28, 0.20);
+  }
+
+  // The Sensi player: head (skin), torso (shirt), legs (shorts).
+  let pa = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
+  if (length(p - pa) < 0.16) {
+    let hx = p.x - pa.x;
+    if (hx > 0.12) {
+      base = vec3f(0.93, 0.78, 0.60);
+    } else if (hx > 0.042) {
+      base = vec3f(0.80, 0.18, 0.18);
+    } else {
+      base = vec3f(0.12, 0.12, 0.18);
+    }
+  }
+
+  // Corner flags: bright yellow posts.
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
@@ -201,27 +215,15 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     }
   }
 
-  // Track: cinder red. Pitch: fine "green" grass with white markings.
-  if (inTrack) {
-    base = vec3f(0.55, 0.28, 0.20);
-  } else if (inPitch) {
-    let line = pitchLines(p.y, p.z);
-    let green = mix(vec3f(0.09, 0.40, 0.15), vec3f(0.15, 0.50, 0.21), fbm3(dir * 18.0));
-    base = mix(green, vec3f(0.92, 0.94, 0.96), line);
-  }
-
-  // Sun key light with a gentle ambient. Grass gets self-shadowing; the smooth
-  // track and pitch do not.
+  // Sun key light with a gentle ambient.
   let diff = max(dot(n, SUN1_DIR), 0.0);
-  let ao = select(grassAO(blade), 1.0, inPitch || inTrack);
-
-  var col = base * (vec3f(0.14) + SUN1_COL * diff * ao);
+  var col = base * (vec3f(0.16) + SUN1_COL * diff);
 
   // A warm fill from the opposite side, for rounded, natural shading.
   let fill = max(dot(n, vec3f(-0.4, 0.35, -0.2)), 0.0);
   col += base * vec3f(0.35, 0.30, 0.22) * fill * 0.25;
 
-  // A hint of subsurface translucency at grazing angles: blades are thin.
+  // A hint of subsurface translucency at grazing angles.
   let grazing = pow(1.0 - max(dot(n, v), 0.0), 2.0);
   col += base * vec3f(0.30, 0.50, 0.20) * grazing * 0.4;
 
