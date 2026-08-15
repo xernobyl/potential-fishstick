@@ -1,12 +1,10 @@
 // ---------------------------------------------------------------------------
-// Chibi grass planet: a small round world covered in grass — rolling hills and
-// a fine blade field. Adapted from David Hoskins' "Rolling hills"
-// (Shadertoy Xsf3zX).
+// Chibi planet: a small round sand world with a football pitch — fine grass and
+// white markings, a running track, corner flags and a Sensi-style player.
 //
-// Geometry: a sphere displaced by low-frequency fbm (the hills) and a finer,
-// smooth value-noise blade field, so the surface has real volume that shades
-// like turf. The field is continuous and uniform over the sphere — no Voronoi
-// cell grid, so no visible facets or gaps.
+// Geometry: a smooth sand sphere; only the pitch carries a fine value-noise
+// blade field for the grass. Everything is drawn in the material (no texture
+// assets).
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -15,7 +13,7 @@
 
 const CR       : f32 = 1.0;     // planet radius
 const BLADE_H  : f32 = 0.018;   // grass blade height
-const BLADE_F  : f32 = 110.0;   // blade frequency (2x on the pitch)
+const BLADE_F  : f32 = 220.0;   // pitch blade frequency
 const PITCH_L  : f32 = 0.62;    // pitch half-length, along Y (goal to goal)
 const PITCH_W  : f32 = 0.34;    // pitch half-width, along Z
 const MARGIN   : f32 = 0.14;    // grass margin between pitch and track
@@ -103,7 +101,7 @@ fn mapBody(p : vec3f) -> f32 {
   // The planet is smooth sand; only the pitch carries grass.
   var d = r - CR;
   if (inPitchRegion(p.y, p.z) && p.x > 0.0) {
-    d -= grassBlades(dir, BLADE_F * 2.0);
+    d -= grassBlades(dir, BLADE_F);
   }
 
   // Corner flags: four thin posts at the pitch corners.
@@ -190,10 +188,11 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   }
 
   // The Sensi player: head (skin), torso (shirt), legs (shorts).
+  // Legs span x 0..0.042, torso 0.042..0.092, head 0.092..0.172 (above the feet).
   let pa = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
-  if (length(p - pa) < 0.16) {
+  if (length(p - pa) < 0.18) {
     let hx = p.x - pa.x;
-    if (hx > 0.12) {
+    if (hx > 0.092) {
       base = vec3f(0.93, 0.78, 0.60);
     } else if (hx > 0.042) {
       base = vec3f(0.80, 0.18, 0.18);
