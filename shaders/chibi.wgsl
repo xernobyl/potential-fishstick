@@ -85,8 +85,8 @@ fn mapBody(p : vec3f) -> f32 {
     let s = f32(g) * 2.0 - 1.0;                              // +1 / -1 end
     let gx = FIELD_L * 0.45;                                 // goal mouth half-width
     let gy = CR - 0.02 + POST_H;                             // crossbar height
-    for (var p = 0; p < 2; p++) {
-      let px = f32(p) * 2.0 - 1.0;
+    for (var pi = 0; pi < 2; pi++) {
+      let px = f32(pi) * 2.0 - 1.0;
       let post = sdRoundBox(p - vec3f(px * gx, CR - 0.02 + POST_H * 0.5, s * FIELD_W),
                             vec3f(POST_R, POST_H * 0.5, POST_R), POST_R * 0.5);
       d = min(d, post);
