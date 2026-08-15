@@ -106,13 +106,14 @@ export class ChibiScene extends Scene {
     }
 
     const dist = 3.2;
+    const target = [1.0, 0.0, 0.0];   // the pitch centre, on the +X pole
     const cp = Math.cos(this._pitch);
     const pos = [
-      dist * cp * Math.cos(this._yaw),
-      dist * Math.sin(this._pitch),
-      dist * cp * Math.sin(this._yaw),
+      target[0] + dist * cp * Math.cos(this._yaw),
+      target[1] + dist * Math.sin(this._pitch),
+      target[2] + dist * cp * Math.sin(this._yaw),
     ];
-    const fwd = [-pos[0], -pos[1], -pos[2]];
+    const fwd = [target[0] - pos[0], target[1] - pos[1], target[2] - pos[2]];
     const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
     for (let i = 0; i < 3; i++) fwd[i] /= len;
     camera.lookAt(pos, fwd, dist);
