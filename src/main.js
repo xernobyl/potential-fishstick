@@ -130,6 +130,10 @@ async function boot() {
       e.preventDefault();
       renderer.setScene('modelview');
       syncViewLabel();
+    } else if (k === '4') {
+      e.preventDefault();
+      renderer.setScene('chibi');
+      syncViewLabel();
     }
   });
 

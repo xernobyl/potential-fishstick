@@ -45,6 +45,7 @@ import { Camera } from './scene/camera.js';
 import { PlanetoidScene } from './scenes/planetoid.js';
 import { Scene1Rasterized } from './scenes/Scene1Rasterized.js';
 import { ModelViewScene } from './scenes/modelview.js';
+import { ChibiScene } from './scenes/chibi.js';
 import { DebugViewPass, VIEWS } from './passes/debugview.js';
 import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME,
@@ -83,6 +84,7 @@ export class Renderer {
       planetoid,
       rasterized: new Scene1Rasterized(gpu, this.targets, this.shaders, planetoid),
       modelview: new ModelViewScene(gpu, this.targets, this.shaders),
+      chibi: new ChibiScene(gpu, this.targets, this.shaders),
     };
     this.sceneKey = 'planetoid';
 

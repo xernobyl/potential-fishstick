@@ -11,6 +11,7 @@
 import { Scene } from '../src/scenes/scene.js';
 import { PlanetoidScene } from '../src/scenes/planetoid.js';
 import { ModelViewScene, MODELS } from '../src/scenes/modelview.js';
+import { ChibiScene } from '../src/scenes/chibi.js';
 import { MODELVIEW, SHIP } from '../src/scene/tuning.js';
 
 let failed = 0;
@@ -19,7 +20,7 @@ const check = (ok, what, extra = '') => {
   if (!ok) failed++;
 };
 
-const SCENES = [PlanetoidScene, ModelViewScene];
+const SCENES = [PlanetoidScene, ModelViewScene, ChibiScene];
 const CONTRACT = ['init', 'update', 'writeState', 'recordWorld', 'recordAdditive', 'destroy'];
 
 // ---- the contract ----
