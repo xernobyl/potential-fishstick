@@ -20,8 +20,8 @@
 // (goal to goal, north-south), width along Z (sideline to sideline, east-west).
 
 const CR       : f32 = 1.0;     // planet radius
-const PITCH_L  : f32 = 0.92;    // pitch half-LENGTH, along Y (goal to goal)
-const PITCH_W  : f32 = 0.44;    // pitch half-WIDTH, along Z (sideline to sideline)
+const PITCH_L  : f32 = 0.86;    // pitch half-LENGTH, along Y (goal to goal)
+const PITCH_W  : f32 = 0.40;    // pitch half-WIDTH, along Z (sideline to sideline)
 const TRACK_W  : f32 = 0.07;    // running-track width
 const SEAT_W   : f32 = 0.12;    // grandstand tier depth
 const SEAT_H   : f32 = 0.05;    // tier rise
@@ -81,6 +81,13 @@ fn grassHills(dir : vec3f) -> f32 {
   return (fbm3(dir * 3.5) - 0.5) * 0.05;
 }
 
+/// The sphere surface's X coordinate at a given (y, z) — the field normal is +X,
+/// so everything that sits ON the field must rise from here, following the
+/// curvature rather than a fixed x.
+fn surfX(y : f32, z : f32) -> f32 {
+  return sqrt(max(CR * CR - y * y - z * z, 0.02));
+}
+
 fn grassColour(dir : vec3f) -> vec3f {
   let uv = dir.yz * 26.0;
   let v = voronoi2(uv);
@@ -111,48 +118,55 @@ fn mapBody(p : vec3f) -> f32 {
   }
 
   // Terraced grandstands on the two SIDELINES (z = +-PITCH_W): a staircase
-  // stepping outward in Z and upward in X (off the field normal).
+  // stepping outward in Z and upward in X, each tier anchored to the curved
+  // surface so it does not float.
   for (var i = 0; i < 4; i++) {
     let fi = f32(i);
     let z = PITCH_W + TRACK_W + SEAT_W * (fi + 0.5);
-    let x = CR - 0.04 + SEAT_H * (fi + 0.5);
-    d = smin(d, sdBox(p - vec3f(x, 0.0, z), vec3f(SEAT_H * 0.5, PITCH_L + TRACK_W, SEAT_W * 0.5)), 0.02);
-    d = smin(d, sdBox(p - vec3f(x, 0.0, -z), vec3f(SEAT_H * 0.5, PITCH_L + TRACK_W, SEAT_W * 0.5)), 0.02);
+    let x = surfX(0.0, z) + SEAT_H * (fi + 0.5);
+    d = smin(d, sdBox(p - vec3f(x, 0.0, z), vec3f(SEAT_H * 0.5, PITCH_L * 0.45, SEAT_W * 0.5)), 0.02);
+    d = smin(d, sdBox(p - vec3f(x, 0.0, -z), vec3f(SEAT_H * 0.5, PITCH_L * 0.45, SEAT_W * 0.5)), 0.02);
   }
 
-  // Goal frames (posts + crossbar) and a wire net at each END (y = +-PITCH_L).
+  // Goal frames (posts + crossbar) and a wire net at each END (y = +-PITCH_L),
+  // each piece anchored to the surface at its own (y, z).
   for (var g = 0; g < 2; g++) {
     let s = f32(g) * 2.0 - 1.0;
-    let gz = PITCH_W * 0.6;                                  // goal mouth half-width (along Z)
-    let gx = CR - 0.02 + POST_H;                             // crossbar height (along X)
+    let gz = PITCH_W * 0.6;
     for (var pi = 0; pi < 2; pi++) {
       let pz = f32(pi) * 2.0 - 1.0;
-      let post = sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, s * PITCH_L, pz * gz),
+      let bx = surfX(PITCH_L, pz * gz);
+      let post = sdRoundBox(p - vec3f(bx + POST_H * 0.5, s * PITCH_L, pz * gz),
                             vec3f(POST_H * 0.5, POST_R, POST_R), POST_R * 0.5);
       d = min(d, post);
     }
-    let bar = sdRoundBox(p - vec3f(gx, s * PITCH_L, 0.0),
+    let cx = surfX(PITCH_L, 0.0);
+    let bar = sdRoundBox(p - vec3f(cx + POST_H, s * PITCH_L, 0.0),
                          vec3f(POST_R, POST_R, gz), POST_R * 0.5);
     d = min(d, bar);
 
-    let netY = s * (PITCH_L + 0.015);
+    let netY = s * (PITCH_L + 0.02);
     for (var vw = -3; vw <= 3; vw++) {
       let wz = f32(vw) / 3.0 * gz;
-      d = min(d, sdRoundBox(p - vec3f(CR - 0.02 + POST_H * 0.5, netY, wz),
+      let nx = surfX(PITCH_L + 0.02, wz);
+      d = min(d, sdRoundBox(p - vec3f(nx + POST_H * 0.5, netY, wz),
                             vec3f(POST_H * 0.5, 0.004, 0.004), 0.002));
     }
     for (var hw = 1; hw <= 4; hw++) {
-      let wx = CR - 0.02 + POST_H * f32(hw) / 4.0;
+      let wx = surfX(PITCH_L + 0.02, 0.0) + POST_H * f32(hw) / 4.0;
       d = min(d, sdRoundBox(p - vec3f(wx, netY, 0.0),
                             vec3f(0.004, 0.004, gz), 0.002));
     }
   }
 
-  // Four floodlight poles at the pitch corners, with a bright head.
+  // Four floodlight poles at the pitch corners, anchored to the surface.
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(CR - 0.05, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
+    let cy = sy * (PITCH_L + TRACK_W + 0.05);
+    let cz = sz * (PITCH_W + TRACK_W + 0.05);
+    let bx = surfX(cy, cz);
+    let base = vec3f(bx, cy, cz);
     let pole = sdCylinderX(p - (base + vec3f(POLE_H * 0.5, 0.0, 0.0)), POLE_R, POLE_H * 0.5);
     d = min(d, pole);
     let head = sdSphere(p - (base + vec3f(POLE_H, 0.0, 0.0)), HEAD_R);
@@ -193,8 +207,9 @@ fn cornerSpotlights(p : vec3f, n : vec3f) -> vec3f {
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let lightPos = vec3f(CR + POLE_H, sy * (PITCH_L + TRACK_W + 0.05),
-                         sz * (PITCH_W + TRACK_W + 0.05));
+    let cy = sy * (PITCH_L + TRACK_W + 0.05);
+    let cz = sz * (PITCH_W + TRACK_W + 0.05);
+    let lightPos = vec3f(surfX(cy, cz) + POLE_H, cy, cz);
     let L = lightPos - p;
     let d = length(L);
     let l = L / d;
@@ -243,25 +258,31 @@ fn material(p : vec3f) -> vec3f {
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-    let head = vec3f(CR + POLE_H, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
+    let cy = sy * (PITCH_L + TRACK_W + 0.05);
+    let cz = sz * (PITCH_W + TRACK_W + 0.05);
+    let head = vec3f(surfX(cy, cz) + POLE_H, cy, cz);
     if (length(p - head) < HEAD_R * 1.4) { return vec3f(1.0, 0.97, 0.88); }
   }
 
   let onGoal = abs(abs(p.y) - PITCH_L) < 0.02 && abs(p.z) < PITCH_W * 0.62
-               && p.x < CR + POST_H + 0.02 && p.x > CR - 0.08;
+               && p.x < surfX(PITCH_L, 0.0) + POST_H + 0.02
+               && p.x > surfX(PITCH_L, 0.0) - 0.08;
   if (onGoal) { return vec3f(0.9, 0.92, 0.95); }
 
   for (var c2 = 0; c2 < 4; c2++) {
     let sy = f32(c2 & 1) * 2.0 - 1.0;
     let sz = f32((c2 >> 1) & 1) * 2.0 - 1.0;
-    let base = vec3f(CR - 0.05, sy * (PITCH_L + TRACK_W + 0.05), sz * (PITCH_W + TRACK_W + 0.05));
-    if (length((p - base).yz) < POLE_R * 1.5 && p.x > CR - 0.08 && p.x < CR + POLE_H) {
+    let cy = sy * (PITCH_L + TRACK_W + 0.05);
+    let cz = sz * (PITCH_W + TRACK_W + 0.05);
+    let base = vec3f(surfX(cy, cz), cy, cz);
+    if (length((p - base).yz) < POLE_R * 1.5 && p.x > surfX(cy, cz) - 0.08 && p.x < surfX(cy, cz) + POLE_H) {
       return vec3f(0.25, 0.26, 0.28);
     }
   }
 
   if (abs(p.z) > PITCH_W + TRACK_W + SEAT_W * 0.3 && abs(p.y) < PITCH_L + TRACK_W
-      && p.x > CR - 0.08 && p.x < CR + SEAT_H * 4.0) {
+      && p.x > surfX(0.0, PITCH_W + TRACK_W) - 0.08
+      && p.x < surfX(0.0, PITCH_W + TRACK_W) + SEAT_H * 4.0) {
     return vec3f(0.62, 0.60, 0.55);
   }
 
