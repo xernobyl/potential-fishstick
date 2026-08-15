@@ -38,10 +38,7 @@ fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
 }
 
-fn smin(a : f32, b : f32, k : f32) -> f32 {
-  let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
-}
+// `smin` comes from common.wgsl.
 
 /// A flat rounded-rectangle RING (the running track): the shell between two rounded boxes.
 fn sdRingFlat(p : vec3f, halfExtents : vec3f, thickness : f32, r : f32) -> f32 {
