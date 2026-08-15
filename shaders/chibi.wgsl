@@ -25,6 +25,12 @@ const LINE_W   : f32 = 0.012;   // pitch line half-width
 const ARC_R    : f32 = 0.12;    // corner-arc radius
 const PLAYER_Y : f32 = 0.12;    // player's pitch position (along Y)
 const PLAYER_Z : f32 = 0.06;    // player's pitch position (along Z)
+// Player proportions (scaled to ~5% of the pitch length).
+const PLAYER_HEAD_R  : f32 = 0.016;
+const PLAYER_TORSO_H : f32 = 0.020;
+const PLAYER_TORSO_W : f32 = 0.011;
+const PLAYER_LEG_LEN : f32 = 0.017;
+const PLAYER_LEG_R   : f32 = 0.004;
 
 fn sdRoundBox(p : vec3f, b : vec3f, r : f32) -> f32 {
   let q = abs(p) - b + vec3f(r);
@@ -63,14 +69,15 @@ fn onTrack(y : f32, z : f32) -> bool {
   return abs(sdRoundRect2(vec2f(y, z), b, TRACK_R)) < TRACK_W * 0.5;
 }
 
-/// Is (y, z) inside the pitch — the rectangle plus the four corner arcs?
+/// Is (y, z) inside the pitch (the playing rectangle)?
 fn inPitchRegion(y : f32, z : f32) -> bool {
-  let ay = abs(y);
-  let az = abs(z);
-  let inRect = ay < PITCH_L && az < PITCH_W;
-  let inArc = ay > PITCH_L && az > PITCH_W
-              && length(vec2f(ay - PITCH_L, az - PITCH_W)) < ARC_R;
-  return inRect || inArc;
+  return abs(y) < PITCH_L && abs(z) < PITCH_W;
+}
+
+/// Is (y, z) in the rough margin between the pitch and the track?
+fn inMargin(y : f32, z : f32) -> bool {
+  let insideInner = sdRoundRect2(vec2f(y, z), vec2f(PITCH_L + MARGIN, PITCH_W + MARGIN), TRACK_R) < 0.0;
+  return insideInner && !inPitchRegion(y, z);
 }
 
 /// A Sensi-style player: big head, chunky torso, stubby legs. Local space is
@@ -79,17 +86,12 @@ fn sdPlayer(p : vec3f) -> f32 {
   let a = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
   let q = p - a;
 
-  let headR  = 0.040;
-  let torsoH = 0.050;
-  let torsoW = 0.027;
-  let legLen = 0.042;
-  let legR   = 0.008;
-
-  let head  = sdSphere(q - vec3f(headR + torsoH + legLen, 0.0, 0.0), headR);
-  let torso = sdRoundBox(q - vec3f(legLen + torsoH * 0.5, 0.0, 0.0),
-                         vec3f(torsoH * 0.5, torsoW, torsoW), 0.010);
-  let leg1 = sdCylinderX(q - vec3f(legLen * 0.5, 0.010, 0.0), legR, legLen * 0.5);
-  let leg2 = sdCylinderX(q - vec3f(legLen * 0.5, -0.010, 0.0), legR, legLen * 0.5);
+  let head  = sdSphere(q - vec3f(PLAYER_HEAD_R + PLAYER_TORSO_H + PLAYER_LEG_LEN, 0.0, 0.0), PLAYER_HEAD_R);
+  let torso = sdRoundBox(q - vec3f(PLAYER_LEG_LEN + PLAYER_TORSO_H * 0.5, 0.0, 0.0),
+                         vec3f(PLAYER_TORSO_H * 0.5, PLAYER_TORSO_W, PLAYER_TORSO_W), PLAYER_TORSO_W * 0.45);
+  let legOff = PLAYER_LEG_R * 1.3;
+  let leg1 = sdCylinderX(q - vec3f(PLAYER_LEG_LEN * 0.5, legOff, 0.0), PLAYER_LEG_R, PLAYER_LEG_LEN * 0.5);
+  let leg2 = sdCylinderX(q - vec3f(PLAYER_LEG_LEN * 0.5, -legOff, 0.0), PLAYER_LEG_R, PLAYER_LEG_LEN * 0.5);
 
   return min(min(head, torso), min(leg1, leg2));
 }
@@ -98,10 +100,13 @@ fn mapBody(p : vec3f) -> f32 {
   let dir = normalize(p + 1e-6);
   let r = length(p);
 
-  // The planet is smooth sand; only the pitch carries grass.
+  // Grass by region: fine on the pitch, rough in the margin, smooth sand
+  // elsewhere (track + outside).
   var d = r - CR;
-  if (inPitchRegion(p.y, p.z) && p.x > 0.0) {
+  if (p.x > 0.0 && inPitchRegion(p.y, p.z)) {
     d -= grassBlades(dir, BLADE_F);
+  } else if (p.x > 0.0 && inMargin(p.y, p.z)) {
+    d -= grassBlades(dir, BLADE_F * 0.5);
   }
 
   // Corner flags: four thin posts at the pitch corners.
@@ -157,10 +162,9 @@ fn pitchLines(y : f32, z : f32) -> f32 {
   let inPen = az < penW && ay > penL && ay < PITCH_L;
   let penEdge = select(0.0, 1.0, inPen && (abs(ay - penL) < LINE_W
                          || abs(az - penW) < LINE_W || abs(ay - PITCH_L) < LINE_W));
-  // Corner arcs: a quarter circle at each of the four corners, centred on the
-  // corner itself and bulging into the outer quadrant.
+  // Corner arcs: a quarter circle at each corner, drawn INSIDE the pitch.
   let cornerDist = length(vec2f(ay - PITCH_L, az - PITCH_W));
-  let inCorner = ay > PITCH_L && az > PITCH_W;
+  let inCorner = ay < PITCH_L && az < PITCH_W;
   let arc = select(0.0, 1.0, abs(cornerDist - ARC_R) < LINE_W && inCorner);
   return max(max(boundary, max(halfway, circle)), max(max(spot, penEdge), arc));
 }
@@ -174,6 +178,7 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   var base = vec3f(0.74, 0.65, 0.48);
 
   let inPitch = p.x > 0.0 && inPitchRegion(p.y, p.z);
+  let inMarginG = p.x > 0.0 && inMargin(p.y, p.z);
   let inTrack = p.x > 0.0 && onTrack(p.y, p.z);
 
   // Pitch: fine green grass with white markings.
@@ -182,22 +187,28 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     let green = mix(vec3f(0.09, 0.40, 0.15), vec3f(0.15, 0.50, 0.21), fbm3(dir * 18.0));
     base = mix(green, vec3f(0.92, 0.94, 0.96), line);
   }
+  // Margin: rough, slightly lighter/longer grass.
+  if (inMarginG) {
+    base = mix(vec3f(0.12, 0.46, 0.18), vec3f(0.20, 0.56, 0.24), fbm3(dir * 8.0));
+  }
   // Track: cinder red.
   if (inTrack) {
     base = vec3f(0.55, 0.28, 0.20);
   }
 
-  // The Sensi player: head (skin), torso (shirt), legs (shorts).
-  // Legs span x 0..0.042, torso 0.042..0.092, head 0.092..0.172 (above the feet).
+  // The Sensi player: head (skin), torso (shirt), legs (shorts). Bounding box
+  // (not a sphere) so the colour does not bleed onto the surrounding grass.
   let pa = vec3f(surfX(PLAYER_Y, PLAYER_Z), PLAYER_Y, PLAYER_Z);
-  if (length(p - pa) < 0.18) {
-    let hx = p.x - pa.x;
-    if (hx > 0.092) {
-      base = vec3f(0.93, 0.78, 0.60);
-    } else if (hx > 0.042) {
-      base = vec3f(0.80, 0.18, 0.18);
+  let q = p - pa;
+  let ph = PLAYER_LEG_LEN + PLAYER_TORSO_H + 2.0 * PLAYER_HEAD_R;
+  let pw = max(PLAYER_TORSO_W, PLAYER_HEAD_R);
+  if (q.x > -0.005 && q.x < ph + 0.005 && length(q.yz) < pw + 0.005) {
+    if (q.x > PLAYER_LEG_LEN + PLAYER_TORSO_H) {
+      base = vec3f(0.93, 0.78, 0.60);     // head (skin)
+    } else if (q.x > PLAYER_LEG_LEN) {
+      base = vec3f(0.80, 0.18, 0.18);     // torso (shirt)
     } else {
-      base = vec3f(0.12, 0.12, 0.18);
+      base = vec3f(0.12, 0.12, 0.18);     // legs (shorts)
     }
   }
 
