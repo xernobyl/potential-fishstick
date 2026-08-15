@@ -31,6 +31,7 @@ export class ChibiScene extends Scene {
     // Arcball state, so a drag re-frames and a release keeps the view.
     this._yaw = 0;
     this._pitch = 0.35;
+    this._dist = 3.2;   // camera stand-off, dollied with W/S and wheel
   }
 
   get solidPasses() { return []; }
@@ -104,7 +105,13 @@ export class ChibiScene extends Scene {
       this._yaw += rc.dt * 0.10;
     }
 
-    const dist = 3.2;
+    // Dolly: W / Up move in, S / Down move out (cmd.pitch is +1 on W/Up).
+    const dolly = (input.cmd?.pitch ?? 0) * 1.6;
+    this._dist = Math.min(8.0, Math.max(1.5, this._dist - dolly * rc.dt));
+    // Wheel / trackpad pinch zoom.
+    const zoom = Math.exp(Math.min(1.8, Math.max(-2.3, input.zoom ?? 0)));
+
+    const dist = this._dist * zoom;
     const cp = Math.cos(this._pitch);
     const pos = [
       dist * cp * Math.cos(this._yaw),
@@ -126,6 +133,26 @@ export class ChibiScene extends Scene {
   recordWorld(encoder, frameBG, profiler) {
     this.#sync();
     const t = this.targets;
+
+    // No solid meshes in this scene, so clear the solid colour + depth targets
+    // explicitly — otherwise the previous scene's ship/satellite lingers over
+    // the planet (the TAA resolve composites whatever is still in them).
+    {
+      const pass = encoder.beginRenderPass({
+        label: 'chibi-solid-clear',
+        colorAttachments: [{
+          view: t.solid.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear', storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: t.solidDepth.createView(),
+          depthClearValue: 0.0,
+          depthLoadOp: 'clear', depthStoreOp: 'store',
+        },
+      });
+      pass.end();
+    }
 
     {
       const pass = encoder.beginComputePass({
