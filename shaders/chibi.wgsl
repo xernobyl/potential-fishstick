@@ -120,26 +120,28 @@ fn grassAO(blade : f32) -> f32 {
 /// Football pitch markings, drawn in white on the field region. Returns 1 on a
 /// line, 0 off. `y` is the goal-to-goal axis, `z` the sideline axis.
 fn pitchLines(y : f32, z : f32) -> f32 {
-  let by = abs(y) - PITCH_L;
-  let bz = abs(z) - PITCH_W;
-  let boundary = select(0.0, 1.0, max(abs(by), abs(bz)) < LINE_W);
-  let halfway = select(0.0, 1.0, abs(y) < LINE_W);
+  let ay = abs(y);
+  let az = abs(z);
+  // Boundary: the outer rectangle — goal lines + sidelines.
+  let edgeY = abs(ay - PITCH_L) < LINE_W && az < PITCH_W;
+  let edgeZ = abs(az - PITCH_W) < LINE_W && ay < PITCH_L;
+  let boundary = select(0.0, 1.0, edgeY || edgeZ);
+  // Halfway line, centre circle, centre spot.
+  let halfway = select(0.0, 1.0, ay < LINE_W);
   let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W);
   let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W);
+  // Penalty area outlines.
   let penL = PITCH_L - 0.16;
   let penW = PITCH_W * 0.55;
-  let inPen = abs(z) < penW && abs(y) > penL && abs(y) < PITCH_L;
-  let penEdge = select(0.0, 1.0, inPen && (abs(abs(y) - penL) < LINE_W
-                         || abs(abs(z) - penW) < LINE_W || abs(abs(y) - PITCH_L) < LINE_W));
-  // Corner arcs: a quarter circle at each corner.
+  let inPen = az < penW && ay > penL && ay < PITCH_L;
+  let penEdge = select(0.0, 1.0, inPen && (abs(ay - penL) < LINE_W
+                         || abs(az - penW) < LINE_W || abs(ay - PITCH_L) < LINE_W));
+  // Corner arcs: a quarter circle at each of the four corners.
   let cx = PITCH_L - LINE_W;
   let cz = PITCH_W - LINE_W;
-  let c0 = length(vec2f(y - cx, z - cz));
-  let c1 = length(vec2f(y - cx, z + cz));
-  let c2 = length(vec2f(y + cx, z - cz));
-  let c3 = length(vec2f(y + cx, z + cz));
-  let corner = min(min(c0, c1), min(c2, c3));
-  let arc = select(0.0, 1.0, abs(corner - 0.07) < LINE_W && max(abs(y), abs(z)) > max(cx, cz) - LINE_W * 2.0);
+  let cornerDist = length(vec2f(ay, az) - vec2f(cx, cz));
+  let inCorner = ay > cx && az > cz;
+  let arc = select(0.0, 1.0, abs(cornerDist - 0.07) < LINE_W && inCorner);
   return max(max(boundary, max(halfway, circle)), max(max(spot, penEdge), arc));
 }
 
