@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
 // Chibi grass planet: a small round world covered in grass — rolling hills and
-// a field of blades. Adapted from David Hoskins' "Rolling hills"
+// a fine blade field. Adapted from David Hoskins' "Rolling hills"
 // (Shadertoy Xsf3zX).
 //
-// Geometry: a sphere displaced by low-frequency fbm (the hills) and a finer
-// blade field that spikes radially outward, so the surface has real volume and
-// each blade catches the light at its own angle.
+// Geometry: a sphere displaced by low-frequency fbm (the hills) and a finer,
+// smooth value-noise blade field, so the surface has real volume that shades
+// like turf. The field is continuous and uniform over the sphere — no Voronoi
+// cell grid, so no visible facets or gaps.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -17,50 +18,16 @@ const HILL_AMP : f32 = 0.08;    // rolling-hill amplitude
 const BLADE_H  : f32 = 0.018;   // grass blade height
 const BLADE_F  : f32 = 55.0;    // blade field frequency
 
-fn sdSphere(p : vec3f, r : f32) -> f32 { return length(p) - r; }
-
-fn hash22(p : vec2f) -> vec2f {
-  let p3 = fract(vec3f(p.xyx) * vec3f(0.1031, 0.1030, 0.0973));
-  let q = p3 + dot(p3, p3.yzx + 33.33);
-  return fract((p3.xx + p3.yz) * p3.zy);
-}
-
-/// 2D Voronoi: (density 0 at cell edge .. ~0.4 at centre, random cell id).
-fn voronoi2(x : vec2f) -> vec2f {
-  let p = floor(x);
-  let f = fract(x);
-  var res = 100.0;
-  var id = 0.0;
-  for (var j = -1; j <= 1; j++) {
-    for (var i = -1; i <= 1; i++) {
-      let b = vec2f(f32(i), f32(j));
-      let r = b - f + hash22(p + b);
-      let d = dot(r, r);
-      if (d < res) { res = d; id = hash21(p + b); }
-    }
-  }
-  return vec2f(max(0.4 - sqrt(res), 0.0), id);
-}
-
-/// Sphere surface coordinates (longitude, latitude) for the blade field.
-fn surfaceUV(dir : vec3f) -> vec2f {
-  let lon = atan2(dir.z, dir.x);
-  let lat = asin(clamp(dir.y, -1.0, 1.0));
-  return vec2f(lon, lat);
-}
-
-/// Radial blade bumps: dense, low and broad, so the turf reads as a lawn rather
-/// than isolated tufts.
-fn grassBlades(dir : vec3f) -> f32 {
-  let uv = surfaceUV(dir) * vec2f(BLADE_F * 1.4, BLADE_F);
-  let v = voronoi2(uv);
-  let blade = pow(clamp(v.x / 0.4, 0.0, 1.0), 1.5);
-  return blade * BLADE_H;
-}
-
 /// Rolling hills: a low-frequency fbm displacement.
 fn grassHills(dir : vec3f) -> f32 {
   return (fbm3(dir * 2.6) - 0.5) * HILL_AMP;
+}
+
+/// Fine, smooth blade field (two octaves of value noise). Smooth rather than a
+/// Voronoi cell grid: continuous and dense, so no visible facets and no gaps.
+fn grassBlades(dir : vec3f) -> f32 {
+  let n = 0.62 * vnoise(dir * BLADE_F) + 0.38 * vnoise(dir * BLADE_F * 2.3);
+  return n * BLADE_H;
 }
 
 fn mapBody(p : vec3f) -> f32 {
@@ -82,36 +49,29 @@ fn calcNormal(p : vec3f) -> vec3f {
 
 // ---- shading --------------------------------------------------------------
 
-/// Grass colour: hill-shaded green with a subtle blade texture (less blotchy
-/// than before — the variation rides on a denser, finer field).
-fn grassColour(p : vec3f, dir : vec3f) -> vec3f {
+/// Grass colour: hill-shaded green with a subtle blade texture.
+fn grassColour(dir : vec3f, blade : f32) -> vec3f {
   let hills = fbm3(dir * 4.0);
-  let uv = surfaceUV(dir) * vec2f(BLADE_F * 1.4, BLADE_F);
-  let v = voronoi2(uv);
-  let blade = v.x;
   var col = mix(vec3f(0.06, 0.26, 0.09), vec3f(0.18, 0.47, 0.17), hills);
-  col = mix(col, vec3f(0.34, 0.52, 0.24), blade * 0.9);
-  col = mix(col, vec3f(0.66, 0.74, 0.48), step(0.36, blade) * step(0.6, v.y));
+  col = mix(col, vec3f(0.34, 0.52, 0.24), blade * 0.55);
   return col;
 }
 
-/// Cheap grass self-shadowing: darken where the blade field is dense, so the
-/// turf reads as depth rather than a flat colour.
-fn grassAO(dir : vec3f) -> f32 {
-  let uv = surfaceUV(dir) * vec2f(BLADE_F * 1.4, BLADE_F);
-  let v = voronoi2(uv);
-  return 1.0 - 0.35 * clamp(v.x * 1.5, 0.0, 1.0);
+/// Cheap grass self-shadowing: darken where the blade field is dense.
+fn grassAO(blade : f32) -> f32 {
+  return 1.0 - 0.30 * blade;
 }
 
 fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let n = calcNormal(p);
   let v = -rd;
   let dir = normalize(p + 1e-6);
-  let base = grassColour(p, dir);
+  let blade = grassBlades(dir) / BLADE_H;   // normalised 0..1 blade density
+  let base = grassColour(dir, blade);
 
   // Sun key light with a gentle ambient, so the grass stays bright but shaded.
   let diff = max(dot(n, SUN1_DIR), 0.0);
-  let ao = grassAO(dir);
+  let ao = grassAO(blade);
 
   var col = base * (vec3f(0.14) + SUN1_COL * diff * ao);
 
