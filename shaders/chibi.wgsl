@@ -13,9 +13,9 @@
 //!include "sky.wgsl"
 
 const CR       : f32 = 1.0;     // planet radius
-const HILL_AMP : f32 = 0.12;    // rolling-hill amplitude
-const BLADE_H  : f32 = 0.045;   // grass blade height
-const BLADE_F  : f32 = 22.0;    // blade field frequency
+const HILL_AMP : f32 = 0.08;    // rolling-hill amplitude
+const BLADE_H  : f32 = 0.018;   // grass blade height
+const BLADE_F  : f32 = 55.0;    // blade field frequency
 
 fn sdSphere(p : vec3f, r : f32) -> f32 { return length(p) - r; }
 
@@ -49,12 +49,13 @@ fn surfaceUV(dir : vec3f) -> vec2f {
   return vec2f(lon, lat);
 }
 
-/// Radial blade spikes: thin, sharp bumps at each Voronoi cell centre.
+/// Radial blade bumps: dense, low and broad, so the turf reads as a lawn rather
+/// than isolated tufts.
 fn grassBlades(dir : vec3f) -> f32 {
   let uv = surfaceUV(dir) * vec2f(BLADE_F * 1.4, BLADE_F);
   let v = voronoi2(uv);
-  let spike = pow(clamp(v.x / 0.4, 0.0, 1.0), 3.0);
-  return spike * BLADE_H;
+  let blade = pow(clamp(v.x / 0.4, 0.0, 1.0), 1.5);
+  return blade * BLADE_H;
 }
 
 /// Rolling hills: a low-frequency fbm displacement.
@@ -81,15 +82,16 @@ fn calcNormal(p : vec3f) -> vec3f {
 
 // ---- shading --------------------------------------------------------------
 
-/// Grass colour: hill-shaded green, lighter blades, pale seed tips.
+/// Grass colour: hill-shaded green with a subtle blade texture (less blotchy
+/// than before — the variation rides on a denser, finer field).
 fn grassColour(p : vec3f, dir : vec3f) -> vec3f {
   let hills = fbm3(dir * 4.0);
   let uv = surfaceUV(dir) * vec2f(BLADE_F * 1.4, BLADE_F);
   let v = voronoi2(uv);
   let blade = v.x;
-  var col = mix(vec3f(0.05, 0.24, 0.08), vec3f(0.18, 0.46, 0.16), hills);
-  col = mix(col, vec3f(0.42, 0.60, 0.27), blade * 1.6);
-  col = mix(col, vec3f(0.74, 0.80, 0.52), step(0.36, blade) * step(0.5, v.y));
+  var col = mix(vec3f(0.06, 0.26, 0.09), vec3f(0.18, 0.47, 0.17), hills);
+  col = mix(col, vec3f(0.34, 0.52, 0.24), blade * 0.9);
+  col = mix(col, vec3f(0.66, 0.74, 0.48), step(0.36, blade) * step(0.6, v.y));
   return col;
 }
 
