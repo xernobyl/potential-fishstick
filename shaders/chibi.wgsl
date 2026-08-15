@@ -16,7 +16,10 @@
 const CR       : f32 = 1.0;     // planet radius
 const HILL_AMP : f32 = 0.08;    // rolling-hill amplitude
 const BLADE_H  : f32 = 0.018;   // grass blade height
-const BLADE_F  : f32 = 55.0;    // blade field frequency
+const BLADE_F  : f32 = 110.0;   // blade field frequency
+const PITCH_L  : f32 = 0.86;    // pitch half-length, along Y (goal to goal)
+const PITCH_W  : f32 = 0.40;    // pitch half-width, along Z
+const LINE_W   : f32 = 0.012;   // pitch line half-width
 
 /// Rolling hills: a low-frequency fbm displacement.
 fn grassHills(dir : vec3f) -> f32 {
@@ -33,7 +36,14 @@ fn grassBlades(dir : vec3f) -> f32 {
 fn mapBody(p : vec3f) -> f32 {
   let dir = normalize(p + 1e-6);
   let r = length(p);
-  return r - CR - grassHills(dir) - grassBlades(dir);
+  // The pitch is a smooth, level region on the +X hemisphere — grass is
+  // displaced everywhere else.
+  let onField = p.x > 0.0 && abs(p.y) < PITCH_L && abs(p.z) < PITCH_W;
+  var d = r - CR;
+  if (!onField) {
+    d -= grassHills(dir) + grassBlades(dir);
+  }
+  return d;
 }
 
 fn bodyBound() -> f32 {
@@ -62,12 +72,36 @@ fn grassAO(blade : f32) -> f32 {
   return 1.0 - 0.30 * blade;
 }
 
+/// Football pitch markings, drawn in white on the field region. Returns 1 on a
+/// line, 0 off. `y` is the goal-to-goal axis, `z` the sideline axis.
+fn pitchLines(y : f32, z : f32) -> f32 {
+  let by = abs(y) - PITCH_L;
+  let bz = abs(z) - PITCH_W;
+  let boundary = select(0.0, 1.0, max(abs(by), abs(bz)) < LINE_W);
+  let halfway = select(0.0, 1.0, abs(y) < LINE_W);
+  let circle = select(0.0, 1.0, abs(length(vec2f(y, z)) - 0.09) < LINE_W);
+  let spot = select(0.0, 1.0, length(vec2f(y, z)) < LINE_W);
+  let penL = PITCH_L - 0.19;
+  let penW = PITCH_W * 0.55;
+  let inPen = abs(z) < penW && abs(y) > penL && abs(y) < PITCH_L;
+  let penEdge = select(0.0, 1.0, inPen && (abs(abs(y) - penL) < LINE_W
+                         || abs(abs(z) - penW) < LINE_W || abs(abs(y) - PITCH_L) < LINE_W));
+  return max(boundary, max(max(halfway, circle), max(spot, penEdge)));
+}
+
 fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let n = calcNormal(p);
   let v = -rd;
   let dir = normalize(p + 1e-6);
   let blade = grassBlades(dir) / BLADE_H;   // normalised 0..1 blade density
-  let base = grassColour(dir, blade);
+  var base = grassColour(dir, blade);
+
+  // Mowed pitch: a slightly different green with white markings.
+  if (p.x > 0.0 && abs(p.y) < PITCH_L + 0.02 && abs(p.z) < PITCH_W + 0.02) {
+    let line = pitchLines(p.y, p.z);
+    let mow = mix(vec3f(0.10, 0.42, 0.16), vec3f(0.16, 0.52, 0.22), fbm3(dir * 12.0));
+    base = mix(mow, vec3f(0.92, 0.94, 0.96), line);
+  }
 
   // Sun key light with a gentle ambient, so the grass stays bright but shaded.
   let diff = max(dot(n, SUN1_DIR), 0.0);
