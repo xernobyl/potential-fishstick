@@ -200,16 +200,16 @@ fn pitchLines(x : f32, z : f32) -> f32 {
   // Boundary rectangle, halfway line, centre circle, centre spot, two penalty-area outlines.
   let bx = abs(x) - PITCH_W;
   let bz = abs(z) - PITCH_L;
-  let boundary = max(abs(bx), abs(bz)) < LINE_W ? 1.0 : 0.0;
-  let halfway = abs(z) < LINE_W ? 1.0 : 0.0;
-  let circle = abs(length(vec2f(x, z)) - 0.06) < LINE_W ? 1.0 : 0.0;
-  let spot = length(vec2f(x, z)) < LINE_W ? 1.0 : 0.0;
+  let boundary = select(0.0, 1.0, max(abs(bx), abs(bz)) < LINE_W);
+  let halfway = select(0.0, 1.0, abs(z) < LINE_W);
+  let circle = select(0.0, 1.0, abs(length(vec2f(x, z)) - 0.06) < LINE_W);
+  let spot = select(0.0, 1.0, length(vec2f(x, z)) < LINE_W);
   // penalty area: a rectangle outline at each end
   let penL = PITCH_L - 0.13;
   let penW = PITCH_W * 0.55;
   let inPen = abs(x) < penW && abs(z) > penL && abs(z) < PITCH_L;
-  let penEdge = inPen && (abs(abs(z) - penL) < LINE_W || abs(abs(x) - penW) < LINE_W
-                          || abs(abs(z) - PITCH_L) < LINE_W) ? 1.0 : 0.0;
+  let penEdge = select(0.0, 1.0, inPen && (abs(abs(z) - penL) < LINE_W
+                         || abs(abs(x) - penW) < LINE_W || abs(abs(z) - PITCH_L) < LINE_W));
   return max(boundary, max(max(halfway, circle), max(spot, penEdge)));
 }
 
