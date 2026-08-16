@@ -24,6 +24,9 @@ const FLAG_R   : f32 = 0.006;   // corner-flag post radius
 const GOAL_W   : f32 = 0.187;   // goal mouth half-width
 const GOAL_H   : f32 = 0.08;    // goal height
 const GOAL_R   : f32 = 0.005;   // goal post radius
+const FLOOD_H  : f32 = 0.35;    // floodlight pole height
+const FLOOD_R  : f32 = 0.01;    // floodlight pole radius
+const FLOOD_HEAD : f32 = 0.035; // floodlight head radius
 const LINE_W   : f32 = 0.007;   // pitch line half-width
 const ARC_R    : f32 = 0.12;    // corner-arc radius
 // Player proportions (scaled to ~5% of the pitch length).
@@ -159,6 +162,57 @@ fn sdGoal(p : vec3f) -> f32 {
   return d;
 }
 
+/// Floodlight corner position (y, z) for corner index c.
+fn floodCorner(c : i32) -> vec2f {
+  let sy = f32(c & 1) * 2.0 - 1.0;
+  let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
+  return vec2f(sy * (PITCH_L + MARGIN + TRACK_W + 0.05), sz * (PITCH_W + MARGIN + TRACK_W + 0.05));
+}
+
+/// Four floodlight poles, one at each corner, with a bright head.
+fn sdFloodlight(p : vec3f) -> f32 {
+  var d = 1e5;
+  for (var c = 0; c < 4; c++) {
+    let pos = floodCorner(c);
+    let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
+    let pole = sdCylinderX(p - (a + vec3f(FLOOD_H * 0.5, 0.0, 0.0)), FLOOD_R, FLOOD_H * 0.5);
+    d = min(d, pole);
+    let head = sdSphere(p - (a + vec3f(FLOOD_H, 0.0, 0.0)), FLOOD_HEAD);
+    d = min(d, head);
+  }
+  return d;
+}
+
+/// Floodlight illumination: four point lights at the heads, falling off onto
+/// the pitch.
+fn floodlightLight(p : vec3f, n : vec3f) -> vec3f {
+  var acc = vec3f(0.0);
+  for (var c = 0; c < 4; c++) {
+    let pos = floodCorner(c);
+    let lp = vec3f(surfX(pos.x, pos.y) + FLOOD_H, pos.x, pos.y);
+    let L = lp - p;
+    let d = length(L);
+    let l = L / d;
+    let att = 1.0 / (1.0 + 0.4 * d * d);
+    acc += vec3f(1.0, 0.95, 0.85) * att * max(dot(n, l), 0.0);
+  }
+  return acc;
+}
+
+/// Raymarched soft shadow toward the sun. Returns 0 (fully shadowed) .. 1 (lit).
+/// Marches mapBody (players, goals, floodlights) with a wide penumbra kernel.
+fn softShadow(ro : vec3f, rd : vec3f, mint : f32, maxt : f32) -> f32 {
+  var res = 1.0;
+  var t = mint;
+  for (var i = 0; i < 14; i++) {
+    let h = mapBody(ro + rd * t);
+    res = min(res, h / (t * 0.18));
+    t += max(h, 0.012);
+    if (res < 0.005 || t > maxt) { break; }
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
 /// Shade one player: returns (colour, 1) on the player's body, else (0,0,0,0).
 fn playerShade(p : vec3f, pos : vec2f, shirt : vec3f) -> vec4f {
   let wp = pos + wander(pos, frame.camPos.w);
@@ -208,6 +262,9 @@ fn mapBody(p : vec3f) -> f32 {
 
   // The goal frames.
   d = min(d, sdGoal(p));
+
+  // The floodlight poles.
+  d = min(d, sdFloodlight(p));
 
   return d;
 }
@@ -318,9 +375,21 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     }
   }
 
-  // Sun key light with a gentle ambient.
-  let diff = max(dot(n, SUN1_DIR), 0.0);
+  // Floodlight heads: bright white.
+  for (var c = 0; c < 4; c++) {
+    let pos = floodCorner(c);
+    let hp = vec3f(surfX(pos.x, pos.y) + FLOOD_H, pos.x, pos.y);
+    if (length(p - hp) < FLOOD_HEAD * 1.3) { base = vec3f(1.0, 0.97, 0.88); }
+  }
+
+  // Sun key light with a gentle ambient, soft-shadowed by the raymarched
+  // players/goals/floodlights.
+  let sunSh = softShadow(p + n * 0.01, SUN1_DIR, 0.02, 1.2);
+  let diff = max(dot(n, SUN1_DIR), 0.0) * sunSh;
   var col = base * (vec3f(0.16) + SUN1_COL * diff);
+
+  // Floodlight illumination.
+  col += base * floodlightLight(p, n);
 
   // A warm fill from the opposite side, for rounded, natural shading.
   let fill = max(dot(n, vec3f(-0.4, 0.35, -0.2)), 0.0);
