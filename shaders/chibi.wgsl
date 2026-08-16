@@ -99,10 +99,21 @@ fn inMargin(y : f32, z : f32) -> bool {
   return insideInner && !inPitchRegion(y, z);
 }
 
+/// A smooth, bounded wander for a player at base position `pos`, driven by time.
+/// Two incommensurate sine waves per axis give an organic, non-repeating path.
+fn wander(pos : vec2f, t : f32) -> vec2f {
+  let ph = hash21(pos * 9.1) * 6.2832;
+  return vec2f(
+    0.07 * sin(t * 0.8 + ph) + 0.03 * sin(t * 1.7 + ph * 1.7),
+    0.05 * cos(t * 0.65 + ph * 1.3) + 0.03 * cos(t * 1.3 + ph * 0.6),
+  );
+}
+
 /// A Sensi-style player at pitch position (y, z). Local space is anchored at
 /// the feet with +X as "up".
 fn sdPlayerAt(p : vec3f, pos : vec2f) -> f32 {
-  let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
+  let wp = pos + wander(pos, frame.camPos.w);
+  let a = vec3f(surfX(wp.x, wp.y), wp.x, wp.y);
   let q = p - a;
 
   let head  = sdSphere(q - vec3f(PLAYER_HEAD_R + PLAYER_TORSO_H + PLAYER_LEG_LEN, 0.0, 0.0), PLAYER_HEAD_R);
@@ -150,7 +161,8 @@ fn sdGoal(p : vec3f) -> f32 {
 
 /// Shade one player: returns (colour, 1) on the player's body, else (0,0,0,0).
 fn playerShade(p : vec3f, pos : vec2f, shirt : vec3f) -> vec4f {
-  let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
+  let wp = pos + wander(pos, frame.camPos.w);
+  let a = vec3f(surfX(wp.x, wp.y), wp.x, wp.y);
   let q = p - a;
   let ph = PLAYER_LEG_LEN + PLAYER_TORSO_H + 2.0 * PLAYER_HEAD_R;
   let pw = max(PLAYER_TORSO_W, PLAYER_HEAD_R);
