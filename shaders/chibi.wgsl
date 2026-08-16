@@ -462,6 +462,9 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   // Floodlights: metal A-frame structure, topped by a flat panel whose front
   // face carries four emissive lamp squares (a 2x2 grid). The lamps are
   // self-luminous and bright enough to bloom; the rest reads as grey metal.
+  // `sdFloodlight` is hoisted: it loops all four corners itself, so calling it
+  // inside the corner loop would evaluate it four times per pixel.
+  let fd = sdFloodlight(p);
   for (var c = 0; c < 4; c++) {
     let pos = floodCorner(c);
     let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
@@ -475,12 +478,9 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     let onLamp = abs(q.x - FLOOD_PANEL_T) < FLOOD_PANEL_T * 0.5
         && abs(ay - FLOOD_LAMP_OFF) < FLOOD_LAMP_SZ
         && abs(az - FLOOD_LAMP_OFF) < FLOOD_LAMP_SZ;
-    if (onLamp) {
-      emissive = vec3f(4.0, 3.6, 2.6);
-    } else if (sdFloodlight(p) < FLOOD_R * 1.2) {
-      base = vec3f(0.33, 0.36, 0.40);
-    }
+    if (onLamp) { emissive = vec3f(4.0, 3.6, 2.6); }
   }
+  if (emissive.r < 0.5 && fd < FLOOD_R * 1.2) { base = vec3f(0.33, 0.36, 0.40); }
 
   // Sun key light, soft-shadowed by the raymarched players/goals/floodlights.
   // Ambient kept low so the floodlights read as the primary source.
