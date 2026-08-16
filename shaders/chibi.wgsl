@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // Chibi planet: a small round sand world with a football pitch — fine grass and
-// white markings, a running track, corner flags and a Sensi-style player.
+// white markings, a running track, corner flags, goal frames, four floodlights
+// and two teams of Sensi-style players plus a referee and linesmen.
 //
-// Geometry: a smooth sand sphere; only the pitch carries a fine value-noise
-// blade field for the grass. Everything is drawn in the material (no texture
-// assets).
+// Geometry: a smooth sand sphere; only the pitch and margin carry a value-noise
+// blade field. Everything is drawn in the material (no texture assets). Shadows
+// are raymarched toward the sun.
 // ---------------------------------------------------------------------------
 
 //!include "common.wgsl"
@@ -162,11 +163,12 @@ fn sdGoal(p : vec3f) -> f32 {
   return d;
 }
 
-/// Floodlight corner position (y, z) for corner index c.
+/// Floodlight corner position (y, z) — on the track's centreline so the poles
+/// stay inside the planet's silhouette.
 fn floodCorner(c : i32) -> vec2f {
   let sy = f32(c & 1) * 2.0 - 1.0;
   let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
-  return vec2f(sy * (PITCH_L + MARGIN + TRACK_W + 0.05), sz * (PITCH_W + MARGIN + TRACK_W + 0.05));
+  return vec2f(sy * (PITCH_L + MARGIN + TRACK_W * 0.5), sz * (PITCH_W + MARGIN + TRACK_W * 0.5));
 }
 
 /// Four floodlight poles, one at each corner, with a bright head.
@@ -197,20 +199,6 @@ fn floodlightLight(p : vec3f, n : vec3f) -> vec3f {
     acc += vec3f(1.0, 0.95, 0.85) * att * max(dot(n, l), 0.0);
   }
   return acc;
-}
-
-/// Raymarched soft shadow toward the sun. Returns 0 (fully shadowed) .. 1 (lit).
-/// Marches mapBody (players, goals, floodlights) with a wide penumbra kernel.
-fn softShadow(ro : vec3f, rd : vec3f, mint : f32, maxt : f32) -> f32 {
-  var res = 1.0;
-  var t = mint;
-  for (var i = 0; i < 14; i++) {
-    let h = mapBody(ro + rd * t);
-    res = min(res, h / (t * 0.18));
-    t += max(h, 0.012);
-    if (res < 0.005 || t > maxt) { break; }
-  }
-  return clamp(res, 0.0, 1.0);
 }
 
 /// Shade one player: returns (colour, 1) on the player's body, else (0,0,0,0).
@@ -269,9 +257,23 @@ fn mapBody(p : vec3f) -> f32 {
   return d;
 }
 
+/// Raymarched soft shadow toward the sun. Returns 0 (fully shadowed) .. 1 (lit).
+/// Marches mapBody (players, goals, floodlights) with a wide penumbra kernel.
+fn softShadow(ro : vec3f, rd : vec3f, mint : f32, maxt : f32) -> f32 {
+  var res = 1.0;
+  var t = mint;
+  for (var i = 0; i < 14; i++) {
+    let h = mapBody(ro + rd * t);
+    res = min(res, h / (t * 0.18));
+    t += max(h, 0.012);
+    if (res < 0.005 || t > maxt) { break; }
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
 fn bodyBound() -> f32 {
-  // Covers the planet, the player (tallest feature) and the corner flags.
-  return CR + 0.3;
+  // Covers the floodlight heads (the tallest feature), plus margin.
+  return CR + FLOOD_H + FLOOD_HEAD + 0.1;
 }
 
 fn calcNormal(p : vec3f) -> vec3f {
