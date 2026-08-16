@@ -21,6 +21,11 @@ There is a second scene — a model viewer, for looking at those generated meshe
 it from the dropdown under `g`, which also reports what the active scene is actually drawing:
 triangles, vertices, draw calls after culling, and which LOD level was selected.
 
+There is a third scene — a chibi grass planet with a football pitch, a running track, corner flags,
+goals, four A-frame floodlights and two teams of players. It is a self-contained march (its own SDF and
+shading in `chibi.wgsl`), and it reuses the shared dressing — the satellite swarm and the curl-noise
+auroras — through the same passes the planetoid uses, so it gets the full post chain for free.
+
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
 **space** to shoot — or hold it, and let go.
 

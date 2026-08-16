@@ -48,7 +48,7 @@ surface or drawing a star does not pull in the marched body.
 
 ## Scenes
 
-The renderer draws a SCENE. There are two, and the split falls where the frame graph already had a
+The renderer draws a SCENE. There are three, and the split falls where the frame graph already had a
 seam.
 
 | | Owns |
@@ -58,9 +58,11 @@ seam.
 
 `scenes/planetoid.js` is the original — the marched body, the rings, the ship, the satellites and the
 additive layer. `scenes/modelview.js` is a turntable for inspecting the generated meshes on their own,
-since there is no file to open in a modelling tool. Both are constructed and initialised at startup, so
-switching is a property change rather than a load; they share the ship's contoured mesh through a memo,
-so the second costs GPU buffers rather than another ~135 ms of contouring.
+since there is no file to open in a modelling tool. `scenes/chibi.js` is a self-contained march — a
+grass football planet — that drops the satellite and aurora passes in unchanged. All are constructed
+and initialised at startup, so switching is a property change rather than a load; they share the ship's
+and satellite's contoured meshes through memos, so a second scene costs GPU buffers rather than another
+~135 ms of contouring.
 
 The contract is six methods and a getter — `init`, `update`, `writeState`, `recordWorld`,
 `recordAdditive`, `destroy`, and `solidPasses`. LOD selection and the wireframe view apply to whatever

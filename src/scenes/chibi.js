@@ -9,7 +9,12 @@
  */
 
 import { Scene } from './scene.js';
-import { wgslDefines } from '../scene/tuning.js';
+import { SolidMeshPass } from '../passes/solidmesh.js';
+import { AdditivePass } from '../passes/additive.js';
+import { Mesh } from '../core/mesh.js';
+import { Aurora } from '../scene/aurora.js';
+import { buildSatelliteMesh } from './planetoid.js';
+import { SATELLITES, AURORA, wgslDefines } from '../scene/tuning.js';
 
 /** A stand-in for the ship, filled once. The uniform writer reads these positionally. */
 const DUMMY_SHIP = () => ({
@@ -32,9 +37,28 @@ export class ChibiScene extends Scene {
     this._yaw = 0;
     this._pitch = 0.35;
     this._dist = 3.2;   // camera stand-off, dollied with W/S and wheel
+
+    // The shared world dressing, reused from the planetoid: a curl-noise aurora
+    // and the satellite swarm. Both are generic passes, so they drop in with no
+    // changes to the march or the post chain.
+    this.aurora = new Aurora(gpu.device);
+    this.satellites = new SolidMeshPass(gpu, targets, shaders, {
+      label: 'satellites',
+      shader: 'satmesh.wgsl',
+      clear: true,   // the first (and only) solid pass here, so it clears the layer
+      mesh: () => new Mesh(gpu.device, buildSatelliteMesh(), 'satellites'),
+      instances: (range) => (range.id === 0 ? SATELLITES.count : SATELLITES.count * 2),
+    });
+    this.auroraPass = new AdditivePass(gpu, targets, shaders, {
+      label: 'aurora',
+      shader: 'aurora.wgsl',
+      vertices: (AURORA.samples - 1) * 6,
+      instances: AURORA.ribbons,
+      source: () => this.aurora.buffer,
+    });
   }
 
-  get solidPasses() { return []; }
+  get solidPasses() { return [this.satellites]; }
 
   async init(rc) {
     const d = this.gpu.device;
@@ -72,6 +96,10 @@ export class ChibiScene extends Scene {
       }),
       compute: { module: mod, entryPoint: 'march_main' },
     });
+
+    // The shared dressing: the satellite mesh pass and the aurora additive pass.
+    await this.satellites.init(rc.frameBGL, defines);
+    await this.auroraPass.init(rc.frameBGL, defines);
   }
 
   #sync() {
@@ -122,37 +150,21 @@ export class ChibiScene extends Scene {
     const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
     for (let i = 0; i < 3; i++) fwd[i] /= len;
     camera.lookAt(pos, fwd, dist);
+
+    // Advance the aurora ribbons.
+    this.aurora.update(rc.dt, rc.time);
   }
 
   writeState(st) {
     st.modelView = false;
     st.charge = 0;
     st.ship = this._ship;
+    st.auroraPhase = this.aurora.emitPhase;
   }
 
-  recordWorld(encoder, frameBG, profiler) {
+  recordWorld(encoder, frameBG, profiler, rc) {
     this.#sync();
     const t = this.targets;
-
-    // No solid meshes in this scene, so clear the solid colour + depth targets
-    // explicitly — otherwise the previous scene's ship/satellite lingers over
-    // the planet (the TAA resolve composites whatever is still in them).
-    {
-      const pass = encoder.beginRenderPass({
-        label: 'chibi-solid-clear',
-        colorAttachments: [{
-          view: t.solid.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear', storeOp: 'store',
-        }],
-        depthStencilAttachment: {
-          view: t.solidDepth.createView(),
-          depthClearValue: 0.0,
-          depthLoadOp: 'clear', depthStoreOp: 'store',
-        },
-      });
-      pass.end();
-    }
 
     {
       const pass = encoder.beginComputePass({
@@ -175,9 +187,14 @@ export class ChibiScene extends Scene {
       pass.dispatchWorkgroups(Math.ceil(t.width / 8), Math.ceil(t.height / 8));
       pass.end();
     }
+
+    // The satellite swarm, after the march so the motion sentinel is in place.
+    // It clears the solid layer itself (first solid pass), so the previous
+    // scene's ship/satellite cannot linger over the planet.
+    this.satellites.record(encoder, frameBG, profiler, rc.frustum);
   }
 
-  recordAdditive(encoder) {
+  recordAdditive(encoder, frameBG, profiler) {
     // Clear the shared additive target; the planetoid's embers/contrails must not linger here.
     const pass = encoder.beginRenderPass({
       label: 'chibi-additive-clear',
@@ -188,5 +205,13 @@ export class ChibiScene extends Scene {
       }],
     });
     pass.end();
+
+    // The aurora, accumulated into the same target.
+    this.auroraPass.record(encoder, frameBG, profiler);
+  }
+
+  destroy() {
+    this.aurora.destroy();
+    this.satellites.destroy();
   }
 }

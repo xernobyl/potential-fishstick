@@ -27,8 +27,12 @@ const GOAL_H   : f32 = 0.08;    // goal height
 const GOAL_R   : f32 = 0.005;   // goal post radius
 const FLOOD_H  : f32 = 0.35;    // floodlight pole height
 const FLOOD_R  : f32 = 0.01;    // floodlight pole radius
-const FLOOD_HEAD : f32 = 0.05;  // floodlight head size
+const FLOOD_HEAD : f32 = 0.05;  // floodlight head scale (panel fits within it)
 const FLOOD_POWER : f32 = 3.0;  // floodlight light intensity
+const FLOOD_PANEL_T : f32 = 0.018;  // panel half-thickness (along the light axis)
+const FLOOD_PANEL_W : f32 = 0.065;  // panel half-width / half-height
+const FLOOD_LAMP_OFF : f32 = 0.03;  // lamp centre offset from the panel centre
+const FLOOD_LAMP_SZ  : f32 = 0.021; // lamp square half-size
 const LINE_W   : f32 = 0.007;   // pitch line half-width
 const ARC_R    : f32 = 0.12;    // corner-arc radius
 // Player proportions (scaled to ~5% of the pitch length).
@@ -85,6 +89,14 @@ fn sdCylinderRadial(p : vec3f, a : vec3f, r : f32, hh : f32) -> f32 {
   let q = localFrame(p, a, normalize(a));
   let d = vec2f(length(q.yz) - r, abs(q.x) - hh);
   return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
+}
+
+/// A capsule (line segment) between `a` and `b`, radius `r`.
+fn sdCapsule(p : vec3f, a : vec3f, b : vec3f, r : f32) -> f32 {
+  let pa = p - a;
+  let ba = b - a;
+  let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h) - r;
 }
 
 /// Fine, smooth blade field (two octaves of value noise), parameterised by
@@ -170,7 +182,9 @@ fn sdGoal(p : vec3f) -> f32 {
     for (var pi = 0; pi < 2; pi++) {
       let pz = f32(pi) * 2.0 - 1.0;
       let a = vec3f(surfX(s * PITCH_L, pz * GOAL_W), s * PITCH_L, pz * GOAL_W);
-      let post = sdCylinderRadial(p, a, GOAL_R, GOAL_H * 0.5);
+      // A radial cylinder is centred on its anchor, so lift the anchor to the
+      // post's midpoint to get the full GOAL_H above the surface.
+      let post = sdCylinderRadial(p, a + normalize(a) * GOAL_H * 0.5, GOAL_R, GOAL_H * 0.5);
       d = min(d, post);
     }
     // Crossbar at the posts' top height, spanning the goal mouth (world Z).
@@ -190,35 +204,49 @@ fn floodCorner(c : i32) -> vec2f {
   return vec2f(sy * (PITCH_L + MARGIN + TRACK_W * 0.5), sz * (PITCH_W + MARGIN + TRACK_W * 0.5));
 }
 
-/// Four floodlight poles with angled heads that aim at the pitch centre.
+/// Four A-frame floodlights: two splayed legs, a cross-brace, a metal head
+/// angled toward the pitch and an emissive lamp at its front.
 fn sdFloodlight(p : vec3f) -> f32 {
   var d = 1e5;
   for (var c = 0; c < 4; c++) {
     let pos = floodCorner(c);
     let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
     let rad = normalize(a);
-    // Pole: a radial cylinder.
-    let pole = sdCylinderRadial(p, a, FLOOD_R, FLOOD_H * 0.5);
-    d = min(d, pole);
-    // Head: a housing angled toward the pitch centre, with a lamp at the front.
-    let aHead = a + rad * FLOOD_H;
-    let inward = normalize(vec3f(CR, 0.0, 0.0) - aHead);
-    let q = localFrame(p, aHead, inward);
-    let housing = sdRoundBox(q, vec3f(FLOOD_HEAD * 1.1, FLOOD_HEAD * 0.55, FLOOD_HEAD * 0.55), 0.006);
-    d = min(d, housing);
-    let lamp = sdSphere(q - vec3f(FLOOD_HEAD * 1.0, 0.0, 0.0), FLOOD_HEAD * 0.42);
-    d = min(d, lamp);
+    let aTop = a + rad * FLOOD_H;
+
+    // Tangent basis, so the A-frame splays across the planet's surface.
+    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(rad.y) > 0.99);
+    let t1 = normalize(cross(up, rad));
+
+    // A-frame: two legs splayed in t1, meeting at the top, plus a cross-brace.
+    let spread = FLOOD_H * 0.30;
+    let leg1 = sdCapsule(p, a + t1 * spread, aTop, FLOOD_R * 0.8);
+    let leg2 = sdCapsule(p, a - t1 * spread, aTop, FLOOD_R * 0.8);
+    let brace = sdCapsule(p, a + t1 * spread * 0.45 + rad * FLOOD_H * 0.55,
+                          a - t1 * spread * 0.45 + rad * FLOOD_H * 0.55, FLOOD_R * 0.5);
+    d = min(d, min(leg1, min(leg2, brace)));
+
+    // Head: a flat panel — a "window" of four lamp squares — angled toward the
+    // pitch. Its back face sits on the pole top; the lamps are on the front.
+    let inward = normalize(vec3f(CR, 0.0, 0.0) - aTop);
+    let headC = aTop + inward * FLOOD_PANEL_T;
+    let q = localFrame(p, headC, inward);
+    let panel = sdRoundBox(q, vec3f(FLOOD_PANEL_T, FLOOD_PANEL_W, FLOOD_PANEL_W), 0.004);
+    d = min(d, panel);
   }
   return d;
 }
 
-/// Floodlight illumination: four spotlights aimed at the pitch centre.
+/// Floodlight illumination: four spotlights aimed at the pitch centre, emitted
+/// from the lamp panel at the front of each head.
 fn floodlightLight(p : vec3f, n : vec3f) -> vec3f {
   var acc = vec3f(0.0);
   for (var c = 0; c < 4; c++) {
     let pos = floodCorner(c);
     let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
-    let lp = a + normalize(a) * FLOOD_H;
+    let aTop = a + normalize(a) * FLOOD_H;
+    let inward = normalize(vec3f(CR, 0.0, 0.0) - aTop);
+    let lp = aTop + inward * (2.0 * FLOOD_PANEL_T);
     let L = lp - p;
     let d = length(L);
     let l = L / d;
@@ -348,6 +376,9 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
 
   // Default: sand.
   var base = vec3f(0.74, 0.65, 0.48);
+  // Set to a bright colour when the point is an emissive lamp; shading is
+  // bypassed for it (a lamp does not take sun or floodlight).
+  var emissive = vec3f(0.0);
 
   let inPitch = p.x > 0.0 && inPitchRegion(p.y, p.z);
   let inMarginG = p.x > 0.0 && inMargin(p.y, p.z);
@@ -382,19 +413,11 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   let pl2 = playerShade(p, LINESMAN_B, SHIRT_L);
   if (pl2.w > 0.5) { base = pl2.xyz; }
 
-  // Goals: white frame (two posts + crossbar) at each end.
-  for (var g = 0; g < 2; g++) {
-    let s = f32(g) * 2.0 - 1.0;
-    let gy = s * PITCH_L;
-    let gx0 = surfX(PITCH_L, GOAL_W);
-    let nearPost = abs(abs(p.z) - GOAL_W) < GOAL_R * 3.0 && abs(p.y - gy) < GOAL_R * 3.0;
-    let nearBar = abs(p.x - (gx0 + GOAL_H)) < GOAL_R * 3.0 && abs(p.z) < GOAL_W && abs(p.y - gy) < GOAL_R * 3.0;
-    if ((nearPost || nearBar) && p.x > gx0 - 0.01 && p.x < gx0 + GOAL_H + 0.01) {
-      base = vec3f(0.92, 0.94, 0.96);
-    }
-  }
+  // Goals: white frame. The marched point is ~0 distance from the goal SDF when
+  // it sits on a post or crossbar, so proximity colours exactly the frame.
+  if (sdGoal(p) < GOAL_R * 1.5) { base = vec3f(0.95, 0.95, 0.97); }
 
-  // Corner flags: bright yellow posts.
+  // Corner flags: fluorescent yellow posts.
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
@@ -403,18 +426,31 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     let fx = surfX(cy, cz);
     if (abs(p.y - cy) < FLAG_R * 3.0 && abs(p.z - cz) < FLAG_R * 3.0
         && p.x > fx - 0.01 && p.x < fx + FLAG_H + 0.01) {
-      base = vec3f(1.0, 0.72, 0.12);
+      base = vec3f(0.85, 0.95, 0.08);
     }
   }
 
-  // Floodlight lamps: bright white at the front of each angled head.
+  // Floodlights: metal A-frame structure, topped by a flat panel whose front
+  // face carries four emissive lamp squares (a 2x2 grid). The lamps are
+  // self-luminous and bright enough to bloom; the rest reads as grey metal.
   for (var c = 0; c < 4; c++) {
     let pos = floodCorner(c);
     let a = vec3f(surfX(pos.x, pos.y), pos.x, pos.y);
-    let aHead = a + normalize(a) * FLOOD_H;
-    let inward = normalize(vec3f(CR, 0.0, 0.0) - aHead);
-    let lp = aHead + inward * FLOOD_HEAD;
-    if (length(p - lp) < FLOOD_HEAD * 0.6) { base = vec3f(1.0, 0.97, 0.88); }
+    let rad = normalize(a);
+    let aTop = a + rad * FLOOD_H;
+    let inward = normalize(vec3f(CR, 0.0, 0.0) - aTop);
+    let headC = aTop + inward * FLOOD_PANEL_T;
+    let q = localFrame(p, headC, inward);
+    let ay = abs(q.y);
+    let az = abs(q.z);
+    let onLamp = abs(q.x - FLOOD_PANEL_T) < FLOOD_PANEL_T * 0.5
+        && abs(ay - FLOOD_LAMP_OFF) < FLOOD_LAMP_SZ
+        && abs(az - FLOOD_LAMP_OFF) < FLOOD_LAMP_SZ;
+    if (onLamp) {
+      emissive = vec3f(4.0, 3.6, 2.6);
+    } else if (sdFloodlight(p) < FLOOD_R * 1.2) {
+      base = vec3f(0.33, 0.36, 0.40);
+    }
   }
 
   // Sun key light, soft-shadowed by the raymarched players/goals/floodlights.
@@ -433,6 +469,9 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   // A hint of subsurface translucency at grazing angles.
   let grazing = pow(1.0 - max(dot(n, v), 0.0), 2.0);
   col += base * vec3f(0.30, 0.50, 0.20) * grazing * 0.4;
+
+  // An emissive lamp is its own light source: return it unshaded.
+  if (emissive.r > 0.5) { return emissive; }
 
   return col;
 }

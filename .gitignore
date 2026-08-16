@@ -2,3 +2,5 @@
 
 # Local editor/agent scratch (launch configs, etc).
 .claude/
+.reasonix/
+reasonix.toml
