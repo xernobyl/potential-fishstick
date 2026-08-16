@@ -14,7 +14,7 @@
 
 const CR       : f32 = 1.0;     // planet radius
 const BLADE_H  : f32 = 0.018;   // grass blade height
-const BLADE_F  : f32 = 220.0;   // pitch blade frequency
+const BLADE_F  : f32 = 440.0;   // pitch blade frequency
 const PITCH_L  : f32 = 0.62;    // pitch half-length, along Y (goal to goal)
 const PITCH_W  : f32 = 0.34;    // pitch half-width, along Z
 const MARGIN   : f32 = 0.14;    // grass margin between pitch and track
@@ -28,7 +28,7 @@ const GOAL_R   : f32 = 0.005;   // goal post radius
 const FLOOD_H  : f32 = 0.35;    // floodlight pole height
 const FLOOD_R  : f32 = 0.01;    // floodlight pole radius
 const FLOOD_HEAD : f32 = 0.05;  // floodlight head scale (panel fits within it)
-const FLOOD_POWER : f32 = 3.0;  // floodlight light intensity
+const FLOOD_POWER : f32 = 6.0;  // floodlight light intensity
 const FLOOD_PANEL_T : f32 = 0.018;  // panel half-thickness (along the light axis)
 const FLOOD_PANEL_W : f32 = 0.065;  // panel half-width / half-height
 const FLOOD_LAMP_OFF : f32 = 0.03;  // lamp centre offset from the panel centre
@@ -185,6 +185,21 @@ fn sdPlayers(p : vec3f) -> f32 {
   return d;
 }
 
+/// A goal's crossbar: a tube following the arc of the sphere at radius
+/// CR + GOAL_H across the goal mouth. The posts diverge radially, so their
+/// tops lie on that sphere (at a * (1 + GOAL_H)); the bar curves with it
+/// instead of staying a straight chord.
+fn sdGoalBar(p : vec3f, s : f32) -> f32 {
+  let R = CR + GOAL_H;
+  let y0 = s * PITCH_L * (1.0 + GOAL_H);      // post-top height on the y axis
+  let rc = sqrt(max(R * R - y0 * y0, 0.0));   // circle radius in the xz plane
+  let dY = abs(p.y - y0);
+  let dC = abs(length(p.xz) - rc);
+  var d = length(vec2f(dY, dC)) - GOAL_R;
+  d = max(d, abs(p.z) - GOAL_W * (1.0 + GOAL_H));  // cap at the post tops
+  return d;
+}
+
 /// The goal frames: two posts and a crossbar at each end (y = +-PITCH_L),
 /// all standing radial to the planet.
 fn sdGoal(p : vec3f) -> f32 {
@@ -199,13 +214,8 @@ fn sdGoal(p : vec3f) -> f32 {
       let post = sdCylinderRadial(p, a + normalize(a) * GOAL_H * 0.5, GOAL_R, GOAL_H * 0.5);
       d = min(d, post);
     }
-    // Crossbar at the posts' top height, spanning the goal mouth (world Z).
-    // In the radial frame q.y is the goal-mouth tangent and q.z the up-tangent,
-    // so the long axis goes in q.y.
-    let a = vec3f(surfX(s * PITCH_L, GOAL_W), s * PITCH_L, 0.0);
-    let q = localFrame(p, a, normalize(a));
-    let bar = sdRoundBox(q - vec3f(GOAL_H, 0.0, 0.0), vec3f(GOAL_R, GOAL_W, GOAL_R), GOAL_R * 0.5);
-    d = min(d, bar);
+    // Crossbar: an arc segment following the sphere, joining the post tops.
+    d = min(d, sdGoalBar(p, s));
   }
   return d;
 }
