@@ -84,6 +84,18 @@ fn localFrame(p : vec3f, a : vec3f, axis : vec3f) -> vec3f {
   return vec3f(dot(q, axis), dot(q, t1), dot(q, t2));
 }
 
+/// Like `localFrame`, but +Z aligns with `upHint` projected onto the plane
+/// perpendicular to `axis`. This gives a panel a natural upright orientation —
+/// its grid reads as "#" rather than a rotated "<>" — instead of whatever
+/// tangent the default up vector happens to produce.
+fn frameUp(p : vec3f, a : vec3f, axis : vec3f, upHint : vec3f) -> vec3f {
+  let up = normalize(upHint - axis * dot(upHint, axis));
+  let t1 = normalize(cross(up, axis));
+  let t2 = cross(axis, t1);
+  let q = p - a;
+  return vec3f(dot(q, axis), dot(q, t1), dot(q, t2));
+}
+
 /// A cylinder along the planet's radial direction at anchor `a`.
 fn sdCylinderRadial(p : vec3f, a : vec3f, r : f32, hh : f32) -> f32 {
   let q = localFrame(p, a, normalize(a));
@@ -188,9 +200,11 @@ fn sdGoal(p : vec3f) -> f32 {
       d = min(d, post);
     }
     // Crossbar at the posts' top height, spanning the goal mouth (world Z).
+    // In the radial frame q.y is the goal-mouth tangent and q.z the up-tangent,
+    // so the long axis goes in q.y.
     let a = vec3f(surfX(s * PITCH_L, GOAL_W), s * PITCH_L, 0.0);
     let q = localFrame(p, a, normalize(a));
-    let bar = sdRoundBox(q - vec3f(GOAL_H, 0.0, 0.0), vec3f(GOAL_R, GOAL_R, GOAL_W), GOAL_R * 0.5);
+    let bar = sdRoundBox(q - vec3f(GOAL_H, 0.0, 0.0), vec3f(GOAL_R, GOAL_W, GOAL_R), GOAL_R * 0.5);
     d = min(d, bar);
   }
   return d;
@@ -228,9 +242,10 @@ fn sdFloodlight(p : vec3f) -> f32 {
 
     // Head: a flat panel — a "window" of four lamp squares — angled toward the
     // pitch. Its back face sits on the pole top; the lamps are on the front.
+    // `frameUp` orients it so the grid reads upright ("#", not "<>").
     let inward = normalize(vec3f(CR, 0.0, 0.0) - aTop);
     let headC = aTop + inward * FLOOD_PANEL_T;
-    let q = localFrame(p, headC, inward);
+    let q = frameUp(p, headC, inward, rad);
     let panel = sdRoundBox(q, vec3f(FLOOD_PANEL_T, FLOOD_PANEL_W, FLOOD_PANEL_W), 0.004);
     d = min(d, panel);
   }
@@ -417,16 +432,20 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
   // it sits on a post or crossbar, so proximity colours exactly the frame.
   if (sdGoal(p) < GOAL_R * 1.5) { base = vec3f(0.95, 0.95, 0.97); }
 
-  // Corner flags: fluorescent yellow posts.
+  // Corner flags: thin radial posts, fluorescent yellow at the base fading to
+  // red at the tip. The post is radial, so colour it in its own frame rather
+  // than by a +X height band (which missed the tilted tip and let the grass
+  // show through).
   for (var c = 0; c < 4; c++) {
     let sy = f32(c & 1) * 2.0 - 1.0;
     let sz = f32((c >> 1) & 1) * 2.0 - 1.0;
     let cy = sy * PITCH_L;
     let cz = sz * PITCH_W;
     let fx = surfX(cy, cz);
-    if (abs(p.y - cy) < FLAG_R * 3.0 && abs(p.z - cz) < FLAG_R * 3.0
-        && p.x > fx - 0.01 && p.x < fx + FLAG_H + 0.01) {
-      base = vec3f(0.85, 0.95, 0.08);
+    let fq = localFrame(p, vec3f(fx, cy, cz), normalize(vec3f(fx, cy, cz)));
+    let fh = clamp(fq.x / FLAG_H, 0.0, 1.0);
+    if (abs(fq.x - FLAG_H * 0.5) < FLAG_H * 0.5 + 0.006 && length(fq.yz) < FLAG_R * 2.2) {
+      base = mix(vec3f(0.85, 0.95, 0.08), vec3f(0.90, 0.10, 0.06), fh);
     }
   }
 
@@ -440,7 +459,7 @@ fn shadeBody(p : vec3f, rd : vec3f, t : f32) -> vec3f {
     let aTop = a + rad * FLOOD_H;
     let inward = normalize(vec3f(CR, 0.0, 0.0) - aTop);
     let headC = aTop + inward * FLOOD_PANEL_T;
-    let q = localFrame(p, headC, inward);
+    let q = frameUp(p, headC, inward, rad);
     let ay = abs(q.y);
     let az = abs(q.z);
     let onLamp = abs(q.x - FLOOD_PANEL_T) < FLOOD_PANEL_T * 0.5
