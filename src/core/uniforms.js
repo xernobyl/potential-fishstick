@@ -1,4 +1,4 @@
-import { whiteBalanceGains } from '../scene/tuning.js';
+import { whiteBalanceGains, WATER } from '../scene/tuning.js';
 /**
  * The per-frame uniform block, shared by every pass as bind group 0.
  *
@@ -26,7 +26,7 @@ import { whiteBalanceGains } from '../scene/tuning.js';
 // distance. Neither failed loudly - one silently changed the culling whenever the buffer viewer was
 // open, the other degenerated to a constant colour rim on every highlight. A slot is not free just
 // because the feature that named it is gone.
-export const FRAME_FLOATS = 172;                // 3 mat4x4 + 31 vec4
+export const FRAME_FLOATS = 184;                // 3 mat4x4 + 34 vec4
 export const FRAME_BYTES = FRAME_FLOATS * 4;
 
 /** Field offsets, in floats. Kept next to the WGSL struct in common.wgsl. */
@@ -96,6 +96,14 @@ const O = {
   // The trigger's live state, for the muzzle glow the charge draws. x: charge 0..1, y: the hue the
   // shot will come out as, so the glow previews it, z/w spare.
   weapon: 168,
+  // The water planet's live-tunable surface: xy surface-wave (amp, freq), z advection speed,
+  // w GGX roughness. Drives water.wgsl via the tuning panel.
+  water: 172,
+  // Water material/SSS: x SSS wrap power, y SSS scale, z light-wrap distortion,
+  // w SSS strength/tint. Drives the wrapped-diffuse translucency in water.wgsl.
+  water2: 176,
+  // Water sparkle lobe: x tight GGX roughness, y sparkle weight, zw spare.
+  water3: 180,
 };
 
 export class FrameUniforms {
@@ -226,6 +234,13 @@ export class FrameUniforms {
     a[O.weapon + 1] = s.chargeHue ?? 0;
     a[O.weapon + 2] = 0;
     a[O.weapon + 3] = 0;
+
+    // Water surface knobs, read live so the tuning panel drives them.
+    a[O.water] = WATER.waveAmp; a[O.water + 1] = WATER.waveFreq;
+    a[O.water + 2] = WATER.waveSpeed; a[O.water + 3] = WATER.rough;
+    a[O.water2] = WATER.sssPower; a[O.water2 + 1] = WATER.sssScale;
+    a[O.water2 + 2] = WATER.sssWarp; a[O.water2 + 3] = WATER.sssStrength;
+    a[O.water3] = WATER.sparkleRough; a[O.water3 + 1] = WATER.sparkleStrength;
 
     a[O.grade3] = gr.contrast; a[O.grade3 + 1] = s.flareStrength;
     a[O.grade3 + 2] = s.glow.threshold;

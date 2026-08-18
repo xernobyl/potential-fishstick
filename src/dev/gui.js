@@ -19,7 +19,7 @@
 import GUI from '../../vendor/lil-gui.esm.js';
 import { VIEWS } from '../passes/debugview.js';
 import { MODELS } from '../scenes/modelview.js';
-import { FILM, GLOW, FLARE, CAMERA, AURORA, VOLUME, TEMPORAL, QUALITY } from '../scene/tuning.js';
+import { FILM, GLOW, FLARE, CAMERA, AURORA, VOLUME, TEMPORAL, QUALITY, WATER } from '../scene/tuning.js';
 
 const STORE = 'beep.presets';
 
@@ -178,6 +178,21 @@ export function buildGui(renderer, live = {}) {
   vol.add(VOLUME, 'sigma', 0.0, 3.0, 0.01).name('thickness');
   vol.add(VOLUME, 'g', 0.0, 0.9, 0.01).name('forward scatter');
   vol.add(VOLUME, 'ringOpacity', 0.0, 1.0, 0.01).name('ring shadow');
+
+  // ---- water ----
+  // Reads live through `frame.water`, so these sliders take effect immediately.
+  const wat = gui.addFolder('Water').close();
+  artFolders.push(['water', wat]);
+  wat.add(WATER, 'waveAmp', 0.0, 0.6, 0.01).name('wave amplitude');
+  wat.add(WATER, 'waveFreq', 0.2, 6.0, 0.1).name('wave frequency');
+  wat.add(WATER, 'waveSpeed', 0.0, 1.0, 0.01).name('wave speed');
+  wat.add(WATER, 'rough', 0.02, 0.5, 0.01).name('roughness');
+  wat.add(WATER, 'sssPower', 1.0, 8.0, 0.1).name('sss wrap');
+  wat.add(WATER, 'sssScale', 0.0, 1.5, 0.05).name('sss scale');
+  wat.add(WATER, 'sssWarp', 0.0, 2.0, 0.05).name('sss distortion');
+  wat.add(WATER, 'sssStrength', 0.0, 2.0, 0.05).name('sss strength');
+  wat.add(WATER, 'sparkleRough', 0.005, 0.1, 0.005).name('sparkle roughness');
+  wat.add(WATER, 'sparkleStrength', 0.0, 2.0, 0.05).name('sparkle strength');
 
   // ---- temporal ----
   const taa = gui.addFolder('Temporal').close();

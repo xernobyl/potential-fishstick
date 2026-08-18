@@ -85,6 +85,12 @@ struct Frame {
   model     : vec4f,
   /// The trigger: x charge 0..1, y the hue the charged shot will fire as, zw spare.
   weapon    : vec4f,
+  /// The water planet: xy surface-wave (amp, freq), z advection speed, w GGX roughness.
+  water     : vec4f,
+  /// Water SSS/material: x wrap power, y scale, z light-wrap distortion, w strength/tint.
+  water2    : vec4f,
+  /// Water sparkle lobe: x tight GGX roughness, y weight, zw spare.
+  water3    : vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame : Frame;

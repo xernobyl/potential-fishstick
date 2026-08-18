@@ -28,8 +28,10 @@ auroras — through the same passes the planetoid uses, so it gets the full post
 
 There is a fourth scene — a water planet, an ocean world. It marches the same Fibonacci
 octaves-of-spheres geometry as the planetoid but with a calm, smooth silhouette, shaded with realistic
-PBR water: GGX sun glints, analytic sphere-integral ambient occlusion, a refracted interior and a slow
-animated ripple. It reuses the shared sky and post chain.
+PBR water: a two-lobe GGX specular (a broad body reflection plus a tight sparkle glint), analytic
+sphere-integral ambient occlusion with matching local thickness, a wrapped-diffuse subsurface
+scattering term, a refracted interior and a slow animated ripple. It reuses the shared sky and post
+chain. The wave, material and SSS knobs live in the tuning panel's **Water** folder.
 
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
 **space** to shoot — or hold it, and let go.

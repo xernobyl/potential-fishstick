@@ -1458,6 +1458,24 @@ export const VOLUME = {
  * NOT applied here - 3200K stock under a daylight-ish sun wants an 85B correction, and faking the
  * cast with the black point would be a different look, not this one.
  */
+/**
+ * The water planet's live-tunable surface knobs. These are frame-uniform fields
+ * (not compile-time constants) so the tuning panel can drive them; the field's
+ * static lattice (sphere count/radius) stays baked above.
+ */
+export const WATER = {
+  waveAmp: 0.18,    // surface wave amplitude
+  waveFreq: 1.6,    // spatial frequency (per unit radius)
+  waveSpeed: 0.22,  // advection speed
+  rough: 0.08,      // GGX roughness
+  sssPower: 3.0,    // SSS wrap sharpness (mLTPower)
+  sssScale: 0.55,   // SSS scale (lSize)
+  sssWarp: 0.9,     // SSS light-wrap distortion (mDistortion)
+  sssStrength: 0.7, // SSS overall strength/tint
+  sparkleRough: 0.012,  // tight second lobe roughness
+  sparkleStrength: 0.6, // sparkle weight
+};
+
 export const FILM = {
   /** Pre-grade linear gain, applied to the scene before the curve sees it. */
   gain: 0.84,

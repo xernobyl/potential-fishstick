@@ -60,7 +60,8 @@ seam.
 additive layer. `scenes/modelview.js` is a turntable for inspecting the generated meshes on their own,
 since there is no file to open in a modelling tool. `scenes/chibi.js` is a self-contained march — a
 grass football planet — that drops the satellite and aurora passes in unchanged. `scenes/water.js` is
-a second self-contained march — an ocean world rendered with realistic PBR water over the same
+a second self-contained march — an ocean world rendered with realistic PBR water (two-lobe GGX
+specular with a sparkle glint, analytic sphere AO + local thickness, wrapped-diffuse SSS) over the same
 Fibonacci octaves-of-spheres geometry but a smooth, calm silhouette. All are constructed and
 initialised at startup, so switching is a property change rather than a load; they share the ship's
 and satellite's contoured meshes through memos, so a second scene costs GPU buffers rather than another
