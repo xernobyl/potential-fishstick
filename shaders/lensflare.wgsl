@@ -96,8 +96,12 @@ fn fs(@location(0) uv : vec2f) -> @location(0) vec4f {
   for (var s = 0; s < 2; s++) {
     var sp = frame.sun.xy;
     var tint = vec3f(1.0, 0.86, 0.62);
-    if (s == 1) { sp = frame.sun.zw; tint = vec3f(0.80, 0.55, 1.0); }
+    var occl = frame.jitter.z;
+    if (s == 1) { sp = frame.sun.zw; tint = vec3f(0.80, 0.55, 1.0); occl = frame.jitter.w; }
     if (sp.x > 900.0) { continue; }            // sentinel: sun is behind us
+    // A sun behind the body is occluded: its streak and burst must not draw
+    // through the world in front of it.
+    if (occl > 0.5) { continue; }
 
     let d = p - sp;
     // The anamorphic streak. A cylindrical front element smears the highlight

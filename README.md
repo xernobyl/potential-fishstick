@@ -26,6 +26,11 @@ goals, four A-frame floodlights and two teams of players. It is a self-contained
 shading in `chibi.wgsl`), and it reuses the shared dressing — the satellite swarm and the curl-noise
 auroras — through the same passes the planetoid uses, so it gets the full post chain for free.
 
+There is a fourth scene — a water planet, an ocean world. It marches the same Fibonacci
+octaves-of-spheres geometry as the planetoid but with a calm, smooth silhouette, shaded with realistic
+PBR water: GGX sun glints, analytic sphere-integral ambient occlusion, a refracted interior and a slow
+animated ripple. It reuses the shared sky and post chain.
+
 Press **`g`** for the controls and the tuning panel. **Drag** to orbit, **arrows/WASD** to fly,
 **space** to shoot — or hold it, and let go.
 
@@ -655,6 +660,8 @@ src/
     scene.js         the contract: six methods and a getter
     planetoid.js     the original world — body, rings, ship, satellites, additive layer
     modelview.js     a turntable for inspecting the generated meshes on their own
+    chibi.js         a grass football planet (self-contained march)
+    water.js         an ocean world, PBR water (self-contained march)
   passes/            one file per pass, each records itself
     additive.js      ONE pass for the contrail, auroras and rail guns — see below
     solidmesh.js     ONE pass for every rasterised opaque mesh, for the same reason

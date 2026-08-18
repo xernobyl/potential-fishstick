@@ -151,6 +151,10 @@ export class FrameUniforms {
     a[O.misc + 2] = s.frameIndex; a[O.misc + 3] = s.dt;
 
     a[O.jitter] = s.jitter[0]; a[O.jitter + 1] = s.jitter[1];
+    // Spare slots: the sun-occlusion flags for the lens flare. 1 = the sun is
+    // behind the body and its streak must not draw through it.
+    a[O.jitter + 2] = s.sunOccA ?? 0;
+    a[O.jitter + 3] = s.sunOccB ?? 0;
 
     a[O.flags] = s.historyValid ? 1 : 0;
     a[O.flags + 1] = s.dragging ? 1 : 0;

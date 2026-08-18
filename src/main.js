@@ -134,6 +134,10 @@ async function boot() {
       e.preventDefault();
       renderer.setScene('chibi');
       syncViewLabel();
+    } else if (k === '5') {
+      e.preventDefault();
+      renderer.setScene('water');
+      syncViewLabel();
     }
   });
 

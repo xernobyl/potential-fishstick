@@ -24,7 +24,7 @@ struct Frame {
   res       : vec4f,   // xy size,      zw 1/size
   screen    : vec4f,   // x 1/diagPx, y diagPx, zw sensor half-extents
   misc      : vec4f,   // x beat, y life, z frameIndex, w dt
-  jitter    : vec4f,   // xy pixel jitter, zw lens jitter
+  jitter    : vec4f,   // xy pixel jitter, zw sun-occlusion flags (flare)
   flags     : vec4f,   // x historyValid, y dragging, z fireflyMax, w exposure
   sun       : vec4f,   // xy sunA screen pos, zw sunB screen pos
   shipPos   : vec4f,   // xyz world position, w throttle

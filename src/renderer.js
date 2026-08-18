@@ -46,6 +46,7 @@ import { PlanetoidScene } from './scenes/planetoid.js';
 import { Scene1Rasterized } from './scenes/Scene1Rasterized.js';
 import { ModelViewScene } from './scenes/modelview.js';
 import { ChibiScene } from './scenes/chibi.js';
+import { WaterScene } from './scenes/water.js';
 import { DebugViewPass, VIEWS } from './passes/debugview.js';
 import { DynamicRes } from './scene/dynres.js';
 import { PULSE, QUALITY, SUNS, FILM, GLOW, FLARE, AURORA, VOLUME,
@@ -85,6 +86,7 @@ export class Renderer {
       rasterized: new Scene1Rasterized(gpu, this.targets, this.shaders, planetoid),
       modelview: new ModelViewScene(gpu, this.targets, this.shaders),
       chibi: new ChibiScene(gpu, this.targets, this.shaders),
+      water: new WaterScene(gpu, this.targets, this.shaders),
     };
     this.sceneKey = 'planetoid';
 
@@ -128,7 +130,7 @@ export class Renderer {
       accumWidth: 0, accumHeight: 0, addWidth: 0, addHeight: 0,
       beat: 0, life: 0, frameIndex: 0, dt: 0, jitter: null, lens: null,
       historyValid: false, dragging: false, exposure: 0,
-      sunA: null, sunB: null, ship: null,
+      sunA: null, sunB: null, ship: null, sunOccA: 0, sunOccB: 0,
       taa: TEMPORAL, march: MARCH, probe: PROBE, renderScale: 0,
       grade: FILM, glow: GLOW, flareStrength: 0, aurora: AURORA, auroraPhase: 0,
       volume: VOLUME,
