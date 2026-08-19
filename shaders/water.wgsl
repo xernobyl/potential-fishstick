@@ -211,11 +211,10 @@ fn shadeWater(p : vec3f, rd : vec3f) -> vec3f {
   // a bright glint riding the broad reflection where the surface is nearest.
   let sparkleRough = frame.water3.x;
   let sparkleW = frame.water3.y;
-  let sparkle =
+  let sparkle = sparkleW * (
       sunLight(N, V, SUN1_DIR, SUN1_COL, vec3f(0.02), sparkleRough, f0, 1.0 - 1e-3)
     + sunLight(N, V, SUN2_DIR, SUN2_COL, vec3f(0.02), sparkleRough, f0, 1.0 - 1e-3)
-    + sunLight(N, V, SUN3_DIR, SUN3_COL, vec3f(0.02), sparkleRough, f0, 0.6);
-  sparkle *= sparkleW;
+    + sunLight(N, V, SUN3_DIR, SUN3_COL, vec3f(0.02), sparkleRough, f0, 0.6));
 
   // Fresnel: how much of the view reflects (sky) vs refracts (water body).
   let F = fresnelSchlick(clamp(dot(N, V), 0.0, 1.0), f0);
